@@ -1,0 +1,23 @@
+{
+	"name": "di-code",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"packages/*"
+	],
+	"scripts": {
+		"build": "npm run build --workspace @di-code/tui && npm run build --workspace @di-code/ai && npm run build --workspace @di-code/agent && npm run build --workspace @di-code/coding-agent",
+		"check": "biome check . && tsc --noEmit -p tsconfig.json",
+		"test": "npm run test --workspaces --if-present"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.3.5",
+		"@types/node": "22.19.19",
+		"typescript": "5.9.3",
+		"vitest": "4.1.9"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

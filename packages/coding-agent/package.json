@@ -1,0 +1,22 @@
+{
+	"name": "@di-code/coding-agent",
+	"version": "0.0.0",
+	"description": "Coding agent product layer for di-code",
+	"private": true,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
