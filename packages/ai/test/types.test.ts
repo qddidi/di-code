@@ -110,7 +110,20 @@ const doneEvent = {
 	reason: "stop",
 	message: successfulMessage,
 } satisfies StreamEvent;
+describe("discriminated union helpers", () => {
+	it("handles representative message, content, and event members", () => {
+		expect(
+			describeMessage({
+				role: "user",
+				content: [{ type: "text", text: "hello" }],
+				timestamp: 1,
+			}),
+		).toBe("user:1");
 
+		expect(describeContent({ type: "thinking", thinking: "reason" })).toBe("reason");
+		expect(eventName(doneEvent)).toBe("done:stop");
+	});
+});
 const streamResult: StreamResult = {
 	async *[Symbol.asyncIterator]() {
 		yield doneEvent;
