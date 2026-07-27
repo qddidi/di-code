@@ -30,6 +30,6 @@ export type {
 	UsageCost,
 	UserContent,
 	UserMessage,
-} from "./types.js";
-export { EventStream } from "./utils/event-stream.js";
-export type { EventStreamOptions } from "./utils/event-stream.js";
+} from "./types.ts";
+export type { EventStreamOptions } from "./utils/event-stream.ts";
+export { EventStream } from "./utils/event-stream.ts";
