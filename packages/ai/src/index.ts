@@ -31,5 +31,7 @@ export type {
 	UserContent,
 	UserMessage,
 } from "./types.ts";
-export type { EventStreamOptions } from "./utils/event-stream.ts";
-export { EventStream } from "./utils/event-stream.ts";
+export type { AssistantMessageEventStream, EventStreamOptions } from "./utils/event-stream.ts";
+export { createAssistantMessageEventStream, EventStream } from "./utils/event-stream.ts";
+export type { StreamEventValidator } from "./utils/validation.ts";
+export { createStreamEventValidator, StreamSequenceError } from "./utils/validation.ts";

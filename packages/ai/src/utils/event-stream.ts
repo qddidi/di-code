@@ -1,3 +1,5 @@
+import type { AssistantMessage, StreamEvent } from "../types.ts";
+import { createStreamEventValidator } from "./validation.ts";
 export interface EventStreamOptions<TEvent, TResult> {
 	validate(event: TEvent): void;
 	isTerminal(event: TEvent): boolean;
@@ -121,4 +123,24 @@ export class EventStream<TEvent, TResult> implements AsyncIterable<TEvent> {
 	result(): Promise<TResult> {
 		return this.finalResultPromise;
 	}
+}
+export type AssistantMessageEventStream = EventStream<StreamEvent, AssistantMessage>;
+
+export function createAssistantMessageEventStream(): AssistantMessageEventStream {
+	const validator = createStreamEventValidator();
+
+	return new EventStream<StreamEvent, AssistantMessage>({
+		validate(event) {
+			validator.accept(event);
+		},
+		isTerminal(event) {
+			return event.type === "done" || event.type === "error";
+		},
+		getResult(event) {
+			if (event.type === "done" || event.type === "error") {
+				return event.message;
+			}
+			throw new Error("Expected terminal stream event");
+		},
+	});
 }
