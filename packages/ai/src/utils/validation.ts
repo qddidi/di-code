@@ -1,4 +1,7 @@
-import type { AssistantContent, StreamEvent } from "../types.ts";
+import type { Static, TSchema } from "typebox";
+import { Compile } from "typebox/compile";
+import type { TLocalizedValidationError } from "typebox/error";
+import type { AssistantContent, StreamEvent, ToolDefinition } from "../types.ts";
 
 type StreamPhase = "idle" | "streaming" | "terminal";
 
@@ -304,4 +307,87 @@ export function createStreamEventValidator(): StreamEventValidator {
 			}
 		},
 	};
+}
+/** 表示一组工具参数无法安全地满足该工具的 TypeBox schema。 */
+export class ToolArgumentsValidationError extends Error {
+	readonly toolName: string;
+	readonly issues: readonly string[];
+
+	constructor(toolName: string, issues: readonly string[]) {
+		const details = issues.map((issue) => `  - ${issue}`).join("\n");
+		super(`Invalid arguments for tool "${toolName}":\n${details}`);
+		this.name = "ToolArgumentsValidationError";
+		this.toolName = toolName;
+		this.issues = [...issues];
+	}
+}
+function escapeJsonPointerSegment(segment: string): string {
+	return segment.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+function formatValidationIssue(error: TLocalizedValidationError): string {
+	if (error.keyword === "required") {
+		const requiredProperty = error.params.requiredProperties[0];
+		if (requiredProperty) {
+			const segment = escapeJsonPointerSegment(requiredProperty);
+			return `${error.instancePath}/${segment}: ${error.message}`;
+		}
+	}
+
+	const path = error.instancePath || "/";
+	return `${path}: ${error.message}`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return false;
+	}
+
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+}
+
+function cloneToolArguments(toolName: string, value: unknown): Record<string, unknown> {
+	if (!isPlainObject(value)) {
+		throw new ToolArgumentsValidationError(toolName, ["/: arguments must be a plain object"]);
+	}
+
+	try {
+		return structuredClone(value);
+	} catch {
+		throw new ToolArgumentsValidationError(toolName, [
+			"/: arguments must contain only structured-clone-compatible values",
+		]);
+	}
+}
+export function validateToolArguments<TParameters extends TSchema>(
+	tool: ToolDefinition<TParameters>,
+	value: unknown,
+): Static<TParameters> {
+	const candidate = cloneToolArguments(tool.name, value);
+	const validator = Compile(tool.parameters);
+
+	if (validator.Check(candidate)) {
+		return candidate;
+	}
+
+	const issues = validator.Errors(candidate).map(formatValidationIssue);
+	throw new ToolArgumentsValidationError(
+		tool.name,
+		issues.length > 0 ? issues : ["/: arguments do not satisfy the tool schema"],
+	);
+}
+
+export function parseToolArguments<TParameters extends TSchema>(
+	tool: ToolDefinition<TParameters>,
+	json: string,
+): Static<TParameters> {
+	let value: unknown;
+	try {
+		value = JSON.parse(json) as unknown;
+	} catch {
+		throw new ToolArgumentsValidationError(tool.name, ["/: arguments must be valid JSON"]);
+	}
+
+	return validateToolArguments(tool, value);
 }

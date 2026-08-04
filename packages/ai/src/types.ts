@@ -165,3 +165,7 @@ export interface Provider {
 	readonly models: readonly Model[];
 	stream(model: Model, context: Context, options?: StreamOptions): StreamResult;
 }
+
+
+
+
