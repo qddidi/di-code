@@ -1,5 +1,7 @@
 export type { Static, TSchema } from "typebox";
 export { Type } from "typebox";
+export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./providers/faux.ts";
+export { createFauxProvider } from "./providers/faux.ts";
 export type {
 	Api,
 	AssistantContent,
