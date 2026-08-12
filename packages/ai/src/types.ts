@@ -1,167 +1,274 @@
 import type { TSchema } from "typebox";
+
+/** 模型输入或输出中的纯文本内容块。 */
 export interface TextContent {
+	/** 用于可辨识联合类型判断的内容种类。 */
 	type: "text";
+	/** 完整的文本内容。 */
 	text: string;
 }
 
+/** 助手生成的思考内容块。 */
 export interface ThinkingContent {
+	/** 用于可辨识联合类型判断的内容种类。 */
 	type: "thinking";
+	/** 完整的思考文本。 */
 	thinking: string;
 }
 
+/** 使用 Base64 数据和 MIME 类型表示的图片内容块。 */
 export interface ImageContent {
+	/** 用于可辨识联合类型判断的内容种类。 */
 	type: "image";
+	/** 不包含 data URL 前缀的 Base64 图片数据。 */
 	data: string;
+	/** 图片的媒体类型，例如 image/png。 */
 	mimeType: string;
 }
 
+/** 助手请求调用某个工具时生成的内容块。 */
 export interface ToolCallContent {
+	/** 用于可辨识联合类型判断的内容种类。 */
 	type: "tool_call";
+	/** 本次工具调用的唯一标识，用于关联后续工具结果。 */
 	id: string;
+	/** 要调用的工具名称。 */
 	name: string;
+	/** 已解析且通过运行时校验的工具参数。 */
 	arguments: Record<string, unknown>;
 }
 
-//用户内容
+/** 用户消息允许包含的内容块。 */
 export type UserContent = TextContent | ImageContent;
-//agent助手内容
+
+/** 助手消息允许包含的内容块。 */
 export type AssistantContent = TextContent | ThinkingContent | ToolCallContent;
 
-//工具结果内容
+/** 工具结果消息允许返回的内容块。 */
 export type ToolResultContent = TextContent | ImageContent;
-//内容块
+
+/** AI 层所有消息中可能出现的内容块。 */
 export type ContentBlock = TextContent | ThinkingContent | ImageContent | ToolCallContent;
 
-//使用量明细
+/** 一次模型请求按来源拆分的费用明细。 */
 export interface UsageCost {
+	/** 输入 token 对应的费用。 */
 	input: number;
+	/** 输出 token 对应的费用。 */
 	output: number;
+	/** 从缓存读取的 token 对应的费用。 */
 	cacheRead: number;
+	/** 写入缓存的 token 对应的费用。 */
 	cacheWrite: number;
+	/** 本次请求的总费用。 */
 	total: number;
 }
-//费用账单
+
+/** 一次模型请求的 token 使用量和费用汇总。 */
 export interface Usage {
+	/** 未计入缓存读写部分的输入 token 数。 */
 	input: number;
+	/** 模型生成的输出 token 数。 */
 	output: number;
+	/** 从 Provider 缓存读取的 token 数。 */
 	cacheRead: number;
+	/** 写入 Provider 缓存的 token 数。 */
 	cacheWrite: number;
+	/** 本次请求统计到的总 token 数。 */
 	totalTokens: number;
+	/** 按 token 来源计算出的费用明细。 */
 	cost: UsageCost;
 }
 
-//成功停止原因: 正常结束、长度限制、等待执行工具
+/** 成功完成生成时的停止原因：正常结束、达到长度限制或请求调用工具。 */
 export type SuccessfulStopReason = "stop" | "length" | "tool_use";
-//失败停止原因: 错误、被中断
+
+/** 未成功完成生成时的停止原因：执行错误或请求被中止。 */
 export type FailedStopReason = "error" | "aborted";
+
+/** 助手消息所有可能的停止原因。 */
 export type StopReason = SuccessfulStopReason | FailedStopReason;
 
+/** 用户发送给模型的一条消息。 */
 export interface UserMessage {
+	/** 固定为 user，用于区分消息角色。 */
 	role: "user";
+	/** 用户提供的文本或图片内容。 */
 	content: UserContent[];
+	/** 消息创建时间，使用 Unix 毫秒时间戳。 */
 	timestamp: number;
 }
 
+/** 工具执行完成后返回给模型的一条结果消息。 */
 export interface ToolResultMessage {
+	/** 固定为 tool_result，用于区分消息角色。 */
 	role: "tool_result";
+	/** 对应 ToolCallContent.id 的工具调用标识。 */
 	toolCallId: string;
+	/** 被执行的工具名称。 */
 	toolName: string;
+	/** 工具返回的文本或图片内容。 */
 	content: ToolResultContent[];
+	/** 表示该结果是否来自工具执行失败。 */
 	isError: boolean;
+	/** 结果消息创建时间，使用 Unix 毫秒时间戳。 */
 	timestamp: number;
 }
 
+/** 成功与失败助手消息共享的基础字段。 */
 interface AssistantMessageBase {
+	/** 固定为 assistant，用于区分消息角色。 */
 	role: "assistant";
+	/** 助手生成的文本、思考或工具调用内容。 */
 	content: AssistantContent[];
+	/** 实际完成本次生成的 Provider 标识。 */
 	provider: string;
+	/** 实际完成本次生成的模型标识。 */
 	model: string;
+	/** 本次模型请求的 token 和费用统计。 */
 	usage: Usage;
+	/** 助手消息创建时间，使用 Unix 毫秒时间戳。 */
 	timestamp: number;
 }
 
+/** 正常结束、达到长度限制或等待工具执行的助手消息。 */
 export interface SuccessfulAssistantMessage extends AssistantMessageBase {
+	/** 描述本次生成成功停止的原因。 */
 	stopReason: SuccessfulStopReason;
+	/** 成功消息不允许携带错误文本。 */
 	errorMessage?: never;
 }
 
+/** 因错误或中止而结束的助手消息。 */
 export interface FailedAssistantMessage extends AssistantMessageBase {
+	/** 描述本次生成失败停止的原因。 */
 	stopReason: FailedStopReason;
+	/** 面向调用者的失败原因说明。 */
 	errorMessage: string;
 }
 
+/** 根据 stopReason 区分成功和失败形态的助手消息。 */
 export type AssistantMessage = SuccessfulAssistantMessage | FailedAssistantMessage;
 
+/** 对话历史中允许保存的全部消息角色。 */
 export type Message = UserMessage | AssistantMessage | ToolResultMessage;
 
-//定义模型元数据
+/** 模型能够接收的输入模态。 */
 export type ModelInput = "text" | "image";
 
+/** 模型针对不同 token 来源配置的计价信息。 */
 export interface ModelCost {
+	/** 输入 token 的计价。 */
 	input: number;
+	/** 输出 token 的计价。 */
 	output: number;
+	/** 缓存读取 token 的计价。 */
 	cacheRead: number;
+	/** 缓存写入 token 的计价。 */
 	cacheWrite: number;
 }
 
+/** Provider 无关的模型元数据和能力描述。 */
 export interface Model {
+	/** Provider 内唯一的模型标识。 */
 	id: string;
+	/** 面向用户展示的模型名称。 */
 	name: string;
+	/** 提供该模型的 Provider 标识。 */
 	provider: string;
+	/** 调用该模型时使用的底层 API 标识。 */
 	api: string;
+	/** 模型支持的输入模态列表。 */
 	input: ModelInput[];
+	/** 模型是否支持生成独立的思考内容。 */
 	reasoning: boolean;
+	/** 单次请求可容纳的最大上下文 token 数。 */
 	contextWindow: number;
+	/** 单次请求允许生成的最大输出 token 数。 */
 	maxOutputTokens: number;
+	/** 模型按 token 来源划分的计价信息。 */
 	cost: ModelCost;
 }
 
-//定义工具和上下文
-
+/** 提供给模型的工具名称、说明和 TypeBox 参数模式。 */
 export interface ToolDefinition<TParameters extends TSchema = TSchema> {
+	/** 模型在 ToolCallContent 中引用的工具名称。 */
 	name: string;
+	/** 帮助模型判断何时以及如何使用工具的说明。 */
 	description: string;
+	/** 用于描述并在运行时校验工具参数的 TypeBox Schema。 */
 	parameters: TParameters;
 }
+
+/** 一次模型调用所需的提示词、消息历史和可用工具。 */
 export interface Context {
+	/** Provider 应作为系统级指令发送的提示词。 */
 	systemPrompt?: string;
+	/** 按时间顺序发送给模型的对话消息。 */
 	messages: Message[];
+	/** 本次调用允许模型请求执行的工具。 */
 	tools?: ToolDefinition[];
 }
 
-//定义流调用边界
-
+/** Provider 流式生成过程中按协议顺序发出的事件。 */
 export type StreamEvent =
+	/** 流已经建立，尚未开始生成内容块。 */
 	| { type: "start" }
+	/** 开始生成一个文本块；contentIndex 是其在最终 content 数组中的下标。 */
 	| { type: "text_start"; contentIndex: number }
+	/** 向当前文本块追加一段文本。 */
 	| { type: "text_delta"; contentIndex: number; delta: string }
+	/** 当前文本块结束，并给出拼接后的完整文本。 */
 	| { type: "text_end"; contentIndex: number; content: string }
+	/** 开始生成一个思考块；contentIndex 是其在最终 content 数组中的下标。 */
 	| { type: "thinking_start"; contentIndex: number }
+	/** 向当前思考块追加一段文本。 */
 	| { type: "thinking_delta"; contentIndex: number; delta: string }
+	/** 当前思考块结束，并给出拼接后的完整思考文本。 */
 	| { type: "thinking_end"; contentIndex: number; content: string }
+	/** 开始生成工具调用，并给出调用标识和工具名称。 */
 	| { type: "tool_call_start"; contentIndex: number; id: string; name: string }
+	/** 向当前工具调用追加一段尚未解析的 JSON 参数文本。 */
 	| { type: "tool_call_delta"; contentIndex: number; argumentsDelta: string }
+	/** 当前工具调用结束，并给出已解析、已校验的完整调用内容。 */
 	| { type: "tool_call_end"; contentIndex: number; toolCall: ToolCallContent }
+	/** 流成功结束，并携带权威的最终助手消息。 */
 	| { type: "done"; reason: SuccessfulStopReason; message: SuccessfulAssistantMessage }
+	/** 流因错误或中止结束，并携带结构化的失败助手消息。 */
 	| { type: "error"; reason: FailedStopReason; message: FailedAssistantMessage };
 
+/** 控制单次流式模型调用的可选参数。 */
 export interface StreamOptions {
+	/** 用于中止底层请求和后续流式生成。 */
 	signal?: AbortSignal;
+	/** 控制采样随机性的温度参数，支持情况和有效范围由具体 Provider 决定。 */
 	temperature?: number;
+	/** 本次调用允许生成的最大 token 数。 */
 	maxTokens?: number;
 }
+
+/** 既可逐个消费事件，也可等待最终助手消息的流式结果。 */
 export interface StreamResult extends AsyncIterable<StreamEvent> {
+	/** 返回终止事件携带的最终助手消息。 */
 	result(): Promise<AssistantMessage>;
 }
 
+/** 底层模型 API 的统一流式调用边界。 */
 export interface Api {
+	/** 用于在模型元数据中选择该 API 的唯一标识。 */
 	readonly id: string;
+	/** 使用指定模型、上下文和选项发起一次流式调用。 */
 	stream(model: Model, context: Context, options?: StreamOptions): StreamResult;
 }
 
+/** 对外暴露模型目录和统一流式调用能力的 Provider 适配器。 */
 export interface Provider {
+	/** Provider 的唯一标识。 */
 	readonly id: string;
+	/** 面向用户展示的 Provider 名称。 */
 	readonly name: string;
+	/** 当前 Provider 可用的模型元数据。 */
 	readonly models: readonly Model[];
+	/** 使用指定模型、上下文和选项发起一次流式调用。 */
 	stream(model: Model, context: Context, options?: StreamOptions): StreamResult;
 }
