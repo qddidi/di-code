@@ -1,15 +1,12 @@
 import type { AssistantMessage, Message, Model, Provider } from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
-import type { AgentContext, AgentEvent } from "./types.ts";
+import type { AgentContext, AgentEvent, AgentTool } from "./types.ts";
 
 export interface AgentOptions {
-	/** 本 Agent 用于发起模型请求的 Provider。 */
 	readonly provider: Provider;
-	/** 每次 prompt 固定使用的模型。 */
 	readonly model: Model;
-	/** 随每次请求发送、但不写入消息历史的系统提示词。 */
+	readonly tools?: readonly AgentTool[];
 	readonly systemPrompt?: string;
-	/** 可注入的时钟，主要用于生成可重复测试的用户消息时间戳。 */
 	readonly now?: () => number;
 }
 
@@ -44,10 +41,11 @@ export class Agent {
 	private readonly model: Model;
 	private readonly systemPrompt?: string;
 	private readonly now: () => number;
-
+	private readonly tools: readonly AgentTool[];
 	constructor(options: AgentOptions) {
 		this.provider = options.provider;
 		this.model = options.model;
+		this.tools = [...(options.tools ?? [])];
 		this.systemPrompt = options.systemPrompt;
 		this.now = options.now ?? Date.now;
 	}
@@ -88,6 +86,7 @@ export class Agent {
 		const context: AgentContext = {
 			systemPrompt: this.systemPrompt,
 			messages: [...this.messages],
+			tools: [...this.tools],
 		};
 		const stream = agentLoop(prompt, context, { provider: this.provider, model: this.model, now: this.now }, signal);
 
