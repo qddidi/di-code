@@ -1,6 +1,9 @@
 import { Agent, type AgentListener } from "@di-code/agent";
 import type { AssistantMessage, Message, Model, Provider } from "@di-code/ai";
+import { createBashTool } from "./tools/bash.ts";
+import { createEditTool } from "./tools/edit.ts";
 import { createReadTool } from "./tools/read.ts";
+import { createWriteTool } from "./tools/write.ts";
 
 export interface AgentSessionOptions {
 	readonly allowedRoot: string;
@@ -16,7 +19,12 @@ export class AgentSession {
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
-			tools: [createReadTool(options.allowedRoot)],
+			tools: [
+				createReadTool(options.allowedRoot),
+				createWriteTool(options.allowedRoot),
+				createEditTool(options.allowedRoot),
+				createBashTool(options.allowedRoot),
+			],
 			now: options.now,
 		});
 	}

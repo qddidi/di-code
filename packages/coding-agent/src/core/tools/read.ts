@@ -1,7 +1,7 @@
-import { readFile, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
 import type { AgentTool } from "@di-code/agent";
 import { type Static, type ToolResultContent, Type } from "@di-code/ai";
+import { resolveAllowedFilePath } from "./path-boundary.ts";
 
 export const DEFAULT_READ_MAX_LINES = 2_000;
 export const DEFAULT_READ_MAX_BYTES = 50 * 1024;
@@ -114,23 +114,6 @@ function appendContinuation(window: TextWindow, maxBytes: number): string {
 	return `${window.content}\n\n[Showing lines ${window.startLine}-${window.endLine} of ${window.totalLines}${reason}. Use offset=${nextOffset} to continue.]`;
 }
 
-function assertInsideRoot(root: string, target: string): void {
-	const fromRoot = relative(root, target);
-	if (fromRoot === "" || (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot))) {
-		return;
-	}
-	throw new Error("Path is outside the allowed root");
-}
-
-async function resolveAllowedFile(inputPath: string, allowedRoot: string): Promise<string> {
-	const rootReal = await realpath(allowedRoot);
-	const candidate = resolve(rootReal, inputPath);
-	assertInsideRoot(rootReal, candidate);
-	const targetReal = await realpath(candidate);
-	assertInsideRoot(rootReal, targetReal);
-	return targetReal;
-}
-
 function containsNulByte(buffer: Buffer): boolean {
 	const sampleLength = Math.min(buffer.length, 8 * 1024);
 	for (let index = 0; index < sampleLength; index++) {
@@ -154,7 +137,7 @@ export function createReadTool(allowedRoot: string, options: ReadToolOptions = {
 			if (parameters.path.length === 0) throw new Error("path must not be empty");
 			assertPositiveInteger("offset", parameters.offset);
 			assertPositiveInteger("limit", parameters.limit);
-			const absolutePath = await resolveAllowedFile(parameters.path, allowedRoot);
+			const absolutePath = await resolveAllowedFilePath(parameters.path, allowedRoot);
 			if (signal?.aborted) throw new Error("Operation aborted");
 			const buffer = await readFile(absolutePath);
 			if (containsNulByte(buffer)) {
