@@ -6,6 +6,9 @@
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"bin": {
+		"di-code": "./dist/entry.js"
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -14,7 +17,12 @@
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
+		"dev": "node --experimental-strip-types src/entry.ts",
 		"test": "vitest run --passWithNoTests"
+	},
+	"dependencies": {
+		"@di-code/agent": "0.0.0",
+		"@di-code/ai": "0.0.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"

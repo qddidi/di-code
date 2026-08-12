@@ -9,6 +9,7 @@
 	"scripts": {
 		"build": "npm run build --workspace @di-code/tui && npm run build --workspace @di-code/ai && npm run build --workspace @di-code/agent && npm run build --workspace @di-code/coding-agent",
 		"check": "biome check . && tsc --noEmit -p tsconfig.json",
+		"dev": "node --experimental-strip-types packages/coding-agent/src/entry.ts",
 		"test": "npm run test --workspaces --if-present"
 	},
 	"devDependencies": {
