@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
 import { type Context, createFauxProvider, type Message, type Provider } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
 
 function findToolResult(messages: readonly Message[], toolCallId: string) {
@@ -128,5 +129,113 @@ describe("AgentSession read integration", () => {
 		expect(content.text).toContain('Tool "read" failed:');
 		expect(content.text).toContain("ENOENT");
 		expect(faux.pendingResponses()).toBe(0);
+	});
+});
+
+describe("AgentSession persistence", () => {
+	let root: string;
+	let sessionFile: string;
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), "di-code-agent-session-persistence-"));
+		sessionFile = join(root, "session.jsonl");
+	});
+
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	it("persists a text turn and restores it into the next provider context", async () => {
+		const firstFaux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "saved answer" }] }],
+		});
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		const firstSession = new AgentSession({
+			allowedRoot: root,
+			provider: firstFaux.provider,
+			model: firstFaux.model,
+			sessionManager: manager,
+		});
+
+		await firstSession.prompt("saved question");
+
+		const reopened = await SessionManager.open(sessionFile);
+		expect(reopened.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		const secondFaux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "continued" }] }],
+		});
+		const requestedMessages: Message[][] = [];
+		const provider: Provider = {
+			...secondFaux.provider,
+			stream(model, context: Context, options) {
+				requestedMessages.push([...context.messages]);
+				return secondFaux.provider.stream(model, context, options);
+			},
+		};
+		const restoredSession = new AgentSession({
+			allowedRoot: root,
+			provider,
+			model: secondFaux.model,
+			sessionManager: reopened,
+		});
+
+		await restoredSession.prompt("new question");
+
+		expect(requestedMessages[0]?.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+		expect(restoredSession.sessionFile).toBe(sessionFile);
+		expect(restoredSession.sessionDiagnostics).toEqual([]);
+	});
+
+	it("persists every completed message in a tool turn exactly once", async () => {
+		await writeFile(join(root, "notes.txt"), "stored content", "utf8");
+		const faux = createFauxProvider({
+			responses: [
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "read-persisted", name: "read", arguments: { path: "notes.txt" } }],
+				},
+				{ type: "success", content: [{ type: "text", text: "done" }] },
+			],
+		});
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: faux.model,
+			sessionManager: manager,
+		});
+
+		await session.prompt("read notes.txt");
+
+		const reopened = await SessionManager.open(sessionFile);
+		expect(reopened.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool_result", "assistant"]);
+		expect(reopened.messages).toHaveLength(session.transcript.length);
+	});
+
+	it("surfaces persistence failure and blocks later prompts", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first" }] },
+				{ type: "success", content: [{ type: "text", text: "must stay unused" }] },
+			],
+		});
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			appendOptions: { lockTimeoutMs: 0 },
+		});
+		await writeFile(`${sessionFile}.lock`, "held", "utf8");
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: faux.model,
+			sessionManager: manager,
+		});
+
+		await expect(session.prompt("cannot persist")).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+		expect(session.isStreaming).toBe(false);
+		expect(faux.pendingResponses()).toBe(1);
+		await expect(session.prompt("do not call provider")).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+		expect(faux.pendingResponses()).toBe(1);
 	});
 });

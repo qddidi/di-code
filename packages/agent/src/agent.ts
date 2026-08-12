@@ -8,6 +8,7 @@ export interface AgentOptions {
 	readonly tools?: readonly AgentTool[];
 	readonly systemPrompt?: string;
 	readonly now?: () => number;
+	readonly initialMessages?: readonly Message[];
 }
 
 /** Agent 事件监听器；返回 Promise 时，后续监听器会等待它完成。 */
@@ -46,18 +47,18 @@ export class Agent {
 		this.provider = options.provider;
 		this.model = options.model;
 		this.tools = [...(options.tools ?? [])];
+		this.messages = structuredClone([...(options.initialMessages ?? [])]);
 		this.systemPrompt = options.systemPrompt;
 		this.now = options.now ?? Date.now;
 	}
 
 	get state(): AgentState {
-		// 返回数组副本，防止调用者通过 state 直接增删内部消息。
-		return { messages: [...this.messages], isStreaming: this.streaming };
+		// 消息及其 content 数组都属于 Agent；深复制防止调用者改写嵌套状态。
+		return { messages: structuredClone(this.messages), isStreaming: this.streaming };
 	}
 
 	get transcript(): readonly Message[] {
-		// readonly 只约束 TypeScript 类型，复制数组才能同时建立运行时的容器边界。
-		return [...this.messages];
+		return structuredClone(this.messages);
 	}
 
 	get isStreaming(): boolean {
@@ -127,7 +128,7 @@ export class Agent {
 	private async notify(event: AgentEvent, signal?: AbortSignal): Promise<void> {
 		// Set 保持注册顺序；串行 await 也为监听器提供确定性的事件处理次序。
 		for (const listener of this.listeners) {
-			await listener(event, signal);
+			await listener(structuredClone(event), signal);
 		}
 	}
 }
