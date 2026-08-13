@@ -167,3 +167,58 @@ export function sliceByColumn(line: string, startColumn: number, length: number)
 
 	return result ? `${result}\x1b[0m` : "";
 }
+
+function updateActiveSgr(activeSgr: string, ansi: string): string {
+	if (!ansi.endsWith("m")) return activeSgr;
+	const parameters = ansi.slice(2, -1);
+	if (parameters === "" || parameters.split(";").includes("0")) return "";
+	return `${activeSgr}${ansi}`;
+}
+
+export function wrapTextWithAnsi(text: string, width: number): string[] {
+	if (width <= 0) return [];
+	const lines: string[] = [];
+	let activeSgr = "";
+
+	for (const hardLine of text.replace(/\r\n?/g, "\n").split("\n")) {
+		let current = activeSgr;
+		let currentWidth = 0;
+
+		const pushCurrent = (): void => {
+			lines.push(`${current}${activeSgr ? "\x1b[0m" : ""}`);
+			current = activeSgr;
+			currentWidth = 0;
+		};
+
+		for (let index = 0; index < hardLine.length; ) {
+			const ansi = readAnsi(hardLine, index);
+			if (ansi) {
+				current += ansi;
+				activeSgr = updateActiveSgr(activeSgr, ansi);
+				index += ansi.length;
+				continue;
+			}
+
+			let end = index + 1;
+			while (end < hardLine.length && !readAnsi(hardLine, end)) end += 1;
+			for (const { segment } of graphemeSegmenter.segment(hardLine.slice(index, end))) {
+				const segmentWidth = graphemeWidth(segment);
+				if (segmentWidth > width) {
+					if (currentWidth > 0) pushCurrent();
+					current += " ".repeat(width);
+					currentWidth = width;
+					pushCurrent();
+					continue;
+				}
+				if (currentWidth > 0 && currentWidth + segmentWidth > width) pushCurrent();
+				current += segment;
+				currentWidth += segmentWidth;
+			}
+			index = end;
+		}
+
+		if (currentWidth > 0 || current !== activeSgr || hardLine.length === 0) pushCurrent();
+	}
+
+	return lines;
+}
