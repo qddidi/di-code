@@ -11,8 +11,10 @@ import {
 	type LoadedSession,
 	SESSION_FORMAT_VERSION,
 	type SessionDiagnostic,
+	type SessionEntry,
 	type SessionHeader,
 	type SessionMessageEntry,
+	type SessionSummaryEntry,
 } from "./types.ts";
 
 export interface SessionManagerCreateOptions {
@@ -49,7 +51,7 @@ export class SessionManager {
 	private readonly now: () => number;
 	private readonly createId: () => string;
 	private readonly appendOptions: SessionAppendOptions;
-	private readonly sessionEntries: SessionMessageEntry[];
+	private readonly sessionEntries: SessionEntry[];
 	private readonly sessionDiagnostics: SessionDiagnostic[];
 	private appendQueue: Promise<void> = Promise.resolve();
 
@@ -91,7 +93,7 @@ export class SessionManager {
 		return new SessionManager(resolvedPath, await loadSessionFile(resolvedPath), options);
 	}
 
-	get entries(): readonly SessionMessageEntry[] {
+	get entries(): readonly SessionEntry[] {
 		return structuredClone(this.sessionEntries);
 	}
 
@@ -100,7 +102,19 @@ export class SessionManager {
 	}
 
 	get messages(): readonly Message[] {
-		return structuredClone(this.sessionEntries.map((entry) => entry.message));
+		return structuredClone(
+			this.sessionEntries
+				.filter((entry): entry is SessionMessageEntry => entry.type === "message")
+				.map((entry) => entry.message),
+		);
+	}
+
+	get latestSummary(): SessionSummaryEntry | undefined {
+		for (let index = this.sessionEntries.length - 1; index >= 0; index--) {
+			const entry = this.sessionEntries[index];
+			if (entry?.type === "summary") return structuredClone(entry);
+		}
+		return undefined;
 	}
 
 	get diagnostics(): readonly SessionDiagnostic[] {
@@ -124,6 +138,38 @@ export class SessionManager {
 				parentId: expectedParentId,
 				timestamp: createIsoTimestamp(this.now),
 				message: messageSnapshot,
+			};
+			await appendSessionEntry(this.filePath, entry, expectedParentId, this.appendOptions);
+			this.sessionEntries.push(structuredClone(entry));
+			return structuredClone(entry);
+		});
+
+		this.appendQueue = operation.then(
+			() => undefined,
+			() => undefined,
+		);
+		return operation;
+	}
+
+	appendSummary(input: {
+		readonly summary: string;
+		readonly firstKeptEntryId: string;
+		readonly tokensBefore: number;
+	}): Promise<SessionSummaryEntry> {
+		const inputSnapshot = structuredClone(input);
+		const operation = this.appendQueue.then(async () => {
+			const id = this.createId();
+			assertRecordId(id);
+			const expectedParentId = this.leafId;
+			const entry: SessionSummaryEntry = {
+				type: "summary",
+				version: SESSION_FORMAT_VERSION,
+				id,
+				parentId: expectedParentId,
+				timestamp: createIsoTimestamp(this.now),
+				summary: inputSnapshot.summary,
+				firstKeptEntryId: inputSnapshot.firstKeptEntryId,
+				tokensBefore: inputSnapshot.tokensBefore,
 			};
 			await appendSessionEntry(this.filePath, entry, expectedParentId, this.appendOptions);
 			this.sessionEntries.push(structuredClone(entry));

@@ -92,4 +92,23 @@ describe("session cross-process recovery", () => {
 		expect(restored.texts.slice(0, 2)).toEqual(["saved-question", "saved-answer"]);
 		expect(["from-a", "from-b"]).toContain(restored.texts[2]);
 	});
+
+	it("restores compressed model context while preserving all disk messages", async () => {
+		const written = await runFixture(["compact-write", sessionFile, root]);
+		expect(written).toMatchObject({ code: 0, stderr: "" });
+
+		const restored = await runFixture(["compact-read-context", sessionFile, root]);
+		expect(restored).toMatchObject({ code: 0, stderr: "" });
+		expect(JSON.parse(restored.stdout)).toEqual({
+			diskTexts: ["old-user", "old-asst", "new-user", "new-asst", "xxxxxxxxxxxxxxxxxxxx", "final"],
+			contextTexts: [
+				"<conversation-summary>\ncompressed\n</conversation-summary>",
+				"new-user",
+				"new-asst",
+				"xxxxxxxxxxxxxxxxxxxx",
+				"final",
+				"resumed",
+			],
+		});
+	});
 });

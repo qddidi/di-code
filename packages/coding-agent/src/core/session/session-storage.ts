@@ -4,9 +4,11 @@ import type { AssistantContent, AssistantMessage, Message, ToolResultContent, Us
 import {
 	type LoadedSession,
 	SESSION_FORMAT_VERSION,
+	type SessionEntry,
 	type SessionHeader,
 	SessionLoadError,
 	type SessionMessageEntry,
+	type SessionSummaryEntry,
 	SessionWriteError,
 } from "./types.ts";
 
@@ -177,14 +179,26 @@ function decodeHeader(value: unknown, filePath: string): SessionHeader {
 	return value as unknown as SessionHeader;
 }
 
-function decodeMessageEntry(value: unknown): { readonly entry?: SessionMessageEntry; readonly reason?: string } {
-	if (!isObject(value) || value.type !== "message") return { reason: 'record type must be "message"' };
+function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; readonly reason?: string } {
+	if (!isObject(value) || (value.type !== "message" && value.type !== "summary")) {
+		return { reason: 'record type must be "message" or "summary"' };
+	}
 	if (value.version !== SESSION_FORMAT_VERSION) return { reason: "record version must be 1" };
 	if (!isRecordId(value.id)) return { reason: "record id is invalid" };
 	if (!isRecordId(value.parentId)) return { reason: "record parentId is invalid" };
 	if (!isIsoTimestamp(value.timestamp)) return { reason: "record timestamp is not canonical ISO 8601 UTC" };
-	if (!isMessage(value.message)) return { reason: "record message does not match the Message contract" };
-	return { entry: value as unknown as SessionMessageEntry };
+	if (value.type === "message") {
+		if (!isMessage(value.message)) return { reason: "record message does not match the Message contract" };
+		return { entry: value as unknown as SessionMessageEntry };
+	}
+	if (typeof value.summary !== "string" || value.summary.trim().length === 0) {
+		return { reason: "record summary must be a non-empty string" };
+	}
+	if (!isRecordId(value.firstKeptEntryId)) return { reason: "record firstKeptEntryId is invalid" };
+	if (!Number.isSafeInteger(value.tokensBefore) || !isNonNegativeNumber(value.tokensBefore)) {
+		return { reason: "record tokensBefore must be a non-negative safe integer" };
+	}
+	return { entry: value as unknown as SessionSummaryEntry };
 }
 
 function withoutTrailingCarriageReturn(line: string): string {
@@ -229,23 +243,28 @@ export async function loadSessionFile(filePath: string): Promise<LoadedSession> 
 	}
 
 	const header = decodeHeader(headerValue, filePath);
-	const entries: SessionMessageEntry[] = [];
+	const entries: SessionEntry[] = [];
 	const diagnostics: LoadedSession["diagnostics"][number][] = [];
 	const seenIds = new Set<string>([header.id]);
+	const messageEntryIds = new Set<string>();
 	let expectedParentId = header.id;
 
 	for (let index = 1; index < physicalLines.length; index++) {
 		const lineNumber = index + 1;
 		try {
 			const value = JSON.parse(withoutTrailingCarriageReturn(physicalLines[index] ?? "")) as unknown;
-			const decoded = decodeMessageEntry(value);
+			const decoded = decodeSessionEntry(value);
 			if (!decoded.entry) throw new Error(decoded.reason ?? "Invalid session message record.");
 			if (seenIds.has(decoded.entry.id)) throw new Error("record id is duplicated");
 			if (decoded.entry.parentId !== expectedParentId) {
 				throw new Error(`record parentId must be "${expectedParentId}"`);
 			}
+			if (decoded.entry.type === "summary" && !messageEntryIds.has(decoded.entry.firstKeptEntryId)) {
+				throw new Error("record firstKeptEntryId must reference an earlier message entry");
+			}
 			entries.push(decoded.entry);
 			seenIds.add(decoded.entry.id);
+			if (decoded.entry.type === "message") messageEntryIds.add(decoded.entry.id);
 			expectedParentId = decoded.entry.id;
 		} catch (cause) {
 			diagnostics.push({ kind: "corrupt_record", lineNumber, reason: errorText(cause) });
@@ -264,7 +283,9 @@ export async function loadSessionFile(filePath: string): Promise<LoadedSession> 
 	return {
 		header,
 		entries,
-		messages: entries.map((entry) => entry.message),
+		messages: entries
+			.filter((entry): entry is SessionMessageEntry => entry.type === "message")
+			.map((entry) => entry.message),
 		diagnostics,
 	};
 }
@@ -352,12 +373,12 @@ async function releaseLock(handle: Awaited<ReturnType<typeof open>>, lockPath: s
 
 export async function appendSessionEntry(
 	filePath: string,
-	entry: SessionMessageEntry,
+	entry: SessionEntry,
 	expectedParentId: string,
 	options: SessionAppendOptions = {},
 ): Promise<void> {
 	const entrySnapshot = structuredClone(entry);
-	const decodedEntry = decodeMessageEntry(entrySnapshot);
+	const decodedEntry = decodeSessionEntry(entrySnapshot);
 	if (!decodedEntry.entry) {
 		throw new SessionWriteError(
 			"APPEND_FAILED",
@@ -378,6 +399,19 @@ export async function appendSessionEntry(
 		}
 
 		const actualParentId = loaded.entries.at(-1)?.id ?? loaded.header.id;
+		if (
+			entrySnapshot.type === "summary" &&
+			!loaded.entries.some(
+				(existing): existing is SessionMessageEntry =>
+					existing.type === "message" && existing.id === entrySnapshot.firstKeptEntryId,
+			)
+		) {
+			throw new SessionWriteError(
+				"APPEND_FAILED",
+				filePath,
+				`Refusing to append a summary with an invalid firstKeptEntryId to "${filePath}".`,
+			);
+		}
 		if (loaded.header.id === entrySnapshot.id || loaded.entries.some((existing) => existing.id === entrySnapshot.id)) {
 			throw new SessionWriteError(
 				"APPEND_FAILED",

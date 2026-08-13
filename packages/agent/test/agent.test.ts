@@ -2,6 +2,29 @@ import { type Context, createFauxProvider, type Message, type Provider } from "@
 import { describe, expect, it } from "vitest";
 import { Agent } from "../src/index.ts";
 
+function userMessage(text: string, timestamp: number): Extract<Message, { role: "user" }> {
+	return { role: "user", content: [{ type: "text", text }], timestamp };
+}
+
+function assistantMessage(text: string, timestamp: number): Extract<Message, { role: "assistant" }> {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		provider: "faux",
+		model: "faux-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		timestamp,
+		stopReason: "stop",
+	};
+}
+
 describe("Agent state wrapper", () => {
 	it("uses initial messages in the next provider request", async () => {
 		const initialMessages: Message[] = [
@@ -38,6 +61,114 @@ describe("Agent state wrapper", () => {
 
 		expect(requestedMessages[0]?.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
 		expect(requestedMessages[0]?.[0]).toEqual(initialMessages[0]);
+	});
+
+	it("uses compressed initial context while retaining the full transcript", async () => {
+		const fullHistory: Message[] = [
+			userMessage("old question", 1),
+			assistantMessage("old answer", 2),
+			userMessage("recent question", 3),
+			assistantMessage("recent answer", 4),
+		];
+		const compressedContext: Message[] = [
+			userMessage("<conversation-summary>\nold exchange\n</conversation-summary>", 5),
+			fullHistory[2] as Message,
+			fullHistory[3] as Message,
+		];
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "next" }] }] });
+		const requestedMessages: Message[][] = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const agent = new Agent({
+			provider,
+			model: faux.model,
+			initialMessages: fullHistory,
+			initialContextMessages: compressedContext,
+			now: () => 10,
+		});
+
+		await agent.prompt("new question");
+
+		expect(requestedMessages[0]?.slice(0, -1)).toEqual(compressedContext);
+		expect(agent.transcript.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"user",
+			"assistant",
+			"user",
+			"assistant",
+		]);
+	});
+
+	it("advances model context with only the current turn", async () => {
+		const fullHistory: Message[] = [userMessage("discarded but visible", 1), userMessage("recent", 2)];
+		const compressedContext: Message[] = [userMessage("summary", 3), fullHistory[1] as Message];
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		const agent = new Agent({
+			provider: faux.provider,
+			model: faux.model,
+			initialMessages: fullHistory,
+			initialContextMessages: compressedContext,
+			now: () => 4,
+		});
+
+		await agent.prompt("question");
+
+		expect(agent.contextMessages.slice(0, 2)).toEqual(compressedContext);
+		expect(agent.contextMessages.slice(2).map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(agent.transcript[0]).toEqual(fullHistory[0]);
+	});
+
+	it("deeply isolates context constructor input, getter, and replacement", () => {
+		const initialContext: Message[] = [userMessage("initial", 1)];
+		const replacement: Message[] = [userMessage("replacement", 2)];
+		const faux = createFauxProvider({ responses: [] });
+		const agent = new Agent({
+			provider: faux.provider,
+			model: faux.model,
+			initialMessages: [],
+			initialContextMessages: initialContext,
+		});
+
+		const initialBlock = initialContext[0]?.content[0];
+		if (initialBlock?.type === "text") initialBlock.text = "mutated input";
+		expect(agent.contextMessages).toEqual([userMessage("initial", 1)]);
+
+		agent.replaceContext(replacement);
+		const replacementBlock = replacement[0]?.content[0];
+		if (replacementBlock?.type === "text") replacementBlock.text = "mutated replacement";
+		const snapshot = agent.contextMessages;
+		const snapshotBlock = snapshot[0]?.content[0];
+		if (snapshotBlock?.type === "text") snapshotBlock.text = "mutated snapshot";
+
+		expect(agent.contextMessages).toEqual([userMessage("replacement", 2)]);
+		expect(agent.transcript).toEqual([]);
+	});
+
+	it("defaults model context to initial transcript when no separate context is supplied", () => {
+		const initialMessages: Message[] = [userMessage("same source", 1)];
+		const faux = createFauxProvider({ responses: [] });
+		const agent = new Agent({ provider: faux.provider, model: faux.model, initialMessages });
+
+		expect(agent.contextMessages).toEqual(initialMessages);
+	});
+
+	it("rejects context replacement while a prompt is streaming", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		const agent = new Agent({ provider: faux.provider, model: faux.model });
+
+		const prompt = agent.prompt("question");
+
+		expect(() => agent.replaceContext([userMessage("too late", 2)])).toThrow(
+			"Cannot replace Agent context while processing a prompt.",
+		);
+		await prompt;
+		expect(agent.contextMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
 	it("deeply isolates initial messages and transcript snapshots", () => {

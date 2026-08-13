@@ -156,7 +156,9 @@ describe("SessionManager", () => {
 
 		(manager.header as { cwd: string }).cwd = "C:\\mutated";
 		const entries = manager.entries;
-		(entries[0]?.message as Extract<Message, { role: "user" }>).content[0] = { type: "text", text: "entry mutation" };
+		const firstEntry = entries[0];
+		if (firstEntry?.type !== "message") throw new Error("Expected a message entry.");
+		(firstEntry.message as Extract<Message, { role: "user" }>).content[0] = { type: "text", text: "entry mutation" };
 		const messages = manager.messages;
 		(messages[0] as Extract<Message, { role: "user" }>).content[0] = { type: "text", text: "message mutation" };
 
@@ -178,5 +180,82 @@ describe("SessionManager", () => {
 
 		expect(manager.messages).toEqual([userMessage("original", 1)]);
 		expect((await SessionManager.open(sessionFile)).messages).toEqual([userMessage("original", 1)]);
+	});
+
+	it("appends a summary without removing original messages", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			createId: idSequence("session-1", "entry-1", "summary-1"),
+		});
+		const kept = await manager.appendMessage(userMessage("kept", 1));
+
+		const summary = await manager.appendSummary({
+			summary: "Earlier work",
+			firstKeptEntryId: kept.id,
+			tokensBefore: 100,
+		});
+
+		expect(summary).toMatchObject({
+			type: "summary",
+			id: "summary-1",
+			parentId: kept.id,
+			firstKeptEntryId: kept.id,
+			tokensBefore: 100,
+		});
+		expect(manager.entries.map((entry) => entry.type)).toEqual(["message", "summary"]);
+		expect(manager.messages).toEqual([userMessage("kept", 1)]);
+	});
+
+	it("returns the latest summary when more than one exists", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			createId: idSequence("session-1", "entry-1", "summary-1", "summary-2"),
+		});
+		const kept = await manager.appendMessage(userMessage("kept", 1));
+		await manager.appendSummary({ summary: "first", firstKeptEntryId: kept.id, tokensBefore: 10 });
+		await manager.appendSummary({ summary: "second", firstKeptEntryId: kept.id, tokensBefore: 20 });
+
+		expect(manager.latestSummary).toMatchObject({ id: "summary-2", summary: "second" });
+	});
+
+	it("serializes message and summary appends through one queue", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			createId: idSequence("session-1", "entry-1", "summary-1", "entry-2"),
+		});
+		const kept = await manager.appendMessage(userMessage("kept", 1));
+
+		await Promise.all([
+			manager.appendSummary({ summary: "summary", firstKeptEntryId: kept.id, tokensBefore: 10 }),
+			manager.appendMessage(userMessage("after", 2)),
+		]);
+
+		expect(manager.entries.map(({ type, id, parentId }) => ({ type, id, parentId }))).toEqual([
+			{ type: "message", id: "entry-1", parentId: "session-1" },
+			{ type: "summary", id: "summary-1", parentId: "entry-1" },
+			{ type: "message", id: "entry-2", parentId: "summary-1" },
+		]);
+	});
+
+	it("isolates summary append input and getter snapshots", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			createId: idSequence("session-1", "entry-1", "summary-1"),
+		});
+		const kept = await manager.appendMessage(userMessage("kept", 1));
+		const input = { summary: "original", firstKeptEntryId: kept.id, tokensBefore: 10 };
+
+		const appending = manager.appendSummary(input);
+		input.summary = "mutated";
+		await appending;
+		const latest = manager.latestSummary;
+		if (latest) (latest as { summary: string }).summary = "snapshot mutation";
+
+		expect(manager.latestSummary?.summary).toBe("original");
+		expect((await SessionManager.open(sessionFile)).latestSummary?.summary).toBe("original");
 	});
 });

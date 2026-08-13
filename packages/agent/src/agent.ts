@@ -9,6 +9,7 @@ export interface AgentOptions {
 	readonly systemPrompt?: string;
 	readonly now?: () => number;
 	readonly initialMessages?: readonly Message[];
+	readonly initialContextMessages?: readonly Message[];
 }
 
 /** Agent 事件监听器；返回 Promise 时，后续监听器会等待它完成。 */
@@ -34,8 +35,9 @@ function createUserMessage(text: string, now: () => number): Extract<Message, { 
 
 /** 管理已完成的对话历史，并把单轮事件按顺序分发给订阅者。 */
 export class Agent {
-	// messages 只保存已提交的轮次；本轮增量由事件流承载，直到 agent_end 才整体写入。
-	private messages: Message[] = [];
+	// transcript 保留完整历史，context 可以由产品层替换成压缩后的模型视图。
+	private transcriptMessages: Message[];
+	private contextMessageState: Message[];
 	private streaming = false;
 	private readonly listeners = new Set<AgentListener>();
 	private readonly provider: Provider;
@@ -47,22 +49,35 @@ export class Agent {
 		this.provider = options.provider;
 		this.model = options.model;
 		this.tools = [...(options.tools ?? [])];
-		this.messages = structuredClone([...(options.initialMessages ?? [])]);
+		const initialMessages = structuredClone([...(options.initialMessages ?? [])]);
+		this.transcriptMessages = initialMessages;
+		this.contextMessageState = structuredClone([...(options.initialContextMessages ?? initialMessages)]);
 		this.systemPrompt = options.systemPrompt;
 		this.now = options.now ?? Date.now;
 	}
 
 	get state(): AgentState {
 		// 消息及其 content 数组都属于 Agent；深复制防止调用者改写嵌套状态。
-		return { messages: structuredClone(this.messages), isStreaming: this.streaming };
+		return { messages: structuredClone(this.transcriptMessages), isStreaming: this.streaming };
 	}
 
 	get transcript(): readonly Message[] {
-		return structuredClone(this.messages);
+		return structuredClone(this.transcriptMessages);
+	}
+
+	get contextMessages(): readonly Message[] {
+		return structuredClone(this.contextMessageState);
 	}
 
 	get isStreaming(): boolean {
 		return this.streaming;
+	}
+
+	replaceContext(messages: readonly Message[]): void {
+		if (this.streaming) {
+			throw new Error("Cannot replace Agent context while processing a prompt.");
+		}
+		this.contextMessageState = structuredClone([...messages]);
 	}
 
 	subscribe(listener: AgentListener): () => void {
@@ -84,9 +99,10 @@ export class Agent {
 
 		this.streaming = true;
 		const prompt = createUserMessage(text, this.now);
+		const contextLength = this.contextMessageState.length;
 		const context: AgentContext = {
 			systemPrompt: this.systemPrompt,
-			messages: [...this.messages],
+			messages: structuredClone(this.contextMessageState),
 			tools: [...this.tools],
 		};
 		const stream = agentLoop(prompt, context, { provider: this.provider, model: this.model, now: this.now }, signal);
@@ -109,8 +125,10 @@ export class Agent {
 					if (!candidate || candidate.role !== "assistant") {
 						throw new Error("agent_end did not contain an assistant message");
 					}
-					// 只在终止事件到达后原子替换历史，外部读取不会看到半个轮次。
-					this.messages = [...event.messages];
+					// agent_end 含旧模型 context；只把本轮新增部分追加到完整 transcript。
+					const currentTurn = event.messages.slice(contextLength);
+					this.transcriptMessages.push(...structuredClone(currentTurn));
+					this.contextMessageState = structuredClone(event.messages);
 					finalAssistant = candidate;
 				}
 			}

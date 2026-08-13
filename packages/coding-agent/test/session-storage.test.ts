@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { Message } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appendSessionEntry, createSessionFile, loadSessionFile } from "../src/core/session/session-storage.ts";
-import { SESSION_FORMAT_VERSION, type SessionHeader, type SessionMessageEntry } from "../src/core/session/types.ts";
+import {
+	SESSION_FORMAT_VERSION,
+	type SessionHeader,
+	type SessionMessageEntry,
+	type SessionSummaryEntry,
+} from "../src/core/session/types.ts";
 
 const RECORD_TIME = "2026-08-12T13:00:00.000Z";
 
@@ -63,6 +68,25 @@ function createEntry(id: string, parentId: string, message: Message): SessionMes
 	};
 }
 
+function createSummary(
+	id: string,
+	parentId: string,
+	firstKeptEntryId: string,
+	overrides: Partial<SessionSummaryEntry> = {},
+): SessionSummaryEntry {
+	return {
+		type: "summary",
+		version: SESSION_FORMAT_VERSION,
+		id,
+		parentId,
+		timestamp: RECORD_TIME,
+		summary: "Earlier work summary",
+		firstKeptEntryId,
+		tokensBefore: 100,
+		...overrides,
+	};
+}
+
 async function writeRecords(
 	filePath: string,
 	records: readonly unknown[],
@@ -101,6 +125,76 @@ describe("loadSessionFile", () => {
 		expect(loaded.header).toEqual(records[0]);
 		expect(loaded.entries).toEqual(records.slice(1));
 		expect(loaded.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool_result"]);
+		expect(loaded.diagnostics).toEqual([]);
+	});
+
+	it("loads summary entries while preserving every original message", async () => {
+		const first = createEntry("entry-1", "session-1", userMessage);
+		const kept = createEntry("entry-2", "entry-1", assistantMessage);
+		const summary = createSummary("summary-1", "entry-2", kept.id);
+		await writeRecords(sessionFile, [createHeader(), first, kept, summary]);
+
+		const loaded = await loadSessionFile(sessionFile);
+
+		expect(loaded.entries).toEqual([first, kept, summary]);
+		expect(loaded.messages).toEqual([userMessage, assistantMessage]);
+		expect(loaded.diagnostics).toEqual([]);
+	});
+
+	it("treats invalid summary fields as a corrupt record", async () => {
+		const kept = createEntry("entry-1", "session-1", userMessage);
+		const invalidSummaries = [
+			{
+				entry: createSummary("summary-1", kept.id, kept.id, { summary: "   " }),
+				reason: "record summary must be a non-empty string",
+			},
+			{
+				entry: createSummary("summary-1", kept.id, kept.id, { tokensBefore: -1 }),
+				reason: "record tokensBefore must be a non-negative safe integer",
+			},
+			{
+				entry: createSummary("summary-1", kept.id, kept.id, { tokensBefore: 1.5 }),
+				reason: "record tokensBefore must be a non-negative safe integer",
+			},
+		];
+
+		for (const { entry, reason } of invalidSummaries) {
+			await writeRecords(sessionFile, [createHeader(), kept, entry]);
+			const loaded = await loadSessionFile(sessionFile);
+			expect(loaded.entries).toEqual([kept]);
+			expect(loaded.diagnostics[0]).toMatchObject({ kind: "corrupt_record", lineNumber: 3, reason });
+		}
+	});
+
+	it("rejects summary kept references to a missing, header, or summary record", async () => {
+		const first = createEntry("entry-1", "session-1", userMessage);
+		const firstSummary = createSummary("summary-1", first.id, first.id);
+		const cases = [
+			[createHeader(), first, createSummary("summary-1", first.id, "missing")],
+			[createHeader(), first, createSummary("summary-1", first.id, "session-1")],
+			[createHeader(), first, firstSummary, createSummary("summary-2", firstSummary.id, firstSummary.id)],
+		];
+
+		for (const records of cases) {
+			await writeRecords(sessionFile, records);
+			const loaded = await loadSessionFile(sessionFile);
+			expect(loaded.diagnostics[0]).toMatchObject({
+				kind: "corrupt_record",
+				reason: "record firstKeptEntryId must reference an earlier message entry",
+			});
+		}
+	});
+
+	it("continues the linear parent chain with messages after a summary", async () => {
+		const first = createEntry("entry-1", "session-1", userMessage);
+		const summary = createSummary("summary-1", first.id, first.id);
+		const next = createEntry("entry-2", summary.id, assistantMessage);
+		await writeRecords(sessionFile, [createHeader(), first, summary, next]);
+
+		const loaded = await loadSessionFile(sessionFile);
+
+		expect(loaded.entries).toEqual([first, summary, next]);
+		expect(loaded.messages).toEqual([userMessage, assistantMessage]);
 		expect(loaded.diagnostics).toEqual([]);
 	});
 

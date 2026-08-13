@@ -17,10 +17,21 @@ export interface SessionHeader extends SessionRecordBase {
 
 export interface SessionMessageEntry extends SessionRecordBase {
 	readonly type: "message";
+	readonly parentId: string;
 	readonly message: Message;
 }
 
-export type SessionRecord = SessionHeader | SessionMessageEntry;
+export interface SessionSummaryEntry extends SessionRecordBase {
+	readonly type: "summary";
+	readonly parentId: string;
+	readonly summary: string;
+	readonly firstKeptEntryId: string;
+	readonly tokensBefore: number;
+}
+
+export type SessionEntry = SessionMessageEntry | SessionSummaryEntry;
+
+export type SessionRecord = SessionHeader | SessionEntry;
 
 export type SessionDiagnostic =
 	| {
@@ -36,7 +47,7 @@ export type SessionDiagnostic =
 
 export interface LoadedSession {
 	readonly header: SessionHeader;
-	readonly entries: readonly SessionMessageEntry[];
+	readonly entries: readonly SessionEntry[];
 	readonly messages: readonly Message[];
 	readonly diagnostics: readonly SessionDiagnostic[];
 }
