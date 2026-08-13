@@ -22,7 +22,8 @@
 	},
 	"dependencies": {
 		"@di-code/agent": "0.0.0",
-		"@di-code/ai": "0.0.0"
+		"@di-code/ai": "0.0.0",
+		"@di-code/tui": "0.0.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"

@@ -1,6 +1,8 @@
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
+import { ProcessTerminal, TUI } from "@di-code/tui";
 import { type CliDependencies, runCli } from "./cli.ts";
 import { AgentSession } from "./core/session.ts";
+import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
 
@@ -26,6 +28,13 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			});
 			if (command.mode === "json") {
 				return runJsonMode(command.prompt, session, options);
+			}
+			if (command.mode === "interactive") {
+				const terminal = new ProcessTerminal();
+				const tui = new TUI(terminal);
+				const mode = new InteractiveMode({ session, tui });
+				mode.start(command.prompt);
+				return 0;
 			}
 			return runPrintMode(command.prompt, session, options);
 		},

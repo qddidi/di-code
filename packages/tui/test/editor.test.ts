@@ -5,6 +5,22 @@ import { CURSOR_MARKER } from "../src/tui.ts";
 import { visibleWidth } from "../src/utils.ts";
 
 describe("Editor editing", () => {
+	it("lets the owner consume commands and interrupts", () => {
+		const editor = new Editor();
+		const commands: string[] = [];
+		let interrupted = false;
+		editor.onCommand = (data) => {
+			commands.push(data);
+			return data === "\x0f";
+		};
+		editor.onInterrupt = () => {
+			interrupted = true;
+		};
+		editor.handleInput("\x0f");
+		editor.handleInput("\x03");
+		assert.deepEqual(commands, ["\x0f", "\x03"]);
+		assert.equal(interrupted, true);
+	});
 	it("inserts text, newlines, and reports changes", () => {
 		const editor = new Editor();
 		const changes: string[] = [];

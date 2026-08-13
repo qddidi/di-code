@@ -23,7 +23,9 @@ describe("parseCliArgs", () => {
 
 	it("rejects missing and unsupported mode values", () => {
 		expect(() => parseCliArgs(["--mode"])).toThrow("Option --mode requires a value.");
-		expect(() => parseCliArgs(["--mode", "xml", "hello"])).toThrow('Unsupported mode "xml". Expected print or json.');
+		expect(() => parseCliArgs(["--mode", "xml", "hello"])).toThrow(
+			'Unsupported mode "xml". Expected print, json, or interactive.',
+		);
 	});
 
 	it("rejects conflicting or unknown options", () => {

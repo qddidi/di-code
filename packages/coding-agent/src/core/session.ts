@@ -31,6 +31,13 @@ export interface AgentSessionOptions {
 	readonly compaction?: AgentSessionCompactionOptions;
 }
 
+export type AgentSessionEvent =
+	| import("@di-code/agent").AgentEvent
+	| { type: "compaction_start"; reason: "threshold" }
+	| { type: "compaction_end"; reason: "threshold"; success: boolean; errorMessage?: string };
+
+export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<void>;
+
 export class AgentSession {
 	private readonly agent: Agent;
 	private readonly sessionManager?: SessionManager;
@@ -42,6 +49,7 @@ export class AgentSession {
 	private readonly keepRecentTokens: number;
 	private persistenceError?: unknown;
 	private promptActive = false;
+	private readonly sessionListeners = new Set<AgentSessionListener>();
 
 	constructor(options: AgentSessionOptions) {
 		this.sessionManager = options.sessionManager;
@@ -83,6 +91,9 @@ export class AgentSession {
 				throw cause;
 			}
 		});
+		this.agent.subscribe(async (event) => {
+			await this.emitSession(event);
+		});
 	}
 
 	get transcript(): readonly Message[] {
@@ -122,6 +133,15 @@ export class AgentSession {
 		return this.agent.subscribe(listener);
 	}
 
+	subscribeSession(listener: AgentSessionListener): () => void {
+		this.sessionListeners.add(listener);
+		return () => this.sessionListeners.delete(listener);
+	}
+
+	private async emitSession(event: AgentSessionEvent): Promise<void> {
+		for (const listener of this.sessionListeners) await listener(structuredClone(event));
+	}
+
 	private async compactIfNeeded(text: string, signal?: AbortSignal): Promise<void> {
 		if (!this.compactionEnabled || !this.sessionManager) return;
 
@@ -134,17 +154,27 @@ export class AgentSession {
 		const estimatedTokens = estimateContextTokens([...context.messages, pendingUser]);
 		if (!shouldCompact(estimatedTokens, this.contextBudget)) return;
 
+		await this.emitSession({ type: "compaction_start", reason: "threshold" });
 		const preparation = prepareCompaction(context.messages, this.keepRecentTokens);
 		const firstKeptEntryId = preparation ? context.sourceEntryIds[preparation.firstKeptMessageIndex] : undefined;
 		if (!preparation || typeof firstKeptEntryId !== "string") {
-			throw new Error("Context limit reached but no valid compaction cut point was found.");
+			const errorMessage = "Context limit reached but no valid compaction cut point was found.";
+			await this.emitSession({ type: "compaction_end", reason: "threshold", success: false, errorMessage });
+			throw new Error(errorMessage);
 		}
 
-		const summary = await generateCompactionSummary(preparation, this.provider, this.model, {
-			reserveTokens: this.contextBudget.reserveTokens,
-			signal,
-			now: this.now,
-		});
+		let summary: string;
+		try {
+			summary = await generateCompactionSummary(preparation, this.provider, this.model, {
+				reserveTokens: this.contextBudget.reserveTokens,
+				signal,
+				now: this.now,
+			});
+		} catch (cause) {
+			const errorMessage = cause instanceof Error ? cause.message : String(cause);
+			await this.emitSession({ type: "compaction_end", reason: "threshold", success: false, errorMessage });
+			throw cause;
+		}
 
 		try {
 			await this.sessionManager.appendSummary({
@@ -154,9 +184,12 @@ export class AgentSession {
 			});
 		} catch (cause) {
 			this.persistenceError = cause;
+			const errorMessage = cause instanceof Error ? cause.message : String(cause);
+			await this.emitSession({ type: "compaction_end", reason: "threshold", success: false, errorMessage });
 			throw cause;
 		}
 
 		this.agent.replaceContext(buildSessionContext(this.sessionManager.entries).messages);
+		await this.emitSession({ type: "compaction_end", reason: "threshold", success: true });
 	}
 }

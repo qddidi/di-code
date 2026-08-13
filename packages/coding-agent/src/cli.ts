@@ -1,4 +1,4 @@
-export type OutputMode = "print" | "json";
+export type OutputMode = "print" | "json" | "interactive";
 
 export type CliCommand = { kind: "help" } | { kind: "version" } | { kind: "run"; mode: OutputMode; prompt: string };
 
@@ -29,13 +29,17 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			printAlias = true;
 			continue;
 		}
+		if (argument === "--interactive") {
+			mode = "interactive";
+			continue;
+		}
 		if (argument === "--mode") {
 			const value = args[index + 1];
 			if (value === undefined) {
 				throw new CliUsageError("Option --mode requires a value.");
 			}
-			if (value !== "print" && value !== "json") {
-				throw new CliUsageError(`Unsupported mode "${value}". Expected print or json.`);
+			if (value !== "print" && value !== "json" && value !== "interactive") {
+				throw new CliUsageError(`Unsupported mode "${value}". Expected print, json, or interactive.`);
 			}
 			mode = value;
 			index++;
@@ -49,8 +53,8 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		}
 	}
 
-	if (printAlias && mode === "json") {
-		throw new CliUsageError("Cannot combine --print with --mode json.");
+	if (printAlias && mode !== "print") {
+		throw new CliUsageError(`Cannot combine --print with --mode ${mode}.`);
 	}
 	if (promptParts.length === 0) {
 		throw new CliUsageError("A prompt is required.");
@@ -63,7 +67,8 @@ const HELP_TEXT = `Usage: di-code [options] <prompt>
 
 Options:
   -p, --print        Print only the final assistant text (default)
-  --mode <mode>      Output mode: print or json
+  --mode <mode>      Output mode: print, json, or interactive
+  --interactive      Start interactive terminal mode
   -h, --help         Show help
   -v, --version      Show version
 `;

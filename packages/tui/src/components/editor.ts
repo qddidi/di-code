@@ -53,6 +53,8 @@ export class Editor implements Component, Focusable {
 	disableSubmit = false;
 	onSubmit?: (value: string) => void;
 	onEscape?: () => void;
+	onCommand?: (data: string) => boolean;
+	onInterrupt?: () => void;
 	onChange?: (value: string) => void;
 
 	private value = "";
@@ -111,6 +113,11 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		if (this.consumePaste(data)) return;
+		if (this.onCommand?.(data) === true) return;
+		if (data === "\x03") {
+			this.onInterrupt?.();
+			return;
+		}
 		switch (data) {
 			case "\r":
 			case "\n":

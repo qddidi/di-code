@@ -22,6 +22,19 @@ describe("AgentSession read integration", () => {
 		root = await mkdtemp(join(tmpdir(), "di-code-session-"));
 	});
 
+	it("emits session events separately from Agent events", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "ok" }] }] });
+		const session = new AgentSession({ allowedRoot: root, provider: faux.provider, model: faux.model });
+		const events: string[] = [];
+		const unsubscribe = session.subscribeSession((event) => {
+			events.push(event.type);
+		});
+		await session.prompt("hello");
+		unsubscribe();
+		expect(events).toContain("agent_start");
+		expect(events).toContain("agent_end");
+	});
+
 	afterEach(async () => {
 		await rm(root, { recursive: true, force: true });
 	});
