@@ -1,7 +1,21 @@
 export type { Static, TSchema } from "typebox";
 export { Type } from "typebox";
+export type {
+	OpenAIProviderErrorKind,
+	OpenAIProviderErrorOptions,
+	OpenAIResponsesDependencies,
+	OpenAIResponsesFunctionTool,
+	OpenAIResponsesInputItem,
+	OpenAIResponsesInputText,
+	OpenAIResponsesOutputText,
+	OpenAIResponsesRequest,
+	OpenAIResponsesStreamOptions,
+} from "./api/openai-responses.ts";
+export { buildOpenAIResponsesRequest, OpenAIProviderError, streamOpenAIResponses } from "./api/openai-responses.ts";
 export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./providers/faux.ts";
 export { createFauxProvider } from "./providers/faux.ts";
+export type { OpenAIProviderOptions } from "./providers/openai.ts";
+export { createOpenAIProvider } from "./providers/openai.ts";
 export type {
 	Api,
 	AssistantContent,
