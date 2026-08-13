@@ -16,6 +16,9 @@
 		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest run --passWithNoTests"
 	},
+	"dependencies": {
+		"get-east-asian-width": "1.6.0"
+	},
 	"engines": {
 		"node": ">=22.19.0"
 	}
