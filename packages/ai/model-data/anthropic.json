@@ -1,0 +1,14 @@
+{
+	"claude-sonnet-4-5": {
+		"id": "claude-sonnet-4-5",
+		"name": "Claude Sonnet 4.5",
+		"provider": "anthropic",
+		"api": "anthropic-messages",
+		"input": ["text", "image"],
+		"reasoning": true,
+		"contextWindow": 200000,
+		"maxOutputTokens": 64000,
+		"cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+		"compat": { "tools": "supported", "images": "supported", "thinking": "supported" }
+	}
+}

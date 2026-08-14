@@ -300,6 +300,7 @@ export function createFauxProvider(options: FauxProviderOptions): FauxProviderHa
 		id: "faux",
 		name: "Faux Provider",
 		models: [model],
+		getModels: () => [model],
 		stream(requestedModel, _context, streamOptions) {
 			// 在同步阶段领取响应，连续调用会立刻占用不同的 FIFO 项。
 			const response = responses.shift() ?? {

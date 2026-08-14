@@ -262,7 +262,7 @@ export function buildOpenAIResponsesRequest(
 	context: Context,
 	options: StreamOptions = {},
 ): OpenAIResponsesRequest {
-	assertSupportedModel(model);
+	if (options.providerId !== model.provider) assertSupportedModel(model);
 	assertOptions(options);
 
 	return {

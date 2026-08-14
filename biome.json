@@ -8,6 +8,7 @@
 			"packages/*/package.json",
 			"packages/*/tsconfig*.json",
 			"packages/*/src/**/*.ts",
+			"!packages/ai/src/providers/models.generated.ts",
 			"packages/*/test/**/*.ts"
 		]
 	},

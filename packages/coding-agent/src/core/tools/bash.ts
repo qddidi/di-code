@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import type { AgentTool } from "@di-code/agent";
@@ -89,6 +90,33 @@ function createOutputCapture(maxBytes: number): {
 	};
 }
 
+function resolveBashShell(): string {
+	if (process.platform !== "win32") return "/bin/bash";
+
+	const programFiles = process.env.ProgramFiles;
+	const programFilesX86 = process.env["ProgramFiles(x86)"];
+	const candidates = [
+		process.env.DI_CODE_BASH_PATH,
+		programFiles ? `${programFiles}\\Git\\bin\\bash.exe` : undefined,
+		programFiles ? `${programFiles}\\Git\\usr\\bin\\bash.exe` : undefined,
+		programFilesX86 ? `${programFilesX86}\\Git\\bin\\bash.exe` : undefined,
+	].filter((path): path is string => typeof path === "string" && path.length > 0);
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+
+	try {
+		const result = spawnSync("where", ["bash.exe"], { encoding: "utf8", timeout: 5000, windowsHide: true });
+		const path = result.status === 0 ? result.stdout.trim().split(/\r?\n/)[0] : undefined;
+		if (path && existsSync(path)) return path;
+	} catch {
+		// The explicit error below explains how to install or configure Bash.
+	}
+	throw new Error(
+		"No Bash shell found on Windows. Install Git for Windows, add bash.exe to PATH, or set DI_CODE_BASH_PATH.",
+	);
+}
+
 function waitForProcess(command: string, cwd: string, options: BashRunOptions): Promise<BashExecution> {
 	return new Promise((resolve, reject) => {
 		if (options.signal?.aborted) {
@@ -96,14 +124,14 @@ function waitForProcess(command: string, cwd: string, options: BashRunOptions): 
 			return;
 		}
 
-		const shell = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "/bin/sh";
-		const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-c", command];
+		const shell = resolveBashShell();
+		const args = ["-c", command];
 		const child = spawn(shell, args, {
 			cwd,
 			detached: process.platform !== "win32",
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
-			windowsVerbatimArguments: process.platform === "win32",
+			windowsVerbatimArguments: false,
 		});
 
 		let timedOut = false;

@@ -1,0 +1,26 @@
+{
+	"gpt-4.1-mini": {
+		"id": "gpt-4.1-mini",
+		"name": "GPT-4.1 mini",
+		"provider": "openai",
+		"api": "openai-responses",
+		"input": ["text", "image"],
+		"reasoning": true,
+		"contextWindow": 1048576,
+		"maxOutputTokens": 32768,
+		"cost": { "input": 0.4, "output": 1.6, "cacheRead": 0.1, "cacheWrite": 0.4 },
+		"compat": { "tools": "supported", "images": "supported", "thinking": "supported" }
+	},
+	"gpt-4o": {
+		"id": "gpt-4o",
+		"name": "GPT-4o",
+		"provider": "openai",
+		"api": "openai-responses",
+		"input": ["text", "image"],
+		"reasoning": false,
+		"contextWindow": 128000,
+		"maxOutputTokens": 16384,
+		"cost": { "input": 2.5, "output": 10, "cacheRead": 1.25, "cacheWrite": 0 },
+		"compat": { "tools": "supported", "images": "supported", "thinking": "unsupported" }
+	}
+}

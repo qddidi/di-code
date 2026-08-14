@@ -49,6 +49,12 @@ afterEach(async () => {
 });
 
 describe("createBashTool", () => {
+	it.runIf(process.platform === "win32")("executes POSIX syntax through Bash instead of cmd.exe", async () => {
+		const root = await createTempDir();
+		const text = textOf(await createBashTool(root).execute("bash-posix", { command: "printf 'bash-ok'" }));
+		expect(text).toContain("stdout:\nbash-ok");
+	});
+
 	it("captures stdout and stderr with a successful status", async () => {
 		const root = await createTempDir();
 		const result = await createBashTool(root).execute("bash-1", {

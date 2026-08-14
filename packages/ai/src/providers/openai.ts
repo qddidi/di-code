@@ -1,14 +1,29 @@
 import { OpenAIProviderError, streamOpenAIResponses } from "../api/openai-responses.ts";
-import type { Context, Model, Provider, StreamOptions, StreamResult } from "../types.ts";
+import { RemoteModelCatalog } from "../model-catalog.ts";
+import type {
+	Context,
+	Model,
+	ModelCatalogStore,
+	ModelRefreshContext,
+	Provider,
+	StreamOptions,
+	StreamResult,
+} from "../types.ts";
+import { OPENAI_MODELS } from "./models.generated.ts";
 
 export interface OpenAIProviderOptions {
-	readonly models: readonly Model[];
+	readonly models?: readonly Model[];
 	readonly apiKey?: string;
 	readonly baseUrl?: string;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly fetch?: typeof fetch;
 	readonly now?: () => number;
 	readonly sleep?: (milliseconds: number) => Promise<void>;
+	readonly catalogBaseUrl?: string;
+	readonly catalogStore?: ModelCatalogStore;
+	readonly allowModelNetwork?: boolean;
+	readonly providerId?: string;
+	readonly providerName?: string;
 }
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
@@ -49,8 +64,8 @@ function resolveBaseUrl(options: OpenAIProviderOptions): string {
 function assertModels(models: readonly Model[]): void {
 	if (models.length === 0) throw new Error("OpenAI provider requires at least one model");
 	for (const model of models) {
-		if (model.provider !== "openai" || model.api !== "openai-responses") {
-			throw new Error('OpenAI provider models must use provider "openai" and api "openai-responses"');
+		if (model.api !== "openai-responses") {
+			throw new Error('OpenAI provider models must use api "openai-responses"');
 		}
 	}
 }
@@ -166,24 +181,44 @@ async function retryingFetch(
 
 /** Creates the OpenAI Provider while keeping credentials and retry policy outside the generic Agent contract. */
 export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
-	assertModels(options.models);
+	const models = options.models ?? OPENAI_MODELS;
+	assertModels(models);
 	const apiKey = resolveApiKey(options);
 	const baseUrl = resolveBaseUrl(options);
 	const fetchImpl = options.fetch ?? globalThis.fetch;
 	const sleeper = options.sleep ?? ((milliseconds: number) => defaultSleep(milliseconds, undefined));
-	const models = options.models.map((model) => ({ ...model, input: [...model.input], cost: { ...model.cost } }));
+	const resolvedModels = models.map((model) => ({ ...model, input: [...model.input], cost: { ...model.cost } }));
+	const providerId = options.providerId ?? "openai";
+	const catalog = new RemoteModelCatalog(providerId, resolvedModels, {
+		baseUrl: options.catalogBaseUrl ?? "https://pi.dev",
+		fetch: fetchImpl,
+		now: options.now,
+	});
 
 	return {
-		id: "openai",
-		name: "OpenAI",
-		models,
+		id: providerId,
+		name: options.providerName ?? (providerId === "openai" ? "OpenAI" : providerId),
+		get models() {
+			return catalog.getModels();
+		},
+		getModels: () => catalog.getModels(),
+		...(options.catalogStore
+			? {
+					refreshModels: (context: ModelRefreshContext) =>
+						catalog.refresh({
+							...context,
+							store: options.catalogStore as ModelCatalogStore,
+							allowNetwork: options.allowModelNetwork ?? context.allowNetwork,
+						}),
+				}
+			: {}),
 		stream(model: Model, context: Context, streamOptions?: StreamOptions): StreamResult {
 			const fetchWithRetry = (input: string | URL | Request, init?: RequestInit) =>
 				retryingFetch(fetchImpl, sleeper, input, init);
 			return streamOpenAIResponses(
 				model,
 				context,
-				{ ...streamOptions, apiKey, baseUrl },
+				{ ...streamOptions, apiKey, baseUrl, providerId },
 				{ fetch: fetchWithRetry, now: options.now },
 			);
 		},

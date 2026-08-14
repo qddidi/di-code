@@ -14,7 +14,9 @@
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
-		"test": "vitest run --passWithNoTests"
+		"test": "vitest run --passWithNoTests",
+		"generate:model-data": "node --experimental-strip-types scripts/generate-model-data.ts",
+		"check:model-data": "node --experimental-strip-types scripts/generate-model-data.ts --check"
 	},
 	"engines": {
 		"node": ">=22.19.0"

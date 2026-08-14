@@ -245,6 +245,8 @@ export interface StreamOptions {
 	temperature?: number;
 	/** 本次调用允许生成的最大 token 数。 */
 	maxTokens?: number;
+	/** Internal provider ownership override used by configured compatible providers. */
+	providerId?: string;
 }
 
 /** 既可逐个消费事件，也可等待最终助手消息的流式结果。 */
@@ -269,6 +271,27 @@ export interface Provider {
 	readonly name: string;
 	/** 当前 Provider 可用的模型元数据。 */
 	readonly models: readonly Model[];
+	/** 当前包含静态基线和动态目录覆盖层的模型快照。 */
+	readonly getModels?: () => readonly Model[];
+	/** 可选的动态目录刷新入口；静态 Provider 不实现。 */
+	readonly refreshModels?: (context: ModelRefreshContext) => Promise<void>;
 	/** 使用指定模型、上下文和选项发起一次流式调用。 */
 	stream(model: Model, context: Context, options?: StreamOptions): StreamResult;
+}
+
+export interface ModelCatalogEntry {
+	readonly models: readonly Model[];
+	readonly checkedAt: number;
+}
+
+export interface ModelCatalogStore {
+	read(): Promise<ModelCatalogEntry | undefined>;
+	write(entry: ModelCatalogEntry): Promise<void>;
+}
+
+export interface ModelRefreshContext {
+	readonly store: ModelCatalogStore;
+	readonly allowNetwork: boolean;
+	readonly force?: boolean;
+	readonly signal?: AbortSignal;
 }

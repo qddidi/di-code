@@ -17,7 +17,7 @@
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
-		"dev": "node --experimental-strip-types src/entry.ts",
+		"dev": "node --env-file-if-exists=../../.env --env-file-if-exists=.di-code/.env --experimental-strip-types src/entry.ts",
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {

@@ -9,7 +9,9 @@
 	"scripts": {
 		"build": "npm run build --workspace @di-code/tui && npm run build --workspace @di-code/ai && npm run build --workspace @di-code/agent && npm run build --workspace @di-code/coding-agent",
 		"check": "biome check . && tsc --noEmit -p tsconfig.json",
-		"dev": "node --experimental-strip-types packages/coding-agent/src/entry.ts",
+		"check:model-data": "npm run check:model-data --workspace @di-code/ai",
+		"mock:remote": "node scripts/mock-remote-provider.mjs",
+		"dev": "node --env-file-if-exists=.env --env-file-if-exists=.di-code/.env --experimental-strip-types packages/coding-agent/src/entry.ts",
 		"test": "npm run test --workspaces --if-present"
 	},
 	"devDependencies": {

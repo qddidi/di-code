@@ -21,6 +21,30 @@ describe("parseCliArgs", () => {
 		expect(parseCliArgs(["--mode", "json", "hello"])).toEqual({ kind: "run", mode: "json", prompt: "hello" });
 	});
 
+	it("parses explicit provider and model options", () => {
+		expect(parseCliArgs(["--provider", "anthropic", "--model", "claude-sonnet-4-5", "hello"])).toEqual({
+			kind: "run",
+			mode: "print",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			prompt: "hello",
+		});
+	});
+
+	it("parses OpenAI provider options", () => {
+		expect(parseCliArgs(["--provider", "openai", "--model", "gpt-4.1-mini", "hello"])).toMatchObject({
+			provider: "openai",
+			model: "gpt-4.1-mini",
+			prompt: "hello",
+		});
+	});
+
+	it("rejects unsupported providers and missing option values", () => {
+		expect(() => parseCliArgs(["--provider", "unknown", "hello"])).toThrow('Unsupported provider "unknown".');
+		expect(() => parseCliArgs(["--provider"])).toThrow("Option --provider requires a value.");
+		expect(() => parseCliArgs(["--model"])).toThrow("Option --model requires a value.");
+	});
+
 	it("rejects missing and unsupported mode values", () => {
 		expect(() => parseCliArgs(["--mode"])).toThrow("Option --mode requires a value.");
 		expect(() => parseCliArgs(["--mode", "xml", "hello"])).toThrow(
@@ -36,7 +60,8 @@ describe("parseCliArgs", () => {
 	});
 
 	it("requires a prompt and keeps static commands exclusive", () => {
-		expect(() => parseCliArgs([])).toThrow("A prompt is required.");
+		expect(parseCliArgs([])).toEqual({ kind: "run", mode: "interactive", prompt: "" });
+		expect(() => parseCliArgs(["--mode", "print"])).toThrow("A prompt is required.");
 		expect(() => parseCliArgs(["--help", "hello"])).toThrow("--help must be used on its own.");
 		expect(() => parseCliArgs(["--version", "hello"])).toThrow("--version must be used on its own.");
 	});
