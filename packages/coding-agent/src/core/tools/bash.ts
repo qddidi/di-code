@@ -39,6 +39,13 @@ export interface BashToolOptions {
 
 export type BashTool = AgentTool<typeof bashParameters>;
 
+export interface ShellRuntime {
+	readonly executable: string;
+	readonly detached: boolean;
+	readonly description: string;
+	args(command: string): readonly string[];
+}
+
 interface OutputSnapshot {
 	readonly text: string;
 	readonly truncated: boolean;
@@ -89,6 +96,42 @@ function createOutputCapture(maxBytes: number): {
 	};
 }
 
+function createPowerShellScript(command: string): string {
+	return [
+		"$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+		"$script:diCodeSucceeded = $false",
+		"$script:diCodeExitCode = 0",
+		"& {",
+		command,
+		"$script:diCodeSucceeded = $?",
+		"$script:diCodeExitCode = $LASTEXITCODE",
+		"} | Out-Default",
+		"if ($script:diCodeSucceeded) { exit 0 }",
+		"if ($script:diCodeExitCode -is [int] -and $script:diCodeExitCode -ne 0) { exit $script:diCodeExitCode }",
+		"exit 1",
+	].join("\n");
+}
+
+export function resolveShellRuntime(platform: NodeJS.Platform = process.platform): ShellRuntime {
+	if (platform === "win32") {
+		return {
+			executable: "powershell.exe",
+			detached: false,
+			description:
+				"Execute a Windows PowerShell command in the allowed root with timeout and bounded output. Use PowerShell syntax such as Get-ChildItem and Get-Content; do not use Bash syntax.",
+			args: (command) => ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", createPowerShellScript(command)],
+		};
+	}
+
+	return {
+		executable: "/bin/sh",
+		detached: true,
+		description:
+			"Execute a POSIX shell command using /bin/sh in the allowed root with timeout and bounded output. Use portable POSIX syntax; Bash-only extensions may not be available.",
+		args: (command) => ["-c", command],
+	};
+}
+
 function waitForProcess(command: string, cwd: string, options: BashRunOptions): Promise<BashExecution> {
 	return new Promise((resolve, reject) => {
 		if (options.signal?.aborted) {
@@ -96,14 +139,12 @@ function waitForProcess(command: string, cwd: string, options: BashRunOptions): 
 			return;
 		}
 
-		const shell = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "/bin/sh";
-		const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-c", command];
-		const child = spawn(shell, args, {
+		const runtime = resolveShellRuntime();
+		const child = spawn(runtime.executable, [...runtime.args(command)], {
 			cwd,
-			detached: process.platform !== "win32",
+			detached: runtime.detached,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
-			windowsVerbatimArguments: process.platform === "win32",
 		});
 
 		let timedOut = false;
@@ -196,11 +237,12 @@ function formatResult(stdout: OutputSnapshot, stderr: OutputSnapshot, execution:
 export function createBashTool(allowedRoot: string, options: BashToolOptions = {}): BashTool {
 	const operations = options.operations ?? createLocalBashOperations();
 	const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_BASH_MAX_OUTPUT_BYTES;
+	const runtime = resolveShellRuntime();
 	assertMaxOutputBytes(maxOutputBytes);
 
 	return {
 		name: "bash",
-		description: "Execute a shell command in the allowed root with timeout and bounded output.",
+		description: runtime.description,
 		parameters: bashParameters,
 		async execute(_toolCallId, parameters, signal): Promise<ToolResultContent[]> {
 			if (signal?.aborted) throw new Error("Operation aborted");

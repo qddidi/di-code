@@ -77,6 +77,224 @@ function dependencies(response: Response): OpenAIResponsesDependencies & { fetch
 const options: OpenAIResponsesStreamOptions = { apiKey: "test-key", temperature: 0, maxTokens: 64 };
 
 describe("streamOpenAIResponses", () => {
+	it("preserves encrypted reasoning and paired function calls for stateless replay", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_replay", summary: [] },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 0,
+				delta: "Use the tool",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 0,
+				text: "Use the tool",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "Use the tool" },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_replay",
+					summary: [{ type: "summary_text", text: "Use the tool" }],
+					encrypted_content: "encrypted-replay",
+					status: "completed",
+				},
+			},
+			{
+				type: "response.output_item.added",
+				output_index: 1,
+				item: { type: "function_call", id: "fc_replay", call_id: "call_replay", name: "bash", arguments: "" },
+			},
+			{
+				type: "response.function_call_arguments.done",
+				output_index: 1,
+				arguments: '{"command":"Get-Location"}',
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 1,
+				item: {
+					type: "function_call",
+					id: "fc_replay",
+					call_id: "call_replay",
+					name: "bash",
+					arguments: '{"command":"Get-Location"}',
+					status: "completed",
+				},
+			},
+			{
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 4, output_tokens: 5 } },
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			content: [
+				{ type: "thinking", thinking: "Use the tool" },
+				{ type: "tool_call", id: "call_replay", name: "bash", arguments: { command: "Get-Location" } },
+			],
+			providerReplay: {
+				api: "openai-responses",
+				data: {
+					outputItems: [
+						{
+							type: "reasoning",
+							id: "rs_replay",
+							encrypted_content: "encrypted-replay",
+						},
+						{
+							type: "function_call",
+							id: "fc_replay",
+							call_id: "call_replay",
+						},
+					],
+				},
+			},
+			stopReason: "tool_use",
+		});
+	});
+
+	it("replays a streamed reasoning tool turn in the next stateless request", async () => {
+		const firstResponse = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_round_trip", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_round_trip",
+					summary: [],
+					encrypted_content: "encrypted-round-trip",
+					status: "completed",
+				},
+			},
+			{
+				type: "response.output_item.added",
+				output_index: 1,
+				item: { type: "function_call", id: "fc_round_trip", call_id: "call_round_trip", name: "bash" },
+			},
+			{
+				type: "response.function_call_arguments.done",
+				output_index: 1,
+				arguments: '{"command":"Get-Location"}',
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 1,
+				item: {
+					type: "function_call",
+					id: "fc_round_trip",
+					call_id: "call_round_trip",
+					name: "bash",
+					arguments: '{"command":"Get-Location"}',
+					status: "completed",
+				},
+			},
+			{ type: "response.completed", response: { usage: { input_tokens: 3, output_tokens: 4 } } },
+		);
+		const secondResponse = sse({
+			type: "response.completed",
+			response: { usage: { input_tokens: 5, output_tokens: 1 } },
+		});
+		const fetch = vi
+			.fn<typeof globalThis.fetch>()
+			.mockResolvedValueOnce(firstResponse)
+			.mockResolvedValueOnce(secondResponse);
+		const reasoningModel = { ...model, reasoning: true };
+		const firstStream = streamOpenAIResponses(reasoningModel, context, options, { fetch, now: () => 1234 });
+
+		await collect(firstStream);
+		const assistant = await firstStream.result();
+		const secondContext: Context = {
+			...context,
+			messages: [
+				...context.messages,
+				assistant,
+				{
+					role: "tool_result",
+					toolCallId: "call_round_trip",
+					toolName: "bash",
+					content: [{ type: "text", text: "D:\\pi\\di-code" }],
+					isError: false,
+					timestamp: 1235,
+				},
+			],
+		};
+		const secondStream = streamOpenAIResponses(reasoningModel, secondContext, options, { fetch, now: () => 1236 });
+		await collect(secondStream);
+
+		const secondRequest = JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)) as {
+			input: Array<Record<string, unknown>>;
+		};
+		expect(secondRequest.input.slice(-3).map((item) => item.type)).toEqual([
+			"reasoning",
+			"function_call",
+			"function_call_output",
+		]);
+		expect(secondRequest.input.at(-3)).toMatchObject({
+			id: "rs_round_trip",
+			encrypted_content: "encrypted-round-trip",
+		});
+	});
+
+	it("supplements reasoning encryption from the terminal response output", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_late", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_late", summary: [], status: "completed" },
+			},
+			{
+				type: "response.completed",
+				response: {
+					output: [
+						{
+							type: "reasoning",
+							id: "rs_late",
+							summary: [],
+							encrypted_content: "encrypted-late",
+							status: "completed",
+						},
+					],
+					usage: { input_tokens: 2, output_tokens: 1 },
+				},
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect((await stream.result()).providerReplay).toMatchObject({
+			api: "openai-responses",
+			data: { outputItems: [{ id: "rs_late", encrypted_content: "encrypted-late" }] },
+		});
+	});
+
 	it("maps reasoning summary deltas into a thinking block", async () => {
 		const response = sse(
 			{
@@ -138,10 +356,12 @@ describe("streamOpenAIResponses", () => {
 			"thinking_end",
 			"done",
 		]);
-		expect(await stream.result()).toMatchObject({
+		const result = await stream.result();
+		expect(result).toMatchObject({
 			content: [{ type: "thinking", thinking: "Plan first" }],
 			stopReason: "stop",
 		});
+		expect(result.providerReplay).toBeUndefined();
 	});
 
 	it("keeps a multi-part reasoning summary open until the output item is done", async () => {

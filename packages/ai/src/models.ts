@@ -31,6 +31,17 @@ export const MODEL_SOURCE: readonly Model[] = [
 		contextWindow: 200_000,
 		maxOutputTokens: 100_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},{
+		id: "gpt-5.6-terra",
+		name: "gpt-5.6-terra",
+		provider: "openai",
+		api: "openai-responses",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 100_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	}
 ];
 

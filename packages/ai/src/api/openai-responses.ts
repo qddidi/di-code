@@ -1,9 +1,11 @@
 import type { TSchema } from "typebox";
 import type {
 	AssistantContent,
+	AssistantMessage,
 	Context,
 	FailedAssistantMessage,
 	ImageContent,
+	JsonValue,
 	Model,
 	StreamOptions,
 	StreamResult,
@@ -40,24 +42,57 @@ export interface OpenAIResponsesOutputText {
 	readonly annotations: readonly [];
 }
 
+export interface OpenAIResponsesMessageItem {
+	readonly type: "message";
+	readonly id: string;
+	readonly role: "assistant";
+	readonly status: "completed" | "incomplete";
+	readonly content: readonly OpenAIResponsesOutputText[];
+}
+
+export interface OpenAIResponsesReasoningText {
+	readonly type: "summary_text" | "reasoning_text";
+	readonly text: string;
+}
+
+export interface OpenAIResponsesReasoningItem {
+	readonly type: "reasoning";
+	readonly id: string;
+	readonly summary: readonly OpenAIResponsesReasoningText[];
+	readonly content?: readonly OpenAIResponsesReasoningText[];
+	readonly encrypted_content: string;
+	readonly status?: "completed" | "incomplete" | "in_progress";
+}
+
+export interface OpenAIResponsesFunctionCallItem {
+	readonly type: "function_call";
+	readonly id: string;
+	readonly call_id: string;
+	readonly name: string;
+	readonly arguments: string;
+	readonly status?: "completed" | "incomplete" | "in_progress";
+}
+
+export type OpenAIResponsesReplayItem =
+	| OpenAIResponsesMessageItem
+	| OpenAIResponsesReasoningItem
+	| OpenAIResponsesFunctionCallItem;
+
 export type OpenAIResponsesInputItem =
 	| {
 			readonly role: "user";
 			readonly content: readonly OpenAIResponsesInputContent[];
 	  }
-	| {
-			readonly type: "message";
-			readonly id: string;
-			readonly role: "assistant";
-			readonly status: "completed";
-			readonly content: readonly OpenAIResponsesOutputText[];
-	  }
+	| OpenAIResponsesMessageItem
 	| {
 			readonly type: "function_call";
+			readonly id?: string;
 			readonly call_id: string;
 			readonly name: string;
 			readonly arguments: string;
+			readonly status?: "completed" | "incomplete" | "in_progress";
 	  }
+	| OpenAIResponsesReasoningItem
 	| OpenAIResponsesFunctionCallOutput;
 
 export interface OpenAIResponsesFunctionTool {
@@ -76,6 +111,7 @@ export interface OpenAIResponsesRequest {
 	readonly max_output_tokens?: number;
 	readonly temperature?: number;
 	readonly reasoning?: { readonly summary: "auto" };
+	readonly include?: readonly ["reasoning.encrypted_content"];
 	readonly stream: true;
 	readonly store: false;
 }
@@ -160,6 +196,7 @@ interface ResponseProgress {
 	active?: ActiveOutput;
 	readonly completedContent: AssistantContent[];
 	readonly completedOutputIndexes: Set<number>;
+	readonly replayOutputItems: Map<number, JsonValue>;
 	nextContentIndex: number;
 	terminalSeen: boolean;
 	usage: Usage;
@@ -260,6 +297,112 @@ function projectToolResult(model: Model, message: ToolResultMessage): OpenAIResp
 	};
 }
 
+function replayError(detail: string): Error {
+	return new Error(`Invalid OpenAI Responses provider replay: ${detail}`);
+}
+
+function replayRecord(value: unknown, field: string): Record<string, unknown> {
+	if (!isRecord(value)) throw replayError(`${field} must be an object`);
+	return value;
+}
+
+function replayString(value: unknown, field: string): string {
+	if (typeof value !== "string" || value.length === 0) throw replayError(`${field} must be a non-empty string`);
+	return value;
+}
+
+function replayStatus(value: unknown, field: string): "completed" | "incomplete" | "in_progress" | undefined {
+	if (value === undefined) return undefined;
+	if (value !== "completed" && value !== "incomplete" && value !== "in_progress") {
+		throw replayError(`${field} is invalid`);
+	}
+	return value;
+}
+
+function replayReasoningParts(
+	value: unknown,
+	field: string,
+	expectedType: "summary_text" | "reasoning_text",
+): OpenAIResponsesReasoningText[] {
+	if (!Array.isArray(value)) throw replayError(`${field} must be an array`);
+	return value.map((entry, index) => {
+		const part = replayRecord(entry, `${field}[${index}]`);
+		if (part.type !== expectedType) throw replayError(`${field}[${index}].type must be "${expectedType}"`);
+		if (typeof part.text !== "string") throw replayError(`${field}[${index}].text must be a string`);
+		return { type: expectedType, text: part.text };
+	});
+}
+
+function replayOutputText(value: unknown, field: string): OpenAIResponsesOutputText[] {
+	if (!Array.isArray(value)) throw replayError(`${field} must be an array`);
+	return value.map((entry, index) => {
+		const part = replayRecord(entry, `${field}[${index}]`);
+		if (part.type !== "output_text") throw replayError(`${field}[${index}].type must be "output_text"`);
+		if (typeof part.text !== "string") throw replayError(`${field}[${index}].text must be a string`);
+		return { type: "output_text", text: part.text, annotations: [] };
+	});
+}
+
+function replayItem(value: unknown, index: number): OpenAIResponsesReplayItem {
+	const field = `data.outputItems[${index}]`;
+	const item = replayRecord(value, field);
+	if (item.type === "message") {
+		if (item.role !== "assistant") throw replayError(`${field}.role must be "assistant"`);
+		const status = replayStatus(item.status, `${field}.status`);
+		if (status !== "completed" && status !== "incomplete") {
+			throw replayError(`${field}.status must be "completed" or "incomplete"`);
+		}
+		return {
+			type: "message",
+			id: replayString(item.id, `${field}.id`),
+			role: "assistant",
+			status,
+			content: replayOutputText(item.content, `${field}.content`),
+		};
+	}
+	if (item.type === "reasoning") {
+		const content =
+			item.content === undefined ? undefined : replayReasoningParts(item.content, `${field}.content`, "reasoning_text");
+		const status = replayStatus(item.status, `${field}.status`);
+		return {
+			type: "reasoning",
+			id: replayString(item.id, `${field}.id`),
+			summary: replayReasoningParts(item.summary, `${field}.summary`, "summary_text"),
+			...(content === undefined ? {} : { content }),
+			encrypted_content: replayString(item.encrypted_content, `${field}.encrypted_content`),
+			...(status === undefined ? {} : { status }),
+		};
+	}
+	if (item.type === "function_call") {
+		const status = replayStatus(item.status, `${field}.status`);
+		return {
+			type: "function_call",
+			id: replayString(item.id, `${field}.id`),
+			call_id: replayString(item.call_id, `${field}.call_id`),
+			name: replayString(item.name, `${field}.name`),
+			arguments: replayString(item.arguments, `${field}.arguments`),
+			...(status === undefined ? {} : { status }),
+		};
+	}
+	throw replayError(`${field}.type is unsupported`);
+}
+
+function readReplayItems(message: AssistantMessage, model: Model): OpenAIResponsesReplayItem[] | undefined {
+	const replay = message.providerReplay;
+	if (replay === undefined) return undefined;
+	if (message.provider !== model.provider || message.model !== model.id) {
+		throw new Error("OpenAI Responses provider replay requires the same provider and model");
+	}
+	if (replay.api !== model.api) {
+		throw new Error(`OpenAI Responses provider replay api must be "${model.api}"`);
+	}
+	const data = replayRecord(replay.data, "data");
+	if (!Array.isArray(data.outputItems) || data.outputItems.length === 0) {
+		throw replayError("data.outputItems must be a non-empty array");
+	}
+	return data.outputItems.map(replayItem);
+}
+
 function projectMessages(model: Model, context: Context): OpenAIResponsesInputItem[] {
 	const input: OpenAIResponsesInputItem[] = [];
 
@@ -285,10 +428,16 @@ function projectMessages(model: Model, context: Context): OpenAIResponsesInputIt
 			continue;
 		}
 
+		const replayItems = readReplayItems(message, model);
+		if (replayItems !== undefined) {
+			input.push(...replayItems);
+			continue;
+		}
+
 		let textIndex = 0;
 		for (const block of message.content) {
 			if (block.type === "thinking") {
-				throw new Error("OpenAI Responses thinking replay is not supported in Task 16c");
+				throw new Error("OpenAI Responses thinking replay requires provider replay metadata");
 			}
 			if (block.type === "tool_call") {
 				input.push({
@@ -327,7 +476,12 @@ export function buildOpenAIResponsesRequest(
 		input: projectMessages(model, context),
 		stream: true,
 		store: false,
-		...(model.reasoning ? { reasoning: { summary: "auto" as const } } : {}),
+		...(model.reasoning
+			? {
+					reasoning: { summary: "auto" as const },
+					include: ["reasoning.encrypted_content" as const],
+				}
+			: {}),
 		...(context.systemPrompt !== undefined && context.systemPrompt.length > 0
 			? { instructions: context.systemPrompt }
 			: {}),
@@ -359,6 +513,95 @@ function requireRecord(value: unknown, field: string): Record<string, unknown> {
 function requireString(value: unknown, field: string): string {
 	if (typeof value !== "string") throw new InvalidOpenAIStreamError(`${field} must be a string`);
 	return value;
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+	const result = requireString(value, field);
+	if (result.length === 0) throw new InvalidOpenAIStreamError(`${field} must be a non-empty string`);
+	return result;
+}
+
+function readItemStatus(value: unknown, field: string): "completed" | "incomplete" | "in_progress" | undefined {
+	if (value === undefined) return undefined;
+	if (value !== "completed" && value !== "incomplete" && value !== "in_progress") {
+		throw new InvalidOpenAIStreamError(`${field} is invalid`);
+	}
+	return value;
+}
+
+function readReasoningPartsForReplay(
+	value: unknown,
+	field: string,
+	expectedType: "summary_text" | "reasoning_text",
+): JsonValue[] {
+	if (!Array.isArray(value)) throw new InvalidOpenAIStreamError(`${field} must be an array`);
+	return value.map((entry, index) => {
+		const part = requireRecord(entry, `${field}[${index}]`);
+		if (requireString(part.type, `${field}[${index}].type`) !== expectedType) {
+			throw new InvalidOpenAIStreamError(`${field}[${index}].type must be "${expectedType}"`);
+		}
+		return { type: expectedType, text: requireString(part.text, `${field}[${index}].text`) };
+	});
+}
+
+function readOutputTextForReplay(value: unknown, field: string): JsonValue[] {
+	if (!Array.isArray(value)) throw new InvalidOpenAIStreamError(`${field} must be an array`);
+	return value.map((entry, index) => {
+		const part = requireRecord(entry, `${field}[${index}]`);
+		if (requireString(part.type, `${field}[${index}].type`) !== "output_text") {
+			throw new InvalidOpenAIStreamError(`${field}[${index}].type must be "output_text"`);
+		}
+		return { type: "output_text", text: requireString(part.text, `${field}[${index}].text`), annotations: [] };
+	});
+}
+
+function readCompletedReplayItem(item: Record<string, unknown>): JsonValue {
+	const itemType = requireString(item.type, "item.type");
+	if (itemType === "message") {
+		if (item.role !== "assistant") throw new InvalidOpenAIStreamError('item.role must be "assistant"');
+		const status = readItemStatus(item.status, "item.status");
+		if (status !== "completed" && status !== "incomplete") {
+			throw new InvalidOpenAIStreamError('item.status must be "completed" or "incomplete"');
+		}
+		return {
+			type: "message",
+			id: requireNonEmptyString(item.id, "item.id"),
+			role: "assistant",
+			status,
+			content: readOutputTextForReplay(item.content, "item.content"),
+		};
+	}
+	if (itemType === "reasoning") {
+		const status = readItemStatus(item.status, "item.status");
+		const content =
+			item.content === undefined || item.content === null
+				? undefined
+				: readReasoningPartsForReplay(item.content, "item.content", "reasoning_text");
+		const encryptedContent =
+			item.encrypted_content === undefined || item.encrypted_content === null
+				? undefined
+				: requireString(item.encrypted_content, "item.encrypted_content");
+		return {
+			type: "reasoning",
+			id: requireNonEmptyString(item.id, "item.id"),
+			summary: readReasoningPartsForReplay(item.summary, "item.summary", "summary_text"),
+			...(content === undefined ? {} : { content }),
+			...(encryptedContent === undefined ? {} : { encrypted_content: encryptedContent }),
+			...(status === undefined ? {} : { status }),
+		};
+	}
+	if (itemType === "function_call") {
+		const status = readItemStatus(item.status, "item.status");
+		return {
+			type: "function_call",
+			id: requireNonEmptyString(item.id, "item.id"),
+			call_id: requireNonEmptyString(item.call_id, "item.call_id"),
+			name: requireNonEmptyString(item.name, "item.name"),
+			arguments: requireString(item.arguments, "item.arguments"),
+			...(status === undefined ? {} : { status }),
+		};
+	}
+	throw new InvalidOpenAIStreamError(`unsupported output item type "${itemType}"`);
 }
 
 function requireNonNegativeInteger(value: unknown, field: string): number {
@@ -435,6 +678,15 @@ function createSuccessMessage(
 	reason: SuccessfulStopReason,
 	now: () => number,
 ): SuccessfulAssistantMessage {
+	const replayOutputItems = [...progress.replayOutputItems.entries()]
+		.sort(([left], [right]) => left - right)
+		.map(([, item]) => item);
+	const reasoningItems = replayOutputItems.filter(
+		(item): item is { readonly [key: string]: JsonValue } => isRecord(item) && item.type === "reasoning",
+	);
+	const canReplay =
+		reasoningItems.length > 0 &&
+		reasoningItems.every((item) => typeof item.encrypted_content === "string" && item.encrypted_content.length > 0);
 	return {
 		role: "assistant",
 		content: [...progress.completedContent],
@@ -443,6 +695,14 @@ function createSuccessMessage(
 		usage: progress.usage,
 		timestamp: now(),
 		stopReason: reason,
+		...(canReplay
+			? {
+					providerReplay: {
+						api: "openai-responses",
+						data: { outputItems: replayOutputItems },
+					},
+				}
+			: {}),
 	};
 }
 
@@ -640,6 +900,9 @@ function handleOutputItemDone(
 	const outputIndex = requireNonNegativeInteger(event.output_index, "output_index");
 	const item = requireRecord(event.item, "item");
 	const itemType = requireString(item.type, "item.type");
+	if (progress.replayOutputItems.has(outputIndex)) {
+		throw new InvalidOpenAIStreamError(`output_index ${outputIndex} replay item has already completed`);
+	}
 	if (itemType === "reasoning") {
 		const active = progress.active;
 		if (!active || active.kind !== "reasoning" || active.outputIndex !== outputIndex) {
@@ -657,6 +920,7 @@ function handleOutputItemDone(
 			throw new InvalidOpenAIStreamError("reasoning output ended before its content text completed");
 		}
 		const finalText = readReasoningItemText(item);
+		progress.replayOutputItems.set(outputIndex, readCompletedReplayItem(item));
 		if (!active.started && finalText === undefined) {
 			progress.completedOutputIndexes.add(outputIndex);
 			progress.active = undefined;
@@ -673,6 +937,32 @@ function handleOutputItemDone(
 	}
 	if (itemType !== "message" && itemType !== "function_call") {
 		throw new InvalidOpenAIStreamError(`unsupported output item type "${itemType}"`);
+	}
+	progress.replayOutputItems.set(outputIndex, readCompletedReplayItem(item));
+}
+
+function supplementReasoningEncryption(responseValue: unknown, progress: ResponseProgress): void {
+	const response = requireRecord(responseValue, "response");
+	if (response.output === undefined || response.output === null) return;
+	if (!Array.isArray(response.output)) throw new InvalidOpenAIStreamError("response.output must be an array");
+
+	const encryptedById = new Map<string, string>();
+	for (const [index, value] of response.output.entries()) {
+		const item = requireRecord(value, `response.output[${index}]`);
+		if (item.type !== "reasoning") continue;
+		const id = requireNonEmptyString(item.id, `response.output[${index}].id`);
+		if (item.encrypted_content === undefined || item.encrypted_content === null) continue;
+		const encryptedContent = requireString(item.encrypted_content, `response.output[${index}].encrypted_content`);
+		if (encryptedContent.length > 0) encryptedById.set(id, encryptedContent);
+	}
+
+	for (const [outputIndex, value] of progress.replayOutputItems) {
+		if (!isRecord(value) || value.type !== "reasoning" || typeof value.id !== "string") continue;
+		if (typeof value.encrypted_content === "string" && value.encrypted_content.length > 0) continue;
+		const encryptedContent = encryptedById.get(value.id);
+		if (encryptedContent !== undefined) {
+			progress.replayOutputItems.set(outputIndex, { ...value, encrypted_content: encryptedContent });
+		}
 	}
 }
 
@@ -903,6 +1193,7 @@ function handleOpenAIEvent(
 					throw new InvalidOpenAIStreamError("terminal response received while an output item is active");
 				}
 			}
+			supplementReasoningEncryption(event.response, progress);
 			progress.usage = readUsage(event.response);
 			const reason: SuccessfulStopReason =
 				eventType === "response.incomplete"
@@ -1063,6 +1354,7 @@ export function streamOpenAIResponses(
 	const progress: ResponseProgress = {
 		completedContent: [],
 		completedOutputIndexes: new Set<number>(),
+		replayOutputItems: new Map<number, JsonValue>(),
 		nextContentIndex: 0,
 		terminalSeen: false,
 		usage: createZeroUsage(),

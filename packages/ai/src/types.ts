@@ -38,6 +38,17 @@ export interface ToolCallContent {
 	arguments: Record<string, unknown>;
 }
 
+/** 可安全序列化到请求或会话文件中的 JSON 值。 */
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
+/** 由产生消息的 Provider 保存、仅供同一 API adapter 回放的不透明数据。 */
+export interface ProviderReplay {
+	/** 能够解释 data 的 API adapter 标识。 */
+	readonly api: string;
+	/** 不允许包含函数、类实例或非有限数值的 JSON 数据。 */
+	readonly data: JsonValue;
+}
+
 /** 用户消息允许包含的内容块。 */
 export type UserContent = TextContent | ImageContent;
 
@@ -125,6 +136,8 @@ interface AssistantMessageBase {
 	provider: string;
 	/** 实际完成本次生成的模型标识。 */
 	model: string;
+	/** 同 Provider、同模型后续请求所需的可选不透明回放载荷。 */
+	providerReplay?: ProviderReplay;
 	/** 本次模型请求的 token 和费用统计。 */
 	usage: Usage;
 	/** 助手消息创建时间，使用 Unix 毫秒时间戳。 */

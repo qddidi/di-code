@@ -51,6 +51,10 @@ function isJsonValue(value: unknown): boolean {
 	return isObject(value) && Object.values(value).every(isJsonValue);
 }
 
+function isProviderReplay(value: unknown): boolean {
+	return isObject(value) && isNonEmptyString(value.api) && isJsonValue(value.data);
+}
+
 function isImageContent(value: unknown): value is Extract<UserContent | ToolResultContent, { type: "image" }> {
 	return (
 		isObject(value) && value.type === "image" && typeof value.data === "string" && isNonEmptyString(value.mimeType)
@@ -111,6 +115,7 @@ function isAssistantMessage(value: JsonObject): value is JsonObject & AssistantM
 		!value.content.every(isAssistantContent) ||
 		!isNonEmptyString(value.provider) ||
 		!isNonEmptyString(value.model) ||
+		(value.providerReplay !== undefined && !isProviderReplay(value.providerReplay)) ||
 		!isUsage(value.usage) ||
 		!isTimestamp(value.timestamp)
 	) {

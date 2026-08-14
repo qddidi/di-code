@@ -5,9 +5,15 @@ import type { Context, Message, Provider } from "@di-code/ai";
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/session.ts";
-import { type BashOperations, createBashTool, DEFAULT_BASH_TIMEOUT_MS } from "../src/core/tools/bash.ts";
+import {
+	type BashOperations,
+	createBashTool,
+	DEFAULT_BASH_TIMEOUT_MS,
+	resolveShellRuntime,
+} from "../src/core/tools/bash.ts";
 
 const tempDirs: string[] = [];
+const COMMAND_START_TIMEOUT_MS = process.platform === "win32" ? 1_500 : 100;
 
 async function createTempDir(prefix = "di-code-bash-root-"): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -44,11 +50,61 @@ async function waitForMissing(path: string, durationMs: number): Promise<void> {
 	await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 }
 
+async function waitForPresent(path: string, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			await access(path);
+			return;
+		} catch (cause) {
+			if (!(cause instanceof Error) || !cause.message.includes("ENOENT")) throw cause;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	throw new Error(`Timed out waiting for ${path}`);
+}
+
 afterEach(async () => {
 	await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
+describe("resolveShellRuntime", () => {
+	it("selects Windows PowerShell and declares its command dialect", () => {
+		const runtime = resolveShellRuntime("win32");
+
+		expect(runtime.executable).toBe("powershell.exe");
+		expect(runtime.detached).toBe(false);
+		expect(runtime.description).toContain("Windows PowerShell");
+		expect(runtime.args("Get-Location")).toEqual([
+			"-NoLogo",
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			expect.stringContaining("Get-Location"),
+		]);
+		expect(runtime.args("Get-Location").at(-1)).toContain("UTF8Encoding");
+	});
+
+	it("selects POSIX sh and declares its command dialect", () => {
+		const runtime = resolveShellRuntime("linux");
+
+		expect(runtime).toMatchObject({
+			executable: "/bin/sh",
+			detached: true,
+			description: expect.stringContaining("POSIX shell"),
+		});
+		expect(runtime.args("pwd")).toEqual(["-c", "pwd"]);
+	});
+});
+
 describe("createBashTool", () => {
+	it("describes the command dialect used by the current platform", async () => {
+		const root = await createTempDir();
+		const tool = createBashTool(root);
+
+		expect(tool.description).toContain(process.platform === "win32" ? "Windows PowerShell" : "POSIX shell");
+	});
+
 	it("captures stdout and stderr with a successful status", async () => {
 		const root = await createTempDir();
 		const result = await createBashTool(root).execute("bash-1", {
@@ -77,9 +133,49 @@ describe("createBashTool", () => {
 	it.runIf(process.platform === "win32")("executes a quoted Windows executable path", async () => {
 		const root = await createTempDir();
 		const result = await createBashTool(root).execute("bash-quoted-executable", {
-			command: `"${process.execPath}" --version`,
+			command: `& "${process.execPath}" --version`,
 		});
 		expect(textOf(result)).toContain(`stdout:\nv${process.versions.node}`);
+	});
+
+	it.runIf(process.platform === "win32")("renders PowerShell object output before exiting", async () => {
+		const root = await createTempDir();
+		const result = await createBashTool(root).execute("bash-powershell-object", {
+			command: "Get-Location",
+		});
+		const text = textOf(result);
+
+		expect(text).toContain("stdout:");
+		expect(text).toContain(await realpath(root));
+	});
+
+	it.runIf(process.platform === "win32")("executes PowerShell syntax with UTF-8 stdout and stderr", async () => {
+		const root = await createTempDir();
+		const result = await createBashTool(root).execute("bash-powershell-unicode", {
+			command: "Write-Output '你好'; [Console]::Error.Write('错误')",
+		});
+		const text = textOf(result);
+
+		expect(text).toContain("stdout:\n你好");
+		expect(text).toContain("stderr:\n错误");
+		expect(text).not.toContain("�");
+	});
+
+	it.runIf(process.platform === "win32")("reports PowerShell errors with readable UTF-8 stderr", async () => {
+		const root = await createTempDir();
+		const error = await createBashTool(root)
+			.execute("bash-powershell-error", { command: "Write-Error '命令失败'" })
+			.then(
+				() => new Error("Expected the PowerShell command to fail"),
+				(cause: unknown) => cause,
+			);
+
+		expect(error).toBeInstanceOf(Error);
+		if (!(error instanceof Error)) throw new Error("Expected an Error instance");
+		expect(error.message).toContain("Command exited with code 1");
+		expect(error.message).toContain("stderr:");
+		expect(error.message).toContain("命令失败");
+		expect(error.message).not.toContain("�");
 	});
 
 	it("marks empty output explicitly", async () => {
@@ -103,9 +199,13 @@ describe("createBashTool", () => {
 		await expect(
 			createBashTool(root).execute("bash-timeout", {
 				command: nodeCommand("process.stdout.write('started');setTimeout(function(){},10000)"),
-				timeoutMs: 100,
+				timeoutMs: COMMAND_START_TIMEOUT_MS,
 			}),
-		).rejects.toThrow(/Command timed out after 100 ms[\s\S]*stdout:\nstarted[\s\S]*"timedOut":true/);
+		).rejects.toThrow(
+			new RegExp(
+				`Command timed out after ${COMMAND_START_TIMEOUT_MS} ms[\\s\\S]*stdout:\\nstarted[\\s\\S]*"timedOut":true`,
+			),
+		);
 	});
 
 	it("aborts an in-flight command", async () => {
@@ -116,7 +216,7 @@ describe("createBashTool", () => {
 			{ command: nodeCommand("process.stdout.write('started');setTimeout(function(){},10000)") },
 			controller.signal,
 		);
-		setTimeout(() => controller.abort(), 100);
+		setTimeout(() => controller.abort(), COMMAND_START_TIMEOUT_MS);
 		await expect(operation).rejects.toThrow(/Command aborted[\s\S]*stdout:\nstarted[\s\S]*"aborted":true/);
 	});
 
@@ -134,9 +234,10 @@ describe("createBashTool", () => {
 		).rejects.toThrow("Command aborted");
 	});
 
-	it("kills descendants when a command times out", async () => {
+	it("kills descendants when a running command is aborted", async () => {
 		const root = await createTempDir();
 		const marker = join(root, "descendant-ran.txt");
+		const ready = join(root, "parent-started.txt");
 		await writeFile(
 			join(root, "child.cjs"),
 			"setTimeout(function(){require('node:fs').writeFileSync('descendant-ran.txt','bad')},500)",
@@ -144,12 +245,18 @@ describe("createBashTool", () => {
 		);
 		await writeFile(
 			join(root, "parent.cjs"),
-			"require('node:child_process').spawn(process.execPath,['child.cjs'],{stdio:'ignore'});setTimeout(function(){},10000)",
+			"require('node:fs').writeFileSync('parent-started.txt','ready');require('node:child_process').spawn(process.execPath,['child.cjs'],{stdio:'ignore'});setTimeout(function(){},10000)",
 			"utf8",
 		);
-		await expect(
-			createBashTool(root).execute("bash-tree", { command: nodeCommand("require('./parent.cjs')"), timeoutMs: 100 }),
-		).rejects.toThrow("Command timed out after 100 ms");
+		const controller = new AbortController();
+		const operation = createBashTool(root).execute(
+			"bash-tree",
+			{ command: nodeCommand("require('./parent.cjs')") },
+			controller.signal,
+		);
+		await waitForPresent(ready);
+		controller.abort();
+		await expect(operation).rejects.toThrow("Command aborted");
 		await waitForMissing(marker, 800);
 	});
 

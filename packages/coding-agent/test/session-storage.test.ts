@@ -271,6 +271,8 @@ describe("loadSessionFile", () => {
 			{ ...assistantMessage, usage: { ...assistantMessage.usage, output: -1 } },
 			{ ...assistantMessage, stopReason: "stop", errorMessage: "success must not carry an error" },
 			{ ...assistantMessage, stopReason: "error" },
+			{ ...assistantMessage, providerReplay: { api: "", data: {} } },
+			{ ...assistantMessage, providerReplay: { api: "openai-responses" } },
 			{ ...toolResultMessage, isError: "false" },
 		];
 
@@ -286,6 +288,50 @@ describe("loadSessionFile", () => {
 				reason: "record message does not match the Message contract",
 			});
 		}
+	});
+
+	it("rejects non-finite numbers nested in provider replay JSON", async () => {
+		const entry = createEntry("entry-1", "session-1", assistantMessage);
+		const serializedEntry = JSON.stringify(entry).replace(
+			'"stopReason":"tool_use"',
+			'"providerReplay":{"api":"openai-responses","data":{"value":1e400}},"stopReason":"tool_use"',
+		);
+		await writeFile(sessionFile, `${JSON.stringify(createHeader())}\n${serializedEntry}\n`, "utf8");
+
+		const loaded = await loadSessionFile(sessionFile);
+
+		expect(loaded.entries).toEqual([]);
+		expect(loaded.diagnostics[0]).toMatchObject({
+			kind: "corrupt_record",
+			lineNumber: 2,
+			reason: "record message does not match the Message contract",
+		});
+	});
+
+	it("round-trips provider replay metadata as version 1 JSON", async () => {
+		const message: Message = {
+			...assistantMessage,
+			providerReplay: {
+				api: "openai-responses",
+				data: {
+					outputItems: [
+						{
+							type: "reasoning",
+							id: "rs_1",
+							summary: [],
+							encrypted_content: "encrypted",
+						},
+					],
+				},
+			},
+		};
+		const entry = createEntry("entry-1", "session-1", message);
+		await writeRecords(sessionFile, [createHeader(), entry]);
+
+		const loaded = await loadSessionFile(sessionFile);
+
+		expect(loaded.messages).toEqual([message]);
+		expect(loaded.diagnostics).toEqual([]);
 	});
 
 	it("stops when an entry duplicates an id or does not extend the current leaf", async () => {

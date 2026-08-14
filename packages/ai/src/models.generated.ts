@@ -17,6 +17,18 @@ export const MODELS: readonly Model[] = [
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
 	{
+		id: "gpt-5.6-terra",
+		name: "gpt-5.6-terra",
+		provider: "openai",
+		api: "openai-responses",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text"],
+		reasoning: true,
+		contextWindow: 200000,
+		maxOutputTokens: 100000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
 		id: "o3-mini",
 		name: "o3-mini",
 		provider: "openai",
@@ -27,5 +39,5 @@ export const MODELS: readonly Model[] = [
 		contextWindow: 200000,
 		maxOutputTokens: 100000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	}
+	},
 ];
