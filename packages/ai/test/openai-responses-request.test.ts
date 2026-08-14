@@ -13,6 +13,8 @@ const model: Model = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
+const imageModel: Model = { ...model, input: ["text", "image"] };
+
 function textContext(): Context {
 	return {
 		systemPrompt: "Answer briefly.",
@@ -190,7 +192,7 @@ describe("buildOpenAIResponsesRequest", () => {
 		]);
 	});
 
-	it("rejects image content instead of silently dropping it", () => {
+	it("rejects image input for a text-only model before building a request", () => {
 		const context: Context = {
 			messages: [
 				{
@@ -202,8 +204,53 @@ describe("buildOpenAIResponsesRequest", () => {
 		};
 
 		expect(() => buildOpenAIResponsesRequest(model, context)).toThrow(
-			"OpenAI Responses image content is not supported in Task 11",
+			"OpenAI model test-openai-model does not support image input",
 		);
+	});
+
+	it("projects user and tool-result images as data URL input_image blocks", () => {
+		const context: Context = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "Inspect this" },
+						{ type: "image", data: "AA==", mimeType: "image/png" },
+					],
+					timestamp: 1,
+				},
+				{
+					role: "tool_result",
+					toolCallId: "call_1",
+					toolName: "read",
+					content: [{ type: "image", data: "AQ==", mimeType: "image/jpeg" }],
+					isError: false,
+					timestamp: 2,
+				},
+			],
+		};
+
+		expect(buildOpenAIResponsesRequest(imageModel, context).input).toEqual([
+			{
+				role: "user",
+				content: [
+					{ type: "input_text", text: "Inspect this" },
+					{ type: "input_image", detail: "auto", image_url: "data:image/png;base64,AA==" },
+				],
+			},
+			{
+				type: "function_call_output",
+				call_id: "call_1",
+				output: [{ type: "input_image", detail: "auto", image_url: "data:image/jpeg;base64,AQ==" }],
+			},
+		]);
+	});
+
+	it("adds reasoning summary configuration only for reasoning models", () => {
+		const reasoningModel = { ...model, reasoning: true };
+		const request = buildOpenAIResponsesRequest(reasoningModel, textContext());
+
+		expect(request.reasoning).toEqual({ summary: "auto" });
 	});
 
 	it("rejects thinking replay instead of changing its meaning", () => {
@@ -229,7 +276,7 @@ describe("buildOpenAIResponsesRequest", () => {
 		};
 
 		expect(() => buildOpenAIResponsesRequest(model, context)).toThrow(
-			"OpenAI Responses thinking replay is not supported in Task 11",
+			"OpenAI Responses thinking replay is not supported in Task 16c",
 		);
 	});
 

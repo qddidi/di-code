@@ -178,6 +178,8 @@ export interface Model {
 	provider: string;
 	/** 调用该模型时使用的底层 API 标识。 */
 	api: string;
+	/** 真实模型的默认请求 endpoint；Faux 和临时测试模型可以省略。 */
+	baseUrl?: string;
 	/** 模型支持的输入模态列表。 */
 	input: ModelInput[];
 	/** 模型是否支持生成独立的思考内容。 */

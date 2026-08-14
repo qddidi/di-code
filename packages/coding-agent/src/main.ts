@@ -1,4 +1,4 @@
-import { createFauxProvider, type FauxResponse } from "@di-code/ai";
+import type { Model, Provider } from "@di-code/ai";
 import { ProcessTerminal, TUI } from "@di-code/tui";
 import { type CliDependencies, runCli } from "./cli.ts";
 import { AgentSession } from "./core/session.ts";
@@ -6,9 +6,14 @@ import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
 
+export interface MainRuntime {
+	readonly provider: Provider;
+	readonly model: Model;
+}
+
 export interface MainOptions extends PrintIo {
 	readonly version: string;
-	readonly fauxResponses: readonly FauxResponse[];
+	readonly createRuntime: () => MainRuntime;
 	readonly allowedRoot?: string;
 	readonly now?: () => number;
 }
@@ -19,11 +24,11 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		stderr: options.stderr,
 		version: options.version,
 		run: async (command) => {
-			const faux = createFauxProvider({ responses: options.fauxResponses, now: options.now });
+			const runtime = options.createRuntime();
 			const session = new AgentSession({
 				allowedRoot: options.allowedRoot ?? process.cwd(),
-				provider: faux.provider,
-				model: faux.model,
+				provider: runtime.provider,
+				model: runtime.model,
 				now: options.now,
 			});
 			if (command.mode === "json") {
@@ -43,8 +48,8 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 							open: () =>
 								new AgentSession({
 									allowedRoot: options.allowedRoot ?? process.cwd(),
-									provider: faux.provider,
-									model: faux.model,
+									provider: runtime.provider,
+									model: runtime.model,
 									now: options.now,
 								}),
 						},

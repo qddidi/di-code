@@ -8,6 +8,7 @@ async function runCli(args: string[]): Promise<{ code: number | null; stdout: st
 	return await new Promise((resolveResult, reject) => {
 		const child = spawn(process.execPath, [entryPath, ...args], {
 			cwd: process.cwd(),
+			env: { ...process.env, DI_CODE_PROVIDER: "faux" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";

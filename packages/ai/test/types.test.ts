@@ -4,6 +4,7 @@ import type {
 	AssistantMessage,
 	ContentBlock,
 	Message,
+	Model,
 	Provider,
 	Static,
 	StreamEvent,
@@ -122,6 +123,10 @@ describe("discriminated union helpers", () => {
 
 		expect(describeContent({ type: "thinking", thinking: "reason" })).toBe("reason");
 		expect(eventName(doneEvent)).toBe("done:stop");
+	});
+
+	it("keeps baseUrl optional for provider-neutral models", () => {
+		expectTypeOf<Model["baseUrl"]>().toEqualTypeOf<string | undefined>();
 	});
 });
 const streamResult: StreamResult = {

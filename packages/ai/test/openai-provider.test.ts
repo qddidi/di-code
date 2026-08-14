@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Context, Model, OpenAIProviderOptions, Provider, StreamEvent, StreamResult } from "../src/index.ts";
 import * as ai from "../src/index.ts";
 import { OpenAIProviderError } from "../src/index.ts";
+import { MODELS } from "../src/models.generated.ts";
 
 type CreateOpenAIProvider = (options: OpenAIProviderOptions) => Provider;
 const createOpenAIProvider = Reflect.get(ai, "createOpenAIProvider") as CreateOpenAIProvider;
@@ -63,6 +64,80 @@ function completedResponse(text = "ok"): Response {
 }
 
 describe("createOpenAIProvider", () => {
+	it("uses generated OpenAI models when models are omitted", () => {
+		const provider = createOpenAIProvider({ apiKey: "key", env: {} });
+
+		expect(provider.models).toEqual(
+			MODELS.filter((entry) => entry.provider === "openai" && entry.api === "openai-responses"),
+		);
+	});
+
+	it("uses model.baseUrl when no process-level override exists", async () => {
+		const fetch = vi.fn(async () => completedResponse());
+		const requestModel = { ...model, baseUrl: "https://model.example/v1" };
+		const provider = createOpenAIProvider({ models: [requestModel], apiKey: "key", env: {}, fetch });
+
+		await collect(provider.stream(requestModel, context));
+
+		expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("https://model.example/v1/responses");
+	});
+
+	it("prefers OPENAI_BASE_URL over model.baseUrl", async () => {
+		const fetch = vi.fn(async () => completedResponse());
+		const requestModel = { ...model, baseUrl: "https://model.example/v1" };
+		const provider = createOpenAIProvider({
+			models: [requestModel],
+			apiKey: "key",
+			env: { OPENAI_BASE_URL: "https://env.example/v1" },
+			fetch,
+		});
+
+		await collect(provider.stream(requestModel, context));
+
+		expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("https://env.example/v1/responses");
+	});
+
+	it("prefers an explicit baseUrl over env and model.baseUrl", async () => {
+		const fetch = vi.fn(async () => completedResponse());
+		const requestModel = { ...model, baseUrl: "https://model.example/v1" };
+		const provider = createOpenAIProvider({
+			models: [requestModel],
+			apiKey: "key",
+			env: { OPENAI_BASE_URL: "https://env.example/v1" },
+			baseUrl: " https://explicit.example/v1/ ",
+			fetch,
+		});
+
+		await collect(provider.stream(requestModel, context));
+
+		expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("https://explicit.example/v1/responses");
+	});
+
+	it("ignores a blank OPENAI_BASE_URL and uses model.baseUrl", async () => {
+		const fetch = vi.fn(async () => completedResponse());
+		const requestModel = { ...model, baseUrl: "https://model.example/v1" };
+		const provider = createOpenAIProvider({
+			models: [requestModel],
+			apiKey: "key",
+			env: { OPENAI_BASE_URL: "  " },
+			fetch,
+		});
+
+		await collect(provider.stream(requestModel, context));
+
+		expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("https://model.example/v1/responses");
+	});
+
+	it("rejects an invalid model baseUrl before making a request", () => {
+		const fetch = vi.fn(async () => completedResponse());
+		const requestModel = { ...model, baseUrl: "file:///tmp/openai" };
+
+		expect(() => createOpenAIProvider({ models: [requestModel], apiKey: "key", env: {}, fetch })).toThrow(
+			"OpenAI baseUrl must use http or https",
+		);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
 	it("returns an OpenAI provider with copied models and streams through the adapter", async () => {
 		const fetch = vi.fn(async () => completedResponse("provider works"));
 		const provider = createOpenAIProvider({

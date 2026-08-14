@@ -3,6 +3,7 @@ import type {
 	AssistantContent,
 	Context,
 	FailedAssistantMessage,
+	ImageContent,
 	Model,
 	StreamOptions,
 	StreamResult,
@@ -19,6 +20,20 @@ export interface OpenAIResponsesInputText {
 	readonly text: string;
 }
 
+export interface OpenAIResponsesInputImage {
+	readonly type: "input_image";
+	readonly detail: "auto";
+	readonly image_url: string;
+}
+
+export type OpenAIResponsesInputContent = OpenAIResponsesInputText | OpenAIResponsesInputImage;
+
+export type OpenAIResponsesFunctionCallOutput = {
+	readonly type: "function_call_output";
+	readonly call_id: string;
+	readonly output: string | readonly OpenAIResponsesInputContent[];
+};
+
 export interface OpenAIResponsesOutputText {
 	readonly type: "output_text";
 	readonly text: string;
@@ -28,7 +43,7 @@ export interface OpenAIResponsesOutputText {
 export type OpenAIResponsesInputItem =
 	| {
 			readonly role: "user";
-			readonly content: readonly OpenAIResponsesInputText[];
+			readonly content: readonly OpenAIResponsesInputContent[];
 	  }
 	| {
 			readonly type: "message";
@@ -43,11 +58,7 @@ export type OpenAIResponsesInputItem =
 			readonly name: string;
 			readonly arguments: string;
 	  }
-	| {
-			readonly type: "function_call_output";
-			readonly call_id: string;
-			readonly output: string;
-	  };
+	| OpenAIResponsesFunctionCallOutput;
 
 export interface OpenAIResponsesFunctionTool {
 	readonly type: "function";
@@ -64,6 +75,7 @@ export interface OpenAIResponsesRequest {
 	readonly tools?: readonly OpenAIResponsesFunctionTool[];
 	readonly max_output_tokens?: number;
 	readonly temperature?: number;
+	readonly reasoning?: { readonly summary: "auto" };
 	readonly stream: true;
 	readonly store: false;
 }
@@ -120,6 +132,19 @@ type ActiveOutput =
 			contentIndex: number;
 			text: string;
 			started: boolean;
+	  }
+	| {
+			kind: "reasoning";
+			outputIndex: number;
+			contentIndex: number;
+			thinking: string;
+			started: boolean;
+			mode?: "summary" | "content";
+			currentPartIndex?: number;
+			currentPartText: string;
+			currentPartTextDone: boolean;
+			currentPartDone: boolean;
+			contentDone: boolean;
 	  }
 	| {
 			kind: "function_call";
@@ -186,12 +211,43 @@ function assertOptions(options: StreamOptions): void {
 	}
 }
 
-function projectToolResult(message: ToolResultMessage): OpenAIResponsesInputItem {
+function projectImage(model: Model, block: ImageContent): OpenAIResponsesInputImage {
+	if (!model.input.includes("image")) {
+		throw new Error(`OpenAI model ${model.id} does not support image input`);
+	}
+	if (!/^image\/[A-Za-z0-9.+-]+$/.test(block.mimeType)) {
+		throw new Error("OpenAI image mimeType must be an image media type");
+	}
+	if (block.data.length === 0) throw new Error("OpenAI image data must not be empty");
+	return {
+		type: "input_image",
+		detail: "auto",
+		image_url: `data:${block.mimeType};base64,${block.data}`,
+	};
+}
+
+function projectToolResult(model: Model, message: ToolResultMessage): OpenAIResponsesInputItem {
+	const hasImage = message.content.some((block) => block.type === "image");
+	if (hasImage) {
+		const output: OpenAIResponsesInputContent[] = [];
+		if (message.isError) output.push({ type: "input_text", text: "[tool error]" });
+		for (const block of message.content) {
+			if (block.type === "image") {
+				output.push(projectImage(model, block));
+			} else if (block.text.length > 0) {
+				output.push({ type: "input_text", text: block.text });
+			}
+		}
+		return {
+			type: "function_call_output",
+			call_id: message.toolCallId,
+			output,
+		};
+	}
+
 	const textParts: string[] = [];
 	for (const block of message.content) {
-		if (block.type === "image") {
-			throw new Error("OpenAI Responses image content is not supported in Task 11");
-		}
+		if (block.type === "image") continue;
 		textParts.push(block.text);
 	}
 
@@ -204,34 +260,35 @@ function projectToolResult(message: ToolResultMessage): OpenAIResponsesInputItem
 	};
 }
 
-function projectMessages(context: Context): OpenAIResponsesInputItem[] {
+function projectMessages(model: Model, context: Context): OpenAIResponsesInputItem[] {
 	const input: OpenAIResponsesInputItem[] = [];
 
 	for (const [messageIndex, message] of context.messages.entries()) {
 		if (message.role === "user") {
-			const content: OpenAIResponsesInputText[] = [];
+			const content: OpenAIResponsesInputContent[] = [];
 			for (const block of message.content) {
 				if (block.type === "image") {
-					throw new Error("OpenAI Responses image content is not supported in Task 11");
+					content.push(projectImage(model, block));
+					continue;
 				}
 				content.push({ type: "input_text", text: block.text });
 			}
 			if (content.length === 0) {
-				throw new Error("OpenAI Responses user messages require at least one text block");
+				throw new Error("OpenAI Responses user messages require at least one content block");
 			}
 			input.push({ role: "user", content });
 			continue;
 		}
 
 		if (message.role === "tool_result") {
-			input.push(projectToolResult(message));
+			input.push(projectToolResult(model, message));
 			continue;
 		}
 
 		let textIndex = 0;
 		for (const block of message.content) {
 			if (block.type === "thinking") {
-				throw new Error("OpenAI Responses thinking replay is not supported in Task 11");
+				throw new Error("OpenAI Responses thinking replay is not supported in Task 16c");
 			}
 			if (block.type === "tool_call") {
 				input.push({
@@ -267,9 +324,10 @@ export function buildOpenAIResponsesRequest(
 
 	return {
 		model: model.id,
-		input: projectMessages(context),
+		input: projectMessages(model, context),
 		stream: true,
 		store: false,
+		...(model.reasoning ? { reasoning: { summary: "auto" as const } } : {}),
 		...(context.systemPrompt !== undefined && context.systemPrompt.length > 0
 			? { instructions: context.systemPrompt }
 			: {}),
@@ -365,6 +423,9 @@ function getSafePartialContent(progress: ResponseProgress): AssistantContent[] {
 	if (progress.active?.kind === "message" && progress.active.started) {
 		content.push({ type: "text", text: progress.active.text });
 	}
+	if (progress.active?.kind === "reasoning" && progress.active.started) {
+		content.push({ type: "thinking", thinking: progress.active.thinking });
+	}
 	return content;
 }
 
@@ -424,6 +485,93 @@ function finishTextOutput(
 	progress.active = undefined;
 }
 
+function finishThinkingOutput(
+	stream: ReturnType<typeof createAssistantMessageEventStream>,
+	progress: ResponseProgress,
+	active: Extract<ActiveOutput, { kind: "reasoning" }>,
+	expectedText?: string,
+): void {
+	if (!active.started) {
+		stream.push({ type: "thinking_start", contentIndex: active.contentIndex });
+		active.started = true;
+	}
+	if (expectedText !== undefined && expectedText !== active.thinking) {
+		if (active.thinking.length !== 0) {
+			throw new InvalidOpenAIStreamError("completed reasoning text must match accumulated deltas");
+		}
+		stream.push({ type: "thinking_delta", contentIndex: active.contentIndex, delta: expectedText });
+		active.thinking = expectedText;
+	}
+	stream.push({ type: "thinking_end", contentIndex: active.contentIndex, content: active.thinking });
+	progress.completedContent.push({ type: "thinking", thinking: active.thinking });
+	progress.completedOutputIndexes.add(active.outputIndex);
+	progress.nextContentIndex += 1;
+	progress.active = undefined;
+}
+
+function assertReasoningMode(active: Extract<ActiveOutput, { kind: "reasoning" }>, mode: "summary" | "content"): void {
+	if (active.mode !== undefined && active.mode !== mode) {
+		throw new InvalidOpenAIStreamError("reasoning summary and content events must not be mixed");
+	}
+	active.mode = mode;
+}
+
+function pushThinkingDelta(
+	stream: ReturnType<typeof createAssistantMessageEventStream>,
+	active: Extract<ActiveOutput, { kind: "reasoning" }>,
+	delta: string,
+): void {
+	if (!active.started) {
+		stream.push({ type: "thinking_start", contentIndex: active.contentIndex });
+		active.started = true;
+	}
+	stream.push({ type: "thinking_delta", contentIndex: active.contentIndex, delta });
+	active.thinking += delta;
+}
+
+function startReasoningSummaryPart(
+	stream: ReturnType<typeof createAssistantMessageEventStream>,
+	active: Extract<ActiveOutput, { kind: "reasoning" }>,
+	summaryIndex: number,
+): void {
+	assertReasoningMode(active, "summary");
+	if (active.currentPartIndex === summaryIndex) return;
+	const expectedIndex = active.currentPartIndex === undefined ? 0 : active.currentPartIndex + 1;
+	if (summaryIndex !== expectedIndex) {
+		throw new InvalidOpenAIStreamError(`expected reasoning summary_index ${expectedIndex}, received ${summaryIndex}`);
+	}
+	if (active.currentPartIndex !== undefined && !active.currentPartDone) {
+		throw new InvalidOpenAIStreamError("reasoning summary parts must complete before the next part starts");
+	}
+	if (active.currentPartIndex !== undefined) {
+		pushThinkingDelta(stream, active, "\n\n");
+	}
+	active.currentPartIndex = summaryIndex;
+	active.currentPartText = "";
+	active.currentPartTextDone = false;
+	active.currentPartDone = false;
+}
+
+function readReasoningItemText(item: Record<string, unknown>): string | undefined {
+	for (const [field, expectedType] of [
+		["summary", "summary_text"],
+		["content", "reasoning_text"],
+	] as const) {
+		const value = item[field];
+		if (value === undefined || value === null) continue;
+		if (!Array.isArray(value)) throw new InvalidOpenAIStreamError(`item.${field} must be an array`);
+		const parts = value.map((entry, index) => {
+			const part = requireRecord(entry, `item.${field}[${index}]`);
+			if (requireString(part.type, `item.${field}[${index}].type`) !== expectedType) {
+				throw new InvalidOpenAIStreamError(`item.${field}[${index}].type must be "${expectedType}"`);
+			}
+			return requireString(part.text, `item.${field}[${index}].text`);
+		});
+		if (parts.length > 0) return parts.join("\n\n");
+	}
+	return undefined;
+}
+
 function handleOutputItemAdded(
 	event: Record<string, unknown>,
 	stream: ReturnType<typeof createAssistantMessageEventStream>,
@@ -445,6 +593,20 @@ function handleOutputItemAdded(
 			contentIndex: progress.nextContentIndex,
 			text: "",
 			started: false,
+		};
+		return;
+	}
+	if (itemType === "reasoning") {
+		progress.active = {
+			kind: "reasoning",
+			outputIndex,
+			contentIndex: progress.nextContentIndex,
+			thinking: "",
+			started: false,
+			currentPartText: "",
+			currentPartTextDone: false,
+			currentPartDone: false,
+			contentDone: false,
 		};
 		return;
 	}
@@ -470,16 +632,45 @@ function handleOutputItemAdded(
 	throw new InvalidOpenAIStreamError(`unsupported output item type "${itemType}"`);
 }
 
-function handleOutputItemDone(event: Record<string, unknown>, progress: ResponseProgress): void {
+function handleOutputItemDone(
+	event: Record<string, unknown>,
+	stream: ReturnType<typeof createAssistantMessageEventStream>,
+	progress: ResponseProgress,
+): void {
 	const outputIndex = requireNonNegativeInteger(event.output_index, "output_index");
+	const item = requireRecord(event.item, "item");
+	const itemType = requireString(item.type, "item.type");
+	if (itemType === "reasoning") {
+		const active = progress.active;
+		if (!active || active.kind !== "reasoning" || active.outputIndex !== outputIndex) {
+			throw new InvalidOpenAIStreamError("reasoning output completion requires an active reasoning output");
+		}
+		if (active.mode === "summary" && active.currentPartIndex !== undefined) {
+			if (!active.currentPartTextDone) {
+				throw new InvalidOpenAIStreamError("reasoning output ended before its summary text completed");
+			}
+			if (!active.currentPartDone) {
+				throw new InvalidOpenAIStreamError("reasoning output ended before its summary part completed");
+			}
+		}
+		if (active.mode === "content" && active.started && !active.contentDone) {
+			throw new InvalidOpenAIStreamError("reasoning output ended before its content text completed");
+		}
+		const finalText = readReasoningItemText(item);
+		if (!active.started && finalText === undefined) {
+			progress.completedOutputIndexes.add(outputIndex);
+			progress.active = undefined;
+			return;
+		}
+		finishThinkingOutput(stream, progress, active, finalText);
+		return;
+	}
 	if (progress.active?.outputIndex === outputIndex) {
 		throw new InvalidOpenAIStreamError(`output_index ${outputIndex} ended before its content completed`);
 	}
 	if (!progress.completedOutputIndexes.has(outputIndex)) {
 		throw new InvalidOpenAIStreamError(`output_index ${outputIndex} completed without a supported content block`);
 	}
-	const item = requireRecord(event.item, "item");
-	const itemType = requireString(item.type, "item.type");
 	if (itemType !== "message" && itemType !== "function_call") {
 		throw new InvalidOpenAIStreamError(`unsupported output item type "${itemType}"`);
 	}
@@ -502,6 +693,105 @@ function handleOpenAIEvent(
 		case "response.output_item.added":
 			handleOutputItemAdded(event, stream, progress);
 			return;
+		case "response.reasoning_summary_part.added": {
+			const active = progress.active;
+			if (!active || active.kind !== "reasoning") {
+				throw new InvalidOpenAIStreamError("reasoning summary part requires an active reasoning output");
+			}
+			assertOutputIndex(event, active);
+			const summaryIndex = requireNonNegativeInteger(event.summary_index, "summary_index");
+			startReasoningSummaryPart(stream, active, summaryIndex);
+			const part = requireRecord(event.part, "part");
+			if (requireString(part.type, "part.type") !== "summary_text") {
+				throw new InvalidOpenAIStreamError('reasoning summary part.type must be "summary_text"');
+			}
+			if (requireString(part.text, "part.text").length !== 0) {
+				throw new InvalidOpenAIStreamError("added reasoning summary part must start empty");
+			}
+			return;
+		}
+		case "response.reasoning_summary_text.delta": {
+			const active = progress.active;
+			if (!active || active.kind !== "reasoning") {
+				throw new InvalidOpenAIStreamError("reasoning summary delta requires an active reasoning output");
+			}
+			assertOutputIndex(event, active);
+			const summaryIndex = requireNonNegativeInteger(event.summary_index, "summary_index");
+			startReasoningSummaryPart(stream, active, summaryIndex);
+			if (active.currentPartTextDone) {
+				throw new InvalidOpenAIStreamError("reasoning summary delta arrived after text completion");
+			}
+			const delta = requireString(event.delta, "delta");
+			pushThinkingDelta(stream, active, delta);
+			active.currentPartText += delta;
+			return;
+		}
+		case "response.reasoning_summary_text.done": {
+			const active = progress.active;
+			if (!active || active.kind !== "reasoning") {
+				throw new InvalidOpenAIStreamError("reasoning summary completion requires an active reasoning output");
+			}
+			assertOutputIndex(event, active);
+			const summaryIndex = requireNonNegativeInteger(event.summary_index, "summary_index");
+			startReasoningSummaryPart(stream, active, summaryIndex);
+			if (requireString(event.text, "text") !== active.currentPartText) {
+				throw new InvalidOpenAIStreamError("completed reasoning summary text must match accumulated deltas");
+			}
+			active.currentPartTextDone = true;
+			return;
+		}
+		case "response.reasoning_summary_part.done": {
+			const active = progress.active;
+			if (!active || active.kind !== "reasoning") {
+				throw new InvalidOpenAIStreamError("reasoning summary part completion requires an active reasoning output");
+			}
+			assertOutputIndex(event, active);
+			const summaryIndex = requireNonNegativeInteger(event.summary_index, "summary_index");
+			if (active.currentPartIndex !== summaryIndex || !active.currentPartTextDone) {
+				throw new InvalidOpenAIStreamError("reasoning summary part completed before its text");
+			}
+			const part = requireRecord(event.part, "part");
+			if (requireString(part.type, "part.type") !== "summary_text") {
+				throw new InvalidOpenAIStreamError('reasoning summary part.type must be "summary_text"');
+			}
+			if (requireString(part.text, "part.text") !== active.currentPartText) {
+				throw new InvalidOpenAIStreamError("completed reasoning summary part must match its text deltas");
+			}
+			active.currentPartDone = true;
+			return;
+		}
+		case "response.reasoning_text.delta": {
+			const active = progress.active;
+			if (!active || active.kind !== "reasoning") {
+				throw new InvalidOpenAIStreamError("reasoning content delta requires an active reasoning output");
+			}
+			assertOutputIndex(event, active);
+			assertReasoningMode(active, "content");
+			if (requireNonNegativeInteger(event.content_index, "content_index") !== 0) {
+				throw new InvalidOpenAIStreamError("only one reasoning content part is supported");
+			}
+			if (active.contentDone) {
+				throw new InvalidOpenAIStreamError("reasoning content delta arrived after text completion");
+			}
+			pushThinkingDelta(stream, active, requireString(event.delta, "delta"));
+			return;
+		}
+		case "response.reasoning_text.done": {
+			const active = progress.active;
+			if (!active || active.kind !== "reasoning") {
+				throw new InvalidOpenAIStreamError("reasoning content completion requires an active reasoning output");
+			}
+			assertOutputIndex(event, active);
+			assertReasoningMode(active, "content");
+			if (requireNonNegativeInteger(event.content_index, "content_index") !== 0) {
+				throw new InvalidOpenAIStreamError("only one reasoning content part is supported");
+			}
+			if (requireString(event.text, "text") !== active.thinking) {
+				throw new InvalidOpenAIStreamError("completed reasoning content must match accumulated deltas");
+			}
+			active.contentDone = true;
+			return;
+		}
 		case "response.output_text.delta": {
 			const active = progress.active;
 			if (!active || active.kind !== "message") {
@@ -570,14 +860,15 @@ function handleOpenAIEvent(
 			return;
 		}
 		case "response.output_item.done":
-			handleOutputItemDone(event, progress);
+			handleOutputItemDone(event, stream, progress);
 			return;
 		case "response.content_part.added": {
 			const active = progress.active;
-			if (!active || active.kind !== "message") {
+			if (!active || (active.kind !== "message" && active.kind !== "reasoning")) {
 				throw new InvalidOpenAIStreamError("content part event requires an active message output");
 			}
 			assertOutputIndex(event, active);
+			if (active.kind === "reasoning") return;
 			const contentIndex = requireNonNegativeInteger(event.content_index, "content_index");
 			if (contentIndex !== 0) {
 				throw new InvalidOpenAIStreamError("only one text content part per message is supported");
@@ -586,6 +877,10 @@ function handleOpenAIEvent(
 		}
 		case "response.content_part.done": {
 			const outputIndex = requireNonNegativeInteger(event.output_index, "output_index");
+			if (progress.active?.kind === "reasoning") {
+				assertOutputIndex(event, progress.active);
+				return;
+			}
 			const contentIndex = requireNonNegativeInteger(event.content_index, "content_index");
 			if (contentIndex !== 0) {
 				throw new InvalidOpenAIStreamError("only one text content part per message is supported");

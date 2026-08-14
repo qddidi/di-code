@@ -77,6 +77,372 @@ function dependencies(response: Response): OpenAIResponsesDependencies & { fetch
 const options: OpenAIResponsesStreamOptions = { apiKey: "test-key", temperature: 0, maxTokens: 64 };
 
 describe("streamOpenAIResponses", () => {
+	it("maps reasoning summary deltas into a thinking block", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_1", summary: [] },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 0,
+				delta: "Plan",
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 0,
+				delta: " first",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 0,
+				text: "Plan first",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "Plan first" },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_1",
+					summary: [{ type: "summary_text", text: "Plan first" }],
+				},
+			},
+			{
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 2, output_tokens: 3 } },
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		expect((await collect(stream)).map((event) => event.type)).toEqual([
+			"start",
+			"thinking_start",
+			"thinking_delta",
+			"thinking_delta",
+			"thinking_end",
+			"done",
+		]);
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "thinking", thinking: "Plan first" }],
+			stopReason: "stop",
+		});
+	});
+
+	it("keeps a multi-part reasoning summary open until the output item is done", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_multi", summary: [] },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 0,
+				delta: "First",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 0,
+				text: "First",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "First" },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 1,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 1,
+				delta: "Second",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 1,
+				text: "Second",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 1,
+				part: { type: "summary_text", text: "Second" },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_multi",
+					summary: [
+						{ type: "summary_text", text: "First" },
+						{ type: "summary_text", text: "Second" },
+					],
+				},
+			},
+			{
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 2, output_tokens: 4 } },
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		const events = await collect(stream);
+
+		expect(events.map(({ type }) => type)).toEqual([
+			"start",
+			"thinking_start",
+			"thinking_delta",
+			"thinking_delta",
+			"thinking_delta",
+			"thinking_end",
+			"done",
+		]);
+		expect(events.filter(({ type }) => type === "thinking_delta")).toMatchObject([
+			{ delta: "First" },
+			{ delta: "\n\n" },
+			{ delta: "Second" },
+		]);
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "thinking", thinking: "First\n\nSecond" }],
+			stopReason: "stop",
+		});
+	});
+
+	it("rejects a reasoning output item that ends before its summary part is done", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_incomplete_part", summary: [] },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 0,
+				delta: "unfinished",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 0,
+				text: "unfinished",
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_incomplete_part",
+					summary: [{ type: "summary_text", text: "unfinished" }],
+				},
+			},
+			{
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 2, output_tokens: 2 } },
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "thinking", thinking: "unfinished" }],
+			stopReason: "error",
+			errorMessage: "Invalid OpenAI Responses stream: reasoning output ended before its summary part completed",
+		});
+	});
+
+	it("preserves the separator after an empty reasoning summary part", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_empty_part", summary: [] },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 0,
+				text: "",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 1,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 1,
+				delta: "Second",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 1,
+				text: "Second",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 1,
+				part: { type: "summary_text", text: "Second" },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_empty_part",
+					summary: [
+						{ type: "summary_text", text: "" },
+						{ type: "summary_text", text: "Second" },
+					],
+				},
+			},
+			{
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 2, output_tokens: 2 } },
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "thinking", thinking: "\n\nSecond" }],
+			stopReason: "stop",
+		});
+	});
+
+	it("rejects a completed reasoning item with an invalid summary part type", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_invalid_summary", summary: [] },
+			},
+			{
+				type: "response.reasoning_summary_part.added",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "" },
+			},
+			{
+				type: "response.reasoning_summary_text.delta",
+				output_index: 0,
+				summary_index: 0,
+				delta: "checked",
+			},
+			{
+				type: "response.reasoning_summary_text.done",
+				output_index: 0,
+				summary_index: 0,
+				text: "checked",
+			},
+			{
+				type: "response.reasoning_summary_part.done",
+				output_index: 0,
+				summary_index: 0,
+				part: { type: "summary_text", text: "checked" },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_invalid_summary",
+					summary: [{ type: "reasoning_text", text: "checked" }],
+				},
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "thinking", thinking: "checked" }],
+			stopReason: "error",
+			errorMessage: 'Invalid OpenAI Responses stream: item.summary[0].type must be "summary_text"',
+		});
+	});
+
+	it("preserves incomplete reasoning when the stream ends early", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_partial", summary: [] },
+			},
+			{
+				type: "response.reasoning_text.delta",
+				output_index: 0,
+				content_index: 0,
+				delta: "private partial",
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "thinking", thinking: "private partial" }],
+			stopReason: "error",
+			errorMessage: "OpenAI Responses stream ended before a terminal response event",
+		});
+	});
+
 	it("posts the 11a request and maps chunked text, usage, and stop", async () => {
 		const payload = [
 			{ type: "response.created", response: { id: "resp_1" } },

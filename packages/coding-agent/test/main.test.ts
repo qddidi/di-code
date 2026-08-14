@@ -2,11 +2,17 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
+import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMain } from "../src/main.ts";
 
 function createIo() {
 	return { stdout: vi.fn(), stderr: vi.fn() };
+}
+
+function createRuntime(responses: readonly FauxResponse[]) {
+	const faux = createFauxProvider({ responses });
+	return () => ({ provider: faux.provider, model: faux.model });
 }
 
 describe("runMain", () => {
@@ -27,7 +33,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
-			fauxResponses: [
+			createRuntime: createRuntime([
 				{
 					type: "success",
 					content: [
@@ -40,7 +46,7 @@ describe("runMain", () => {
 					],
 				},
 				{ type: "success", content: [{ type: "text", text: "Print read completed." }] },
-			],
+			]),
 		});
 
 		expect(exitCode).toBe(0);
@@ -56,7 +62,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
-			fauxResponses: [
+			createRuntime: createRuntime([
 				{
 					type: "success",
 					content: [
@@ -69,7 +75,7 @@ describe("runMain", () => {
 					],
 				},
 				{ type: "success", content: [{ type: "text", text: "JSON read completed." }] },
-			],
+			]),
 		});
 
 		expect(exitCode).toBe(0);
@@ -95,14 +101,18 @@ describe("runMain", () => {
 
 	it("preserves help as a no-runtime command", async () => {
 		const io = createIo();
+		const createRuntime = vi.fn(() => {
+			throw new Error("help must not create a runtime");
+		});
 		const exitCode = await runMain(["--help"], {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
-			fauxResponses: [],
+			createRuntime,
 		});
 
 		expect(exitCode).toBe(0);
+		expect(createRuntime).not.toHaveBeenCalled();
 		expect(io.stdout.mock.calls[0]?.[0]).toContain("Usage: di-code");
 		expect(io.stderr).not.toHaveBeenCalled();
 	});

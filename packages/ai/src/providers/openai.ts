@@ -1,8 +1,9 @@
 import { OpenAIProviderError, streamOpenAIResponses } from "../api/openai-responses.ts";
+import { MODELS } from "../models.generated.ts";
 import type { Context, Model, Provider, StreamOptions, StreamResult } from "../types.ts";
 
 export interface OpenAIProviderOptions {
-	readonly models: readonly Model[];
+	readonly models?: readonly Model[];
 	readonly apiKey?: string;
 	readonly baseUrl?: string;
 	readonly env?: Readonly<Record<string, string | undefined>>;
@@ -27,13 +28,11 @@ function resolveApiKey(options: OpenAIProviderOptions): string {
 	});
 }
 
-function resolveBaseUrl(options: OpenAIProviderOptions): string {
-	const explicit = options.baseUrl?.trim();
-	const environment = (options.env ?? process.env).OPENAI_BASE_URL?.trim();
-	const candidate = explicit || environment || DEFAULT_BASE_URL;
+function normalizeBaseUrl(candidate: string): string {
+	const trimmed = candidate.trim();
 	let url: URL;
 	try {
-		url = new URL(candidate);
+		url = new URL(trimmed);
 	} catch {
 		throw new Error("OpenAI baseUrl must be an absolute http or https URL");
 	}
@@ -43,7 +42,22 @@ function resolveBaseUrl(options: OpenAIProviderOptions): string {
 	if (url.username || url.password || url.search || url.hash) {
 		throw new Error("OpenAI baseUrl must not contain credentials, query, or hash");
 	}
-	return candidate.replace(/\/+$/, "");
+	return trimmed.replace(/\/+$/, "");
+}
+
+function resolveConfiguredBaseUrl(options: OpenAIProviderOptions): string | undefined {
+	const explicit = options.baseUrl?.trim();
+	const environment = (options.env ?? process.env).OPENAI_BASE_URL?.trim();
+	const candidate = explicit || environment;
+	return candidate ? normalizeBaseUrl(candidate) : undefined;
+}
+
+function resolveModelBaseUrl(model: Model): string {
+	return normalizeBaseUrl(model.baseUrl?.trim() || DEFAULT_BASE_URL);
+}
+
+function cloneModels(models: readonly Model[]): Model[] {
+	return models.map((model) => ({ ...model, input: [...model.input], cost: { ...model.cost } }));
 }
 
 function assertModels(models: readonly Model[]): void {
@@ -52,6 +66,8 @@ function assertModels(models: readonly Model[]): void {
 		if (model.provider !== "openai" || model.api !== "openai-responses") {
 			throw new Error('OpenAI provider models must use provider "openai" and api "openai-responses"');
 		}
+		const baseUrl = model.baseUrl?.trim();
+		if (baseUrl) normalizeBaseUrl(baseUrl);
 	}
 }
 
@@ -164,14 +180,16 @@ async function retryingFetch(
 	}
 }
 
-/** Creates the OpenAI Provider while keeping credentials and retry policy outside the generic Agent contract. */
+/** Creates the OpenAI Provider while keeping catalog, credentials, and retry policy outside the Agent contract. */
 export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
-	assertModels(options.models);
+	const configuredModels =
+		options.models ?? MODELS.filter((model) => model.provider === "openai" && model.api === "openai-responses");
+	assertModels(configuredModels);
 	const apiKey = resolveApiKey(options);
-	const baseUrl = resolveBaseUrl(options);
+	const configuredBaseUrl = resolveConfiguredBaseUrl(options);
 	const fetchImpl = options.fetch ?? globalThis.fetch;
 	const sleeper = options.sleep ?? ((milliseconds: number) => defaultSleep(milliseconds, undefined));
-	const models = options.models.map((model) => ({ ...model, input: [...model.input], cost: { ...model.cost } }));
+	const models = cloneModels(configuredModels);
 
 	return {
 		id: "openai",
@@ -183,7 +201,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
 			return streamOpenAIResponses(
 				model,
 				context,
-				{ ...streamOptions, apiKey, baseUrl },
+				{ ...streamOptions, apiKey, baseUrl: configuredBaseUrl ?? resolveModelBaseUrl(model) },
 				{ fetch: fetchWithRetry, now: options.now },
 			);
 		},
