@@ -110,7 +110,7 @@ export class InteractiveProjection {
 				if (event.message.role === "assistant") this.streamingText = "";
 				return;
 			case "message_update":
-				if (event.message.role === "assistant") this.streamingText = event.message.text;
+				if (event.event.type === "text_delta") this.streamingText += event.event.delta;
 				return;
 			case "tool_execution_start":
 				this.toolStatus.set(event.toolCallId, `${event.toolName}: running`);

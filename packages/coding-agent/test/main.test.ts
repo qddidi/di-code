@@ -84,7 +84,7 @@ describe("runMain", () => {
 			([line]) => JSON.parse(line.trim()) as { version: number; event: AgentEvent },
 		);
 		expect(records.length).toBeGreaterThan(0);
-		expect(records.every((record) => record.version === 1)).toBe(true);
+		expect(records.every((record) => record.version === 2)).toBe(true);
 		const toolEnd = records
 			.map((record) => record.event)
 			.find((event): event is Extract<AgentEvent, { type: "tool_execution_end" }> => {

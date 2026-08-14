@@ -127,11 +127,18 @@ describe("InteractiveProjection", () => {
 		projection.apply({
 			type: "message_update",
 			event: { type: "text_delta", contentIndex: 0, delta: "hel" },
-			message: preview("hel"),
+		});
+		projection.apply({
+			type: "message_update",
+			event: { type: "thinking_delta", contentIndex: 1, delta: "hidden" },
+		});
+		projection.apply({
+			type: "message_update",
+			event: { type: "text_delta", contentIndex: 0, delta: "lo" },
 		});
 
 		assert.deepEqual(projection.state.messages, ["hello"]);
-		assert.equal(projection.state.streamingText, "hel");
+		assert.equal(projection.state.streamingText, "hello");
 		assert.equal(projection.state.busy, true);
 	});
 
@@ -166,7 +173,6 @@ describe("InteractiveProjection", () => {
 		projection.apply({
 			type: "message_update",
 			event: { type: "text_delta", contentIndex: 0, delta: "done" },
-			message: preview("done"),
 		});
 		projection.apply({ type: "message_end", message: assistantMessage("done") });
 		projection.apply({ type: "agent_end", messages: [] });

@@ -46,7 +46,7 @@ export type AgentEvent =
 			type: "message_start";
 			message: UserMessage | AssistantMessagePreview | ToolResultMessage;
 	  }
-	| { type: "message_update"; event: MessageUpdateEvent; message: AssistantMessagePreview }
+	| { type: "message_update"; event: MessageUpdateEvent }
 	| { type: "message_end"; message: UserMessage | AssistantMessage | ToolResultMessage }
 	| { type: "turn_end"; message: AssistantMessage; toolResults: ToolResultMessage[] }
 	| {

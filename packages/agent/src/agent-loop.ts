@@ -91,8 +91,7 @@ async function streamAssistantResponse(
 	signal: AbortSignal | undefined,
 	emit: (event: AgentEvent) => void,
 ): Promise<AssistantMessage> {
-	let text = "";
-	emit({ type: "message_start", message: createPreview(config, text) });
+	emit({ type: "message_start", message: createPreview(config, "") });
 
 	try {
 		const response = config.provider.stream(
@@ -113,10 +112,7 @@ async function streamAssistantResponse(
 			if (event.type === "start") {
 				continue;
 			}
-			if (event.type === "text_delta") {
-				text += event.delta;
-			}
-			emit({ type: "message_update", event, message: createPreview(config, text) });
+			emit({ type: "message_update", event });
 		}
 		return terminalMessage ?? (await response.result());
 	} catch (cause) {

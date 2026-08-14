@@ -77,7 +77,7 @@ describe("runJsonMode", () => {
 			([line]) => JSON.parse(line.trim()) as { version: number; event: AgentEvent },
 		);
 		expect(records).toHaveLength(2);
-		expect(records.every((record) => record.version === 1)).toBe(true);
+		expect(records.every((record) => record.version === 2)).toBe(true);
 		expect(records.map((record) => record.event.type)).toEqual(["agent_start", "turn_start"]);
 		expect(io.stderr).not.toHaveBeenCalled();
 	});

@@ -52,6 +52,8 @@ describe("agent loop contracts", () => {
 			"turn_end",
 			"agent_end",
 		]);
+		const updates = events.filter((event) => event.type === "message_update");
+		expect(updates.every((event) => !("message" in event))).toBe(true);
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(messages[1]).toMatchObject({
 			content: [{ type: "text", text: "hello" }],

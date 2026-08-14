@@ -59,7 +59,7 @@ describe("CLI process entry", () => {
 			.split("\n")
 			.map((line) => JSON.parse(line) as { version: number; event: { type: string } });
 		expect(records.length).toBeGreaterThan(0);
-		expect(records.every((record) => record.version === 1)).toBe(true);
+		expect(records.every((record) => record.version === 2)).toBe(true);
 		expect(records.map((record) => record.event.type)).toContain("agent_start");
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
 	});

@@ -2,7 +2,7 @@ import type { AgentEvent, AgentListener } from "@di-code/agent";
 import type { AssistantMessage } from "@di-code/ai";
 import type { PrintIo } from "./print.ts";
 
-export const JSON_EVENT_VERSION = 1 as const;
+export const JSON_EVENT_VERSION = 2 as const;
 
 export interface JsonEventRecord {
 	readonly version: typeof JSON_EVENT_VERSION;
