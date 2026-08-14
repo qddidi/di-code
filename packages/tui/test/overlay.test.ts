@@ -46,6 +46,20 @@ describe("TUI overlay layout", () => {
 		assert.equal(visibleWidth(lines[2] ?? ""), 12);
 	});
 
+	it("anchors an overlay in the current viewport when base content is taller than the terminal", () => {
+		const tui = new TUI(new VirtualTerminal(12, 4));
+		tui.addChild(new OverlayProbe(Array.from({ length: 10 }, (_, index) => `history ${index}`)));
+		tui.showOverlay(new OverlayProbe(["OK"]), { width: 4, anchor: "center" });
+
+		const lines = tui.render(12);
+
+		assert.equal(lines.length, 10);
+		assert.equal(
+			lines.slice(-4).some((line) => line.includes("OK")),
+			true,
+		);
+	});
+
 	it("resolves percentage width and maximum height", () => {
 		const tui = new TUI(new VirtualTerminal(20, 6));
 		const overlay = new OverlayProbe(["one", "two", "three"]);

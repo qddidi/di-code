@@ -40,18 +40,20 @@ export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<
 
 export class AgentSession {
 	private readonly agent: Agent;
+	private readonly allowedRootValue: string;
 	private readonly sessionManager?: SessionManager;
 	private readonly provider: Provider;
-	private readonly model: Model;
+	private model: Model;
 	private readonly now: () => number;
-	private readonly compactionEnabled: boolean;
-	private readonly contextBudget: ContextBudget;
-	private readonly keepRecentTokens: number;
+	private compactionEnabledValue: boolean;
+	private contextBudget: ContextBudget;
+	private keepRecentTokens: number;
 	private persistenceError?: unknown;
 	private promptActive = false;
 	private readonly sessionListeners = new Set<AgentSessionListener>();
 
 	constructor(options: AgentSessionOptions) {
+		this.allowedRootValue = options.allowedRoot;
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
 		this.model = options.model;
@@ -60,7 +62,7 @@ export class AgentSession {
 		if (options.compaction?.enabled !== undefined && typeof options.compaction.enabled !== "boolean") {
 			throw new TypeError("compaction.enabled must be a boolean");
 		}
-		this.compactionEnabled = options.sessionManager !== undefined && options.compaction?.enabled !== false;
+		this.compactionEnabledValue = options.sessionManager !== undefined && options.compaction?.enabled !== false;
 		const defaultKeepRecentTokens = Math.max(1, Math.min(20_000, Math.floor(this.contextBudget.triggerTokens / 2)));
 		this.keepRecentTokens = options.compaction?.keepRecentTokens ?? defaultKeepRecentTokens;
 		if (!Number.isInteger(this.keepRecentTokens) || this.keepRecentTokens <= 0) {
@@ -104,6 +106,42 @@ export class AgentSession {
 		return this.promptActive;
 	}
 
+	get modelId(): string {
+		return this.model.id;
+	}
+
+	get allowedRoot(): string {
+		return this.allowedRootValue;
+	}
+
+	get availableModels(): readonly Model[] {
+		return structuredClone(this.provider.models);
+	}
+
+	setModel(modelId: string): Model {
+		if (this.promptActive) throw new Error("Cannot change model while AgentSession is processing a prompt.");
+		const next = this.provider.models.find((model) => model.id === modelId);
+		if (!next) throw new Error(`Unknown model "${modelId}" for provider "${this.provider.id}".`);
+		this.model = structuredClone(next);
+		this.agent.setModel(this.model);
+		this.contextBudget = resolveContextBudget(this.model);
+		this.keepRecentTokens = Math.min(
+			this.keepRecentTokens,
+			Math.max(1, Math.min(20_000, Math.floor(this.contextBudget.triggerTokens / 2))),
+		);
+		return structuredClone(this.model);
+	}
+
+	get compactionEnabled(): boolean {
+		return this.compactionEnabledValue;
+	}
+
+	setCompactionEnabled(enabled: boolean): boolean {
+		if (this.promptActive) throw new Error("Cannot change compaction while AgentSession is processing a prompt.");
+		this.compactionEnabledValue = enabled && this.sessionManager !== undefined;
+		return this.compactionEnabledValue;
+	}
+
 	get sessionFile(): string | undefined {
 		return this.sessionManager?.filePath;
 	}
@@ -143,7 +181,7 @@ export class AgentSession {
 	}
 
 	private async compactIfNeeded(text: string, signal?: AbortSignal): Promise<void> {
-		if (!this.compactionEnabled || !this.sessionManager) return;
+		if (!this.compactionEnabledValue || !this.sessionManager) return;
 
 		const context = buildSessionContext(this.sessionManager.entries);
 		const pendingUser: Message = {

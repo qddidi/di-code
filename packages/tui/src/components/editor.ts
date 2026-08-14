@@ -108,6 +108,10 @@ export class Editor implements Component, Focusable {
 		return [...this.autocompleteItems];
 	}
 
+	getAutocompleteIndex(): number {
+		return this.autocompleteIndex;
+	}
+
 	isShowingAutocomplete(): boolean {
 		return this.autocompleteItems.length > 0;
 	}

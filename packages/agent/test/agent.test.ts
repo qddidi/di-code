@@ -158,6 +158,25 @@ describe("Agent state wrapper", () => {
 		expect(agent.contextMessages).toEqual(initialMessages);
 	});
 
+	it("uses a replacement model for the next prompt", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "ok" }] }] });
+		const alternate = { ...faux.model, id: "alternate-model" };
+		const requestedModels: string[] = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				requestedModels.push(model.id);
+				return faux.provider.stream(faux.model, context, options);
+			},
+		};
+		const agent = new Agent({ provider, model: faux.model });
+
+		agent.setModel(alternate);
+		await agent.prompt("question");
+
+		expect(requestedModels).toEqual(["alternate-model"]);
+	});
+
 	it("rejects context replacement while a prompt is streaming", async () => {
 		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
 		const agent = new Agent({ provider: faux.provider, model: faux.model });

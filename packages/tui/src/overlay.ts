@@ -108,13 +108,14 @@ export function compositeOverlay(
 	if (overlayLines.length === 0) return [...baseLines];
 
 	const anchor = options.anchor ?? "center";
-	const row = Math.max(
+	const viewportRow = Math.max(
 		margin,
 		Math.min(
 			terminalHeight - margin - overlayLines.length,
 			verticalPosition(anchor, overlayLines.length, terminalHeight, margin),
 		),
 	);
+	const row = Math.max(0, baseLines.length - terminalHeight) + viewportRow;
 	const column = Math.max(
 		margin,
 		Math.min(terminalWidth - margin - width, horizontalPosition(anchor, width, terminalWidth, margin)),

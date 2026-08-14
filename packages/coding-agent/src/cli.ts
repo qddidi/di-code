@@ -56,7 +56,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	if (printAlias && mode !== "print") {
 		throw new CliUsageError(`Cannot combine --print with --mode ${mode}.`);
 	}
-	if (promptParts.length === 0) {
+	if (promptParts.length === 0 && mode !== "interactive") {
 		throw new CliUsageError("A prompt is required.");
 	}
 

@@ -39,6 +39,10 @@ interface OverlayEntry {
 	hidden: boolean;
 }
 
+export interface TUIStopOptions {
+	readonly finalLines?: readonly string[];
+}
+
 export class Container implements Component {
 	private readonly children: Component[] = [];
 
@@ -82,6 +86,14 @@ export class TUI extends Container {
 		this.terminal = terminal;
 	}
 
+	get rows(): number {
+		return this.terminal.rows;
+	}
+
+	get columns(): number {
+		return this.terminal.columns;
+	}
+
 	start(): void {
 		if (this.started) throw new Error("TUI is already started");
 		this.started = true;
@@ -100,11 +112,18 @@ export class TUI extends Container {
 		}
 	}
 
-	stop(): void {
+	stop(options: TUIStopOptions = {}): void {
 		if (!this.started) return;
 		this.started = false;
 		this.renderPending = false;
 		this.forcePending = false;
+		if (options.finalLines) {
+			const { lines } = this.prepareFrame([...options.finalLines], this.terminal.columns);
+			this.fullRender(lines);
+			this.terminal.write("\r\n");
+		} else {
+			this.terminal.clearScreen();
+		}
 		this.terminal.showCursor();
 		this.terminal.stop();
 	}
@@ -245,6 +264,8 @@ export class TUI extends Container {
 
 		if (force || firstFrame || sizeChanged) {
 			this.fullRender(lines);
+		} else if (lines.length > rows || this.previousLines.length > rows) {
+			this.renderLongFrame(lines, rows, frameChanged);
 		} else if (frameChanged) {
 			this.differentialRender(lines);
 		}
@@ -253,7 +274,7 @@ export class TUI extends Container {
 		this.previousColumns = columns;
 		this.previousRows = rows;
 		if (force || firstFrame || sizeChanged || frameChanged || cursorChanged) {
-			this.positionCursor(cursor);
+			this.positionCursor(cursor, lines.length, rows);
 		}
 	}
 
@@ -285,7 +306,43 @@ export class TUI extends Container {
 	private fullRender(lines: string[]): void {
 		this.terminal.clearScreen();
 		this.terminal.write(`${SYNC_START}${lines.join("\r\n")}${SYNC_END}`);
-		this.hardwareRow = Math.max(0, lines.length - 1);
+		this.hardwareRow = Math.max(0, Math.min(lines.length, this.terminal.rows) - 1);
+	}
+
+	private renderLongFrame(lines: string[], rows: number, frameChanged: boolean): void {
+		if (!frameChanged) return;
+		if (lines.length <= rows || this.previousLines.length <= rows) {
+			this.fullRender(lines);
+			return;
+		}
+
+		const sharedPrefix = Math.max(0, Math.min(lines.length, this.previousLines.length) - rows);
+		if (!this.prefixEqual(lines, this.previousLines, sharedPrefix) || lines.length < this.previousLines.length) {
+			this.fullRender(lines);
+			return;
+		}
+
+		const addedLines = lines.length - this.previousLines.length;
+		let output = SYNC_START;
+		if (addedLines > 0) {
+			output += this.moveRows(this.hardwareRow, rows - 1);
+			output += "\r\n".repeat(addedLines);
+			this.hardwareRow = rows - 1;
+		}
+		output += this.renderViewport(lines, rows);
+		output += SYNC_END;
+		this.terminal.write(output);
+		this.hardwareRow = rows - 1;
+	}
+
+	private renderViewport(lines: readonly string[], rows: number): string {
+		const viewport = lines.slice(-rows);
+		let output = this.moveRows(this.hardwareRow, 0);
+		for (let row = 0; row < viewport.length; row += 1) {
+			if (row > 0) output += "\x1b[1B";
+			output += `\r\x1b[2K${viewport[row] ?? ""}`;
+		}
+		return output;
 	}
 
 	private differentialRender(lines: string[]): void {
@@ -311,14 +368,31 @@ export class TUI extends Container {
 		this.hardwareRow = lastChanged;
 	}
 
-	private positionCursor(cursor: CursorPosition | null): void {
+	private positionCursor(cursor: CursorPosition | null, lineCount: number, rows: number): void {
 		this.cursorPosition = cursor;
-		if (!cursor) return;
-		let output = this.moveRows(this.hardwareRow, cursor.row);
+		if (!cursor) {
+			this.terminal.hideCursor();
+			return;
+		}
+		const viewportStart = Math.max(0, lineCount - rows);
+		if (cursor.row < viewportStart) {
+			this.terminal.hideCursor();
+			return;
+		}
+		const row = cursor.row - viewportStart;
+		let output = this.moveRows(this.hardwareRow, row);
 		output += "\r";
 		if (cursor.column > 0) output += `\x1b[${cursor.column}C`;
 		this.terminal.write(output);
-		this.hardwareRow = cursor.row;
+		this.hardwareRow = row;
+		this.terminal.showCursor();
+	}
+
+	private prefixEqual(left: readonly string[], right: readonly string[], length: number): boolean {
+		for (let index = 0; index < length; index += 1) {
+			if (left[index] !== right[index]) return false;
+		}
+		return true;
 	}
 
 	private moveRows(from: number, to: number): string {

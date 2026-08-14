@@ -106,7 +106,34 @@ describe("TUI focus", () => {
 });
 
 describe("TUI frame contract", () => {
-	it("strips the cursor marker and positions the terminal cursor", () => {
+	it("clears the final frame before returning terminal control", () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		tui.addChild(new Probe(["workspace"]));
+		tui.start();
+		terminal.clearOutput();
+
+		tui.stop();
+
+		assert.equal(terminal.output.includes("\x1b[2J\x1b[H"), true);
+		assert.equal(terminal.output.includes("\x1b[?25h"), true);
+	});
+
+	it("can replace the workspace with a final transcript before stopping", () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		tui.addChild(new Probe(["workspace"]));
+		tui.start();
+		terminal.clearOutput();
+
+		tui.stop({ finalLines: ["older message", "latest message"] });
+
+		assert.equal(terminal.output.includes("older message"), true);
+		assert.equal(terminal.output.includes("latest message"), true);
+		assert.equal(terminal.output.includes("\x1b[?2026l\r\n\x1b[?25h"), true);
+	});
+
+	it("shows the hardware cursor at a marker and hides it when focus is lost", async () => {
 		const terminal = new VirtualTerminal(10, 4);
 		const tui = new TUI(terminal);
 		const input = new FocusProbe(["A界"]);
@@ -115,7 +142,11 @@ describe("TUI frame contract", () => {
 		tui.start();
 
 		assert.equal(terminal.output.includes(CURSOR_MARKER), false);
-		assert.equal(terminal.output.endsWith("\r\x1b[3C"), true);
+		assert.equal(terminal.output.endsWith("\r\x1b[3C\x1b[?25h"), true);
+		terminal.clearOutput();
+		tui.setFocus(null);
+		await flushRender();
+		assert.equal(terminal.output.includes("\x1b[?25l"), true);
 		tui.stop();
 	});
 
@@ -149,6 +180,24 @@ describe("TUI frame contract", () => {
 });
 
 describe("TUI differential rendering", () => {
+	it("scrolls a growing long frame without clearing the terminal", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const probe = new Probe(["history 0", "history 1", "history 2", "editor", "footer"]);
+		tui.addChild(probe);
+		tui.start();
+		terminal.clearOutput();
+
+		probe.lines = [...probe.lines, "new history"];
+		tui.requestRender();
+		await flushRender();
+
+		assert.equal(terminal.output.includes("\x1b[2J\x1b[H"), false);
+		assert.equal(terminal.output.includes("\r\n"), true);
+		assert.equal(terminal.output.includes("new history"), true);
+		tui.stop();
+	});
+
 	it("coalesces requests and writes nothing for an unchanged frame", async () => {
 		const terminal = new VirtualTerminal(20, 5);
 		const tui = new TUI(terminal);

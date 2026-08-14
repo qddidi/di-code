@@ -1,20 +1,35 @@
 import assert from "node:assert/strict";
-import { createFauxProvider } from "@di-code/ai";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createFauxProvider, type Provider } from "@di-code/ai";
 import type { Terminal } from "@di-code/tui";
 import { CURSOR_MARKER, TUI } from "@di-code/tui";
 import { describe, it } from "vitest";
+import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 
 class TestTerminal implements Terminal {
 	private input?: (data: string) => void;
 	private readonly writes: string[] = [];
-	readonly columns = 80;
-	readonly rows = 24;
+	private readonly failStart: boolean;
+	readonly columns: number;
+	readonly rows: number;
+	started = false;
+	cursorHidden = false;
+	constructor(failStart = false, columns = 80, rows = 24) {
+		this.failStart = failStart;
+		this.columns = columns;
+		this.rows = rows;
+	}
 	start(onInput: (data: string) => void): void {
+		this.started = true;
 		this.input = onInput;
+		if (this.failStart) throw new Error("terminal start failed");
 	}
 	stop(): void {
+		this.started = false;
 		this.input = undefined;
 	}
 	write(data: string): void {
@@ -23,8 +38,12 @@ class TestTerminal implements Terminal {
 	moveBy(lines: number): void {
 		if (lines !== 0) this.write(`move:${lines}`);
 	}
-	hideCursor(): void {}
-	showCursor(): void {}
+	hideCursor(): void {
+		this.cursorHidden = true;
+	}
+	showCursor(): void {
+		this.cursorHidden = false;
+	}
 	clearLine(): void {}
 	clearFromCursor(): void {}
 	clearScreen(): void {
@@ -153,8 +172,21 @@ describe("InteractiveProjection", () => {
 		projection.apply({ type: "agent_end", messages: [] });
 
 		assert.deepEqual(projection.state.messages, ["done"]);
+		assert.deepEqual(projection.state.messageItems, [{ role: "assistant", text: "done" }]);
 		assert.equal(projection.state.streamingText, "");
 		assert.equal(projection.state.busy, false);
+	});
+
+	it("keeps user and assistant roles in the display projection", () => {
+		const projection = new InteractiveProjection();
+		const user = { role: "user" as const, content: [{ type: "text" as const, text: "question" }], timestamp: 1 };
+		projection.apply({ type: "message_end", message: user });
+		projection.apply({ type: "message_end", message: assistantMessage("answer") });
+
+		assert.deepEqual(projection.state.messageItems, [
+			{ role: "user", text: "question" },
+			{ role: "assistant", text: "answer" },
+		]);
 	});
 
 	it("stores assistant errors without throwing", () => {
@@ -174,6 +206,116 @@ describe("InteractiveProjection", () => {
 });
 
 describe("InteractiveMode", () => {
+	it("rolls back terminal state when startup fails", () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal(true);
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+
+		assert.throws(() => mode.start(), /terminal start failed/);
+		assert.equal(terminal.started, false);
+		assert.equal(terminal.cursorHidden, false);
+		assert.doesNotThrow(() => mode.stop());
+	});
+
+	it("renders a structured 80x24 interactive workspace before the first prompt", () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+
+		mode.start();
+
+		assert.equal(terminal.output.includes("DI-CODE / INTERACTIVE"), true);
+		assert.equal(terminal.output.includes("MODEL  faux-model"), true);
+		assert.equal(terminal.output.includes("READY"), true);
+		assert.equal(terminal.output.includes("Enter send"), true);
+		mode.stop();
+	});
+
+	it("condenses the workspace status without overflowing a narrow terminal", () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal(false, 36, 24);
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+
+		assert.doesNotThrow(() => mode.start());
+		assert.equal(terminal.output.includes("DI-CODE"), true);
+		assert.equal(terminal.output.includes("READY"), true);
+		assert.equal(terminal.output.includes("Enter send"), true);
+		mode.stop();
+	});
+
+	it("expands with complete chat history while keeping overlays in the current viewport", async () => {
+		const responses = Array.from({ length: 8 }, (_, index) => ({
+			type: "success" as const,
+			content: [{ type: "text" as const, text: `answer ${index}` }],
+		}));
+		const faux = createFauxProvider({ responses });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		for (let index = 0; index < responses.length; index += 1) await session.prompt(`question ${index}`);
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+
+		mode.start();
+		const baseFrame = tui.render(terminal.columns);
+		assert.equal(baseFrame.length > terminal.rows, true);
+		assert.equal(baseFrame.at(-2)?.includes("READY"), true);
+		assert.equal(
+			baseFrame.some((line) => line.includes("answer 7")),
+			true,
+		);
+		assert.equal(
+			baseFrame.some((line) => line.includes("answer 0")),
+			true,
+		);
+		assert.equal(terminal.output.includes("answer 0"), true);
+		assert.equal(terminal.output.includes("answer 7"), true);
+
+		terminal.sendInput("\x0f");
+		await flush();
+		const overlayFrame = tui.render(terminal.columns);
+		assert.equal(overlayFrame.length, baseFrame.length);
+		assert.equal(overlayFrame.at(-2)?.includes("READY"), true);
+		assert.equal(
+			overlayFrame.slice(-terminal.rows).some((line) => line.includes("Faux Model")),
+			true,
+		);
+		mode.stop();
+	});
+
+	it("prints the complete transcript before Ctrl+C returns control to the shell", async () => {
+		const responses = Array.from({ length: 8 }, (_, index) => ({
+			type: "success" as const,
+			content: [{ type: "text" as const, text: `answer ${index}` }],
+		}));
+		const faux = createFauxProvider({ responses });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		for (let index = 0; index < responses.length; index += 1) await session.prompt(`question ${index}`);
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		let exited = false;
+		const mode = new InteractiveMode({
+			session,
+			tui,
+			onExit: () => {
+				exited = true;
+			},
+		});
+		mode.start();
+		terminal.clearOutput();
+
+		terminal.sendInput("\x03");
+
+		assert.equal(exited, true);
+		assert.equal(terminal.output.includes("question 0"), true);
+		assert.equal(terminal.output.includes("answer 7"), true);
+	});
+
 	it("submits editor input through AgentSession and renders the answer", async () => {
 		const faux = createFauxProvider({
 			responses: [{ type: "success", content: [{ type: "text", text: "hello from model" }] }],
@@ -192,6 +334,43 @@ describe("InteractiveMode", () => {
 		assert.equal(session.transcript.at(-1)?.role, "assistant");
 		assert.equal(terminal.output.includes("hello from model"), true);
 		assert.equal(terminal.output.includes(CURSOR_MARKER), false);
+		mode.stop();
+	});
+
+	it("renders assistant responses with the Markdown component", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "**bold answer**" }] }],
+		});
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+
+		mode.start("question");
+		await waitFor(() => session.transcript.length === 2);
+
+		assert.equal(terminal.output.includes("Assistant"), true);
+		assert.equal(terminal.output.includes("bold answer"), true);
+		assert.equal(terminal.output.includes("\x1b[1m"), true);
+		mode.stop();
+	});
+
+	it("separates user, assistant, and activity content into readable transcript regions", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "A focused answer" }] }],
+		});
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+
+		mode.start("A focused question");
+		await waitFor(() => session.transcript.length === 2);
+
+		assert.equal(terminal.output.includes("You"), true);
+		assert.equal(terminal.output.includes("Assistant"), true);
+		assert.equal(terminal.output.includes("A focused question"), true);
+		assert.equal(terminal.output.includes("A focused answer"), true);
 		mode.stop();
 	});
 
@@ -224,18 +403,207 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
-	it("opens and navigates keyboard selectors", async () => {
+	it("switches sessions through an overlay and restores the selected transcript", async () => {
+		const firstFaux = createFauxProvider({ responses: [] });
+		const secondFaux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "restored answer" }] },
+				{ type: "success", content: [{ type: "text", text: "new answer" }] },
+			],
+		});
+		const firstSession = new AgentSession({
+			allowedRoot: process.cwd(),
+			provider: firstFaux.provider,
+			model: firstFaux.model,
+		});
+		const secondSession = new AgentSession({
+			allowedRoot: process.cwd(),
+			provider: secondFaux.provider,
+			model: secondFaux.model,
+		});
+		await secondSession.prompt("old question");
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({
+			session: firstSession,
+			tui,
+			sessions: [{ id: "new-session", label: "New session", open: () => secondSession }],
+		});
+		mode.start();
+		terminal.sendInput("\x0c");
+		assert.equal(tui.hasOverlay(), true);
+		terminal.sendInput("\x1b[B");
+		terminal.sendInput("\r");
+		await waitFor(() => terminal.output.includes("restored answer"));
+		terminal.sendInput("next question");
+		terminal.sendInput("\r");
+		await waitFor(() => secondSession.transcript.length === 4);
+
+		assert.equal(tui.hasOverlay(), false);
+		assert.equal(firstSession.transcript.length, 0);
+		assert.equal(terminal.output.includes("session=new-session"), true);
+		mode.stop();
+	});
+
+	it("uses a SelectList overlay to change the theme", async () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
 		const terminal = new TestTerminal();
 		const tui = new TUI(terminal);
 		const mode = new InteractiveMode({ session, tui });
 		mode.start();
-		terminal.sendInput("\x0c");
+
+		terminal.sendInput("\x14");
+		assert.equal(tui.hasOverlay(), true);
 		terminal.sendInput("\x1b[B");
 		terminal.sendInput("\r");
 		await flush();
-		assert.equal(terminal.output.includes("session=new-session"), true);
+
+		assert.equal(tui.hasOverlay(), false);
+		assert.equal(terminal.output.includes("theme=light"), true);
+		mode.stop();
+	});
+
+	it("switches to a provider model and uses it for the next prompt", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "alternate answer" }] }],
+		});
+		const alternate = { ...faux.model, id: "alternate-model", name: "Alternate model" };
+		const streamedModels: string[] = [];
+		const provider: Provider = {
+			...faux.provider,
+			models: [faux.model, alternate],
+			stream(model, context, options) {
+				streamedModels.push(model.id);
+				return faux.provider.stream(faux.model, context, options);
+			},
+		};
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("\x0f");
+		assert.equal(tui.hasOverlay(), true);
+		terminal.sendInput("\x1b[B");
+		terminal.sendInput("\r");
+		terminal.sendInput("question");
+		terminal.sendInput("\r");
+		await waitFor(() => streamedModels.length === 1);
+
+		assert.equal(session.modelId, "alternate-model");
+		assert.deepEqual(streamedModels, ["alternate-model"]);
+		assert.equal(terminal.output.includes("MODEL  alternate-model"), true);
+		mode.stop();
+	});
+
+	it("uses a SettingsList overlay to update compaction", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-settings-"));
+		try {
+			const faux = createFauxProvider({ responses: [] });
+			const manager = await SessionManager.create({ filePath: join(root, "session.jsonl"), cwd: root });
+			const session = new AgentSession({
+				allowedRoot: root,
+				provider: faux.provider,
+				model: faux.model,
+				sessionManager: manager,
+			});
+			const terminal = new TestTerminal();
+			const tui = new TUI(terminal);
+			const mode = new InteractiveMode({ session, tui });
+			mode.start();
+
+			assert.equal(session.compactionEnabled, true);
+			terminal.sendInput("\x13");
+			assert.equal(tui.hasOverlay(), true);
+			terminal.sendInput("\r");
+			assert.equal(session.compactionEnabled, false);
+			terminal.sendInput("\x1b");
+			assert.equal(tui.hasOverlay(), false);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("handles setting changes attempted during a prompt without throwing from terminal input", async () => {
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [{ type: "success", content: [{ type: "text", text: "a".repeat(100) }] }],
+		});
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start("question");
+		await flush();
+
+		terminal.sendInput("\x13");
+		assert.doesNotThrow(() => terminal.sendInput("\r"));
+		assert.equal(tui.hasOverlay(), false);
+		mode.stop();
+	});
+
+	it("does not submit to the old session while a new session is opening", async () => {
+		const firstFaux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "old" }] }],
+		});
+		const secondFaux = createFauxProvider({ responses: [] });
+		const firstSession = new AgentSession({
+			allowedRoot: process.cwd(),
+			provider: firstFaux.provider,
+			model: firstFaux.model,
+		});
+		const secondSession = new AgentSession({
+			allowedRoot: process.cwd(),
+			provider: secondFaux.provider,
+			model: secondFaux.model,
+		});
+		let resolveSession: ((session: AgentSession) => void) | undefined;
+		const opening = new Promise<AgentSession>((resolve) => {
+			resolveSession = resolve;
+		});
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({
+			session: firstSession,
+			tui,
+			sessions: [{ id: "slow", label: "Slow session", open: () => opening }],
+		});
+		mode.start();
+		terminal.sendInput("\x0c");
+		terminal.sendInput("\x1b[B");
+		terminal.sendInput("\r");
+		terminal.sendInput("must not run");
+		terminal.sendInput("\r");
+		await flush();
+
+		assert.equal(firstSession.transcript.length, 0);
+		resolveSession?.(secondSession);
+		await waitFor(() => terminal.output.includes("session=slow"));
+		mode.stop();
+	});
+
+	it("shows slash autocomplete without sending the completed command to the provider", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("/mo");
+		terminal.sendInput("\t");
+		await waitFor(() => tui.hasOverlay());
+		assert.equal(terminal.output.includes("Open the model selector"), true);
+		terminal.sendInput("\r");
+		assert.equal(tui.hasOverlay(), false);
+		terminal.sendInput("\r");
+		await flush();
+
+		assert.equal(tui.hasOverlay(), true);
+		assert.equal(session.transcript.length, 0);
 		mode.stop();
 	});
 
@@ -263,6 +631,9 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("\r");
 		terminal.sendInput("third");
 		terminal.sendInput("\r");
+		await flush();
+		assert.equal(terminal.output.includes("Queue (1)"), true);
+		assert.equal(terminal.output.includes("third"), true);
 		await waitFor(() => session.transcript.length === 8);
 		assert.equal(session.transcript.at(-1)?.role, "assistant");
 		mode.stop();
@@ -270,6 +641,13 @@ describe("InteractiveMode", () => {
 });
 
 describe("interactive CLI parsing", () => {
+	it("allows interactive mode to start without an initial prompt", async () => {
+		const { parseCliArgs } = await import("../src/cli.ts");
+		assert.deepEqual(parseCliArgs(["--interactive"]), { kind: "run", mode: "interactive", prompt: "" });
+		assert.throws(() => parseCliArgs(["--mode", "print"]), /A prompt is required/);
+		assert.throws(() => parseCliArgs(["--mode", "json"]), /A prompt is required/);
+	});
+
 	it("accepts interactive mode and rejects print conflicts", async () => {
 		const { parseCliArgs } = await import("../src/cli.ts");
 		assert.deepEqual(parseCliArgs(["--mode", "interactive", "hello"]), {

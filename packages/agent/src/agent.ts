@@ -41,7 +41,7 @@ export class Agent {
 	private streaming = false;
 	private readonly listeners = new Set<AgentListener>();
 	private readonly provider: Provider;
-	private readonly model: Model;
+	private model: Model;
 	private readonly systemPrompt?: string;
 	private readonly now: () => number;
 	private readonly tools: readonly AgentTool[];
@@ -71,6 +71,11 @@ export class Agent {
 
 	get isStreaming(): boolean {
 		return this.streaming;
+	}
+
+	setModel(model: Model): void {
+		if (this.streaming) throw new Error("Cannot change Agent model while processing a prompt.");
+		this.model = structuredClone(model);
 	}
 
 	replaceContext(messages: readonly Message[]): void {

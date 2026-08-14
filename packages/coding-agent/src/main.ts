@@ -32,7 +32,24 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			if (command.mode === "interactive") {
 				const terminal = new ProcessTerminal();
 				const tui = new TUI(terminal);
-				const mode = new InteractiveMode({ session, tui });
+				const mode = new InteractiveMode({
+					session,
+					tui,
+					sessions: [
+						{
+							id: "new-session",
+							label: "New session",
+							description: "Start a new in-memory conversation.",
+							open: () =>
+								new AgentSession({
+									allowedRoot: options.allowedRoot ?? process.cwd(),
+									provider: faux.provider,
+									model: faux.model,
+									now: options.now,
+								}),
+						},
+					],
+				});
 				mode.start(command.prompt);
 				return 0;
 			}
