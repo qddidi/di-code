@@ -1,3 +1,6 @@
+import type { AutocompleteContext, AutocompleteItem, AutocompleteProvider } from "../autocomplete.ts";
+import { KeybindingsManager } from "../keybindings.ts";
+import { Key, matchesKey } from "../keys.ts";
 import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
 import { visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
@@ -47,6 +50,8 @@ interface CursorPosition {
 
 export interface EditorOptions {
 	readonly maxHeight?: number;
+	readonly keybindings?: KeybindingsManager;
+	readonly autocomplete?: AutocompleteProvider;
 }
 
 export class Editor implements Component, Focusable {
@@ -64,17 +69,27 @@ export class Editor implements Component, Focusable {
 	private pasteBuffer = "";
 	private isPasting = false;
 	private readonly maxHeight: number | undefined;
+	private readonly keybindings: KeybindingsManager;
+	private readonly autocompleteProvider?: AutocompleteProvider;
+	private autocompleteItems: AutocompleteItem[] = [];
+	private autocompleteIndex = 0;
+	private autocompletePrefix = "";
+	private autocompleteToken = 0;
+	private autocompleteAbort?: AbortController;
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedCursor?: number;
 	private cachedFocused?: boolean;
 	private cachedLines?: string[];
+	onAutocompleteChange?: () => void;
 
 	constructor(options: EditorOptions = {}) {
 		if (options.maxHeight !== undefined && (!Number.isInteger(options.maxHeight) || options.maxHeight <= 0)) {
 			throw new Error("Editor maxHeight must be a positive integer");
 		}
 		this.maxHeight = options.maxHeight;
+		this.keybindings = options.keybindings ?? new KeybindingsManager();
+		this.autocompleteProvider = options.autocomplete;
 	}
 
 	get focused(): boolean {
@@ -89,7 +104,48 @@ export class Editor implements Component, Focusable {
 		return this.value;
 	}
 
+	getAutocompleteItems(): AutocompleteItem[] {
+		return [...this.autocompleteItems];
+	}
+
+	isShowingAutocomplete(): boolean {
+		return this.autocompleteItems.length > 0;
+	}
+
+	cancelAutocomplete(): void {
+		this.autocompleteToken += 1;
+		this.autocompleteAbort?.abort();
+		this.autocompleteAbort = undefined;
+		this.autocompleteItems = [];
+		this.autocompleteIndex = 0;
+		this.autocompletePrefix = "";
+		this.onAutocompleteChange?.();
+	}
+
+	async requestAutocomplete(force = false): Promise<void> {
+		if (!this.autocompleteProvider) return;
+		this.autocompleteAbort?.abort();
+		const controller = new AbortController();
+		this.autocompleteAbort = controller;
+		const token = ++this.autocompleteToken;
+		const snapshot: AutocompleteContext = { text: this.value, cursor: this.cursor };
+		const suggestions = await this.autocompleteProvider.getSuggestions(snapshot, { signal: controller.signal, force });
+		if (
+			controller.signal.aborted ||
+			token !== this.autocompleteToken ||
+			this.value !== snapshot.text ||
+			this.cursor !== snapshot.cursor
+		)
+			return;
+		this.autocompleteAbort = undefined;
+		this.autocompleteItems = suggestions ? [...suggestions.items] : [];
+		this.autocompletePrefix = suggestions?.prefix ?? "";
+		this.autocompleteIndex = 0;
+		this.onAutocompleteChange?.();
+	}
+
 	setValue(value: string): void {
+		this.clearAutocompleteForEdit();
 		const normalized = normalizeEditorText(value);
 		this.value = normalized;
 		this.cursor = normalized.length;
@@ -114,46 +170,75 @@ export class Editor implements Component, Focusable {
 	handleInput(data: string): void {
 		if (this.consumePaste(data)) return;
 		if (this.onCommand?.(data) === true) return;
-		if (data === "\x03") {
+		if (matchesKey(data, Key.ctrl("c"))) {
 			this.onInterrupt?.();
 			return;
 		}
-		switch (data) {
-			case "\r":
-			case "\n":
-				if (this.onSubmit && !this.disableSubmit) this.onSubmit(this.value);
-				else this.insert("\n");
+		if (this.isShowingAutocomplete()) {
+			if (this.keybindings.matches(data, "tui.select.cancel")) {
+				this.cancelAutocomplete();
 				return;
-			case "\x1b":
-				this.onEscape?.();
+			}
+			if (this.keybindings.matches(data, "tui.select.up") || this.keybindings.matches(data, "tui.select.down")) {
+				const direction = this.keybindings.matches(data, "tui.select.up") ? -1 : 1;
+				this.autocompleteIndex =
+					(this.autocompleteIndex + direction + this.autocompleteItems.length) % this.autocompleteItems.length;
+				this.onAutocompleteChange?.();
 				return;
-			case "\x1b[D":
-				this.moveLeft();
+			}
+			if (this.keybindings.matches(data, "tui.input.tab") || this.keybindings.matches(data, "tui.input.submit")) {
+				this.applyAutocomplete();
 				return;
-			case "\x1b[C":
-				this.moveRight();
-				return;
-			case "\x1b[A":
-				this.moveVertical(-1);
-				return;
-			case "\x1b[B":
-				this.moveVertical(1);
-				return;
-			case "\x01":
-			case "\x1b[H":
-				this.moveHome();
-				return;
-			case "\x05":
-			case "\x1b[F":
-				this.moveEnd();
-				return;
-			case "\x7f":
-			case "\b":
-				this.deleteBackward();
-				return;
-			case "\x1b[3~":
-				this.deleteForward();
-				return;
+			}
+		}
+		if (this.keybindings.matches(data, "tui.input.tab") && this.autocompleteProvider) {
+			void this.requestAutocomplete(true);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.input.submit")) {
+			if (this.onSubmit && !this.disableSubmit) this.onSubmit(this.value);
+			else this.insert("\n");
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.input.newLine")) {
+			this.insert("\n");
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.input.cancel")) {
+			this.onEscape?.();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
+			this.moveLeft();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorRight")) {
+			this.moveRight();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorUp")) {
+			this.moveVertical(-1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorDown")) {
+			this.moveVertical(1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorLineStart")) {
+			this.moveHome();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorLineEnd")) {
+			this.moveEnd();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.deleteCharBackward")) {
+			this.deleteBackward();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.deleteCharForward")) {
+			this.deleteForward();
+			return;
 		}
 
 		if (
@@ -213,13 +298,31 @@ export class Editor implements Component, Focusable {
 		const remainder = this.pasteBuffer.slice(endIndex + PASTE_END.length);
 		this.pasteBuffer = "";
 		this.isPasting = false;
+		this.cancelAutocomplete();
 		this.insert(normalizePastedText(pasted));
 		if (remainder) this.handleInput(remainder);
 		return true;
 	}
 
+	private applyAutocomplete(): void {
+		const item = this.autocompleteItems[this.autocompleteIndex];
+		if (!item || !this.autocompleteProvider) return;
+		const result = this.autocompleteProvider.applyCompletion(
+			{ text: this.value, cursor: this.cursor },
+			item,
+			this.autocompletePrefix,
+		);
+		this.value = result.text;
+		this.cursor = result.cursor;
+		this.preferredColumn = undefined;
+		this.invalidate();
+		this.cancelAutocomplete();
+		this.onChange?.(this.value);
+	}
+
 	private insert(text: string): void {
 		if (text.length === 0) return;
+		this.clearAutocompleteForEdit();
 		this.value = this.value.slice(0, this.cursor) + text + this.value.slice(this.cursor);
 		this.cursor += text.length;
 		this.preferredColumn = undefined;
@@ -228,27 +331,32 @@ export class Editor implements Component, Focusable {
 	}
 
 	private moveLeft(): void {
+		this.clearAutocompleteForEdit();
 		this.cursor = previousBoundary(this.value, this.cursor);
 		this.preferredColumn = undefined;
 	}
 
 	private moveRight(): void {
+		this.clearAutocompleteForEdit();
 		this.cursor = nextBoundary(this.value, this.cursor);
 		this.preferredColumn = undefined;
 	}
 
 	private moveHome(): void {
+		this.clearAutocompleteForEdit();
 		this.cursor = this.lineStart(this.cursor);
 		this.preferredColumn = 0;
 	}
 
 	private moveEnd(): void {
+		this.clearAutocompleteForEdit();
 		const nextBreak = this.value.indexOf("\n", this.cursor);
 		this.cursor = nextBreak < 0 ? this.value.length : nextBreak;
 		this.preferredColumn = this.getCursorPosition().column;
 	}
 
 	private moveVertical(direction: -1 | 1): void {
+		this.clearAutocompleteForEdit();
 		const position = this.getCursorPosition();
 		const desiredColumn = this.preferredColumn ?? position.column;
 		const targetLine = Math.max(0, Math.min(this.lineCount() - 1, position.line + direction));
@@ -258,6 +366,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteBackward(): void {
 		if (this.cursor === 0) return;
+		this.clearAutocompleteForEdit();
 		const previous = previousBoundary(this.value, this.cursor);
 		this.value = this.value.slice(0, previous) + this.value.slice(this.cursor);
 		this.cursor = previous;
@@ -267,6 +376,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteForward(): void {
 		if (this.cursor >= this.value.length) return;
+		this.clearAutocompleteForEdit();
 		const next = nextBoundary(this.value, this.cursor);
 		this.value = this.value.slice(0, this.cursor) + this.value.slice(next);
 		this.invalidate();
@@ -301,5 +411,9 @@ export class Editor implements Component, Focusable {
 			localOffset += segment.length;
 		}
 		return offset + localOffset;
+	}
+
+	private clearAutocompleteForEdit(): void {
+		if (this.autocompleteItems.length > 0 || this.autocompleteAbort) this.cancelAutocomplete();
 	}
 }

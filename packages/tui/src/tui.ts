@@ -1,3 +1,4 @@
+import { compositeOverlay, type OverlayHandle, type OverlayOptions, validateOverlayOptions } from "./overlay.ts";
 import type { Terminal } from "./terminal.ts";
 import { visibleWidth } from "./utils.ts";
 
@@ -29,6 +30,13 @@ interface CursorPosition {
 interface PreparedFrame {
 	readonly lines: string[];
 	readonly cursor: CursorPosition | null;
+}
+
+interface OverlayEntry {
+	readonly component: Component;
+	readonly options: OverlayOptions;
+	preFocus: Component | null;
+	hidden: boolean;
 }
 
 export class Container implements Component {
@@ -67,6 +75,7 @@ export class TUI extends Container {
 	private started = false;
 	private renderPending = false;
 	private forcePending = false;
+	private readonly overlays: OverlayEntry[] = [];
 
 	constructor(terminal: Terminal) {
 		super();
@@ -108,6 +117,74 @@ export class TUI extends Container {
 		this.requestRender();
 	}
 
+	showOverlay(component: Component, options: OverlayOptions = {}): OverlayHandle {
+		validateOverlayOptions(options);
+		const entry: OverlayEntry = {
+			component,
+			options,
+			preFocus: this.focusedComponent,
+			hidden: false,
+		};
+		this.overlays.push(entry);
+		if (!options.nonCapturing) this.setFocus(component);
+		this.requestRender();
+		let removed = false;
+
+		return {
+			hide: () => {
+				if (removed) return;
+				removed = true;
+				this.removeOverlay(entry);
+			},
+			setHidden: (hidden) => {
+				if (removed || entry.hidden === hidden) return;
+				entry.hidden = hidden;
+				if (hidden) {
+					for (const overlay of this.overlays) {
+						if (overlay.preFocus === component) overlay.preFocus = entry.preFocus;
+					}
+					if (this.focusedComponent === component) this.restoreOverlayFocus(entry);
+				}
+				if (!hidden && !entry.options.nonCapturing) {
+					this.bringOverlayToFront(entry);
+					this.setFocus(component);
+				}
+				this.requestRender();
+			},
+			isHidden: () => removed || entry.hidden,
+			focus: () => {
+				if (removed || entry.hidden) return;
+				this.bringOverlayToFront(entry);
+				this.setFocus(component);
+				this.requestRender();
+			},
+			isFocused: () => !removed && !entry.hidden && this.focusedComponent === component,
+		};
+	}
+
+	hideOverlay(): void {
+		const overlay = [...this.overlays].reverse().find((entry) => !entry.hidden);
+		if (overlay) this.removeOverlay(overlay);
+	}
+
+	hasOverlay(): boolean {
+		return this.overlays.some((entry) => !entry.hidden);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+		for (const overlay of this.overlays) overlay.component.invalidate();
+	}
+
+	override render(width: number): string[] {
+		let lines = super.render(width);
+		for (const overlay of this.overlays) {
+			if (overlay.hidden) continue;
+			lines = compositeOverlay(lines, overlay.component, overlay.options, width, this.terminal.rows);
+		}
+		return lines;
+	}
+
 	requestRender(force = false): void {
 		if (!this.started) return;
 		this.forcePending ||= force;
@@ -130,6 +207,31 @@ export class TUI extends Container {
 	private handleResize(): void {
 		this.invalidate();
 		this.requestRender(true);
+	}
+
+	private bringOverlayToFront(entry: OverlayEntry): void {
+		const index = this.overlays.indexOf(entry);
+		if (index < 0 || index === this.overlays.length - 1) return;
+		this.overlays.splice(index, 1);
+		this.overlays.push(entry);
+	}
+
+	private removeOverlay(entry: OverlayEntry): void {
+		const index = this.overlays.indexOf(entry);
+		if (index < 0) return;
+		this.overlays.splice(index, 1);
+		for (const overlay of this.overlays) {
+			if (overlay.preFocus === entry.component) overlay.preFocus = entry.preFocus;
+		}
+		if (this.focusedComponent === entry.component) this.restoreOverlayFocus(entry);
+		this.requestRender();
+	}
+
+	private restoreOverlayFocus(entry: OverlayEntry): void {
+		const topCapturing = [...this.overlays]
+			.reverse()
+			.find((overlay) => !overlay.hidden && !overlay.options.nonCapturing && overlay !== entry);
+		this.setFocus(topCapturing?.component ?? entry.preFocus);
 	}
 
 	private renderFrame(force: boolean): void {

@@ -93,6 +93,36 @@ describe("ProcessTerminal lifecycle", () => {
 		assert.deepEqual(received, ["hello"]);
 	});
 
+	it("reassembles split control sequences before forwarding input", () => {
+		const { input, terminal } = createProcessTerminal();
+		const received: string[] = [];
+		terminal.start(
+			(data) => received.push(data),
+			() => {},
+		);
+
+		input.emit("data", "\x1b[");
+		input.emit("data", "A");
+
+		assert.deepEqual(received, ["\x1b[A"]);
+		terminal.stop();
+	});
+
+	it("forwards a split paste as one complete marker-delimited event", () => {
+		const { input, terminal } = createProcessTerminal();
+		const received: string[] = [];
+		terminal.start(
+			(data) => received.push(data),
+			() => {},
+		);
+
+		input.emit("data", "\x1b[200~line1");
+		input.emit("data", "\nline2\x1b[201~");
+
+		assert.deepEqual(received, ["\x1b[200~line1\nline2\x1b[201~"]);
+		terminal.stop();
+	});
+
 	it("propagates resize and stop restores state", () => {
 		const { input, output, terminal } = createProcessTerminal();
 		let resizeCount = 0;

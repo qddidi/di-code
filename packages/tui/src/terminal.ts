@@ -1,3 +1,5 @@
+import { StdinBuffer } from "./stdin-buffer.ts";
+
 const BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
 const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
 const DEFAULT_COLUMNS = 80;
@@ -50,10 +52,11 @@ export class ProcessTerminal implements Terminal {
 	private wasRaw = false;
 	private inputHandler?: (data: string) => void;
 	private resizeHandler?: () => void;
+	private stdinBuffer?: StdinBuffer;
 
 	private readonly handleData = (data: string | Buffer): void => {
-		if (!this.started || !this.inputHandler) return;
-		this.inputHandler(typeof data === "string" ? data : data.toString("utf8"));
+		if (!this.started) return;
+		this.stdinBuffer?.process(data);
 	};
 
 	private readonly handleResize = (): void => {
@@ -75,6 +78,12 @@ export class ProcessTerminal implements Terminal {
 		this.input.setRawMode?.(true);
 		this.input.setEncoding("utf8");
 		this.input.resume();
+		this.stdinBuffer = new StdinBuffer({
+			timeoutMs: 25,
+			onData: (sequence) => {
+				if (this.started) this.inputHandler?.(sequence);
+			},
+		});
 		this.input.on("data", this.handleData);
 		this.output.on("resize", this.handleResize);
 		this.write(BRACKETED_PASTE_ENABLE);
@@ -85,6 +94,8 @@ export class ProcessTerminal implements Terminal {
 		this.write(BRACKETED_PASTE_DISABLE);
 		this.input.removeListener("data", this.handleData);
 		this.output.removeListener("resize", this.handleResize);
+		this.stdinBuffer?.destroy();
+		this.stdinBuffer = undefined;
 		this.inputHandler = undefined;
 		this.resizeHandler = undefined;
 		this.input.pause();
