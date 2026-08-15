@@ -407,4 +407,18 @@ describe("TUI differential rendering", () => {
 		assert.equal(terminal.output.includes("\x1b[2J\x1b[H"), true);
 		tui.stop();
 	});
+
+	it("does not redraw when a resize notification keeps the same dimensions", async () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		tui.addChild(new Probe(["stable"]));
+		tui.start();
+		terminal.clearOutput();
+
+		terminal.notifyResize();
+		await flushRender();
+
+		assert.equal(terminal.output, "");
+		tui.stop();
+	});
 });

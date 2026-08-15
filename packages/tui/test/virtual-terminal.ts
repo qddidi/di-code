@@ -86,6 +86,10 @@ export class VirtualTerminal implements Terminal {
 		if (columns === this.currentColumns && rows === this.currentRows) return;
 		this.currentColumns = columns;
 		this.currentRows = rows;
+		this.notifyResize();
+	}
+
+	notifyResize(): void {
 		if (this.started) this.resizeHandler?.();
 	}
 

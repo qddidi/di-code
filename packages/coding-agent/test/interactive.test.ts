@@ -240,6 +240,46 @@ describe("InteractiveProjection", () => {
 });
 
 describe("InteractiveChat streaming layout", () => {
+	it("commits a long streamed answer without replaying the frame", async () => {
+		const projection = new InteractiveProjection();
+		const userMessage = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "inspect the current project" }],
+			timestamp: 1,
+		};
+		const longAnswer = Array.from({ length: 40 }, (_, index) => `answer line ${index}`).join("\n");
+		projection.apply({ type: "agent_start" });
+		projection.apply({ type: "message_end", message: userMessage });
+		projection.apply({ type: "message_start", message: preview("") });
+		projection.apply({
+			type: "message_update",
+			event: { type: "text_delta", contentIndex: 0, delta: longAnswer },
+		});
+		const readState = (): InteractiveViewState => ({
+			...projection.state,
+			model: "faux-model",
+			theme: "dark",
+		});
+		const terminal = new TestTerminal(false, 80, 24);
+		const tui = new TUI(terminal);
+		const tail: Component = {
+			invalidate() {},
+			render: () => Array.from({ length: 8 }, (_, index) => `tail ${index}`),
+		};
+		tui.addChild(new InteractiveChat(readState));
+		tui.addChild(tail);
+		tui.start();
+		terminal.clearOutput();
+
+		projection.apply({ type: "message_end", message: assistantMessage(longAnswer) });
+		projection.apply({ type: "agent_end", messages: [] });
+		tui.requestRender();
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+		assert.equal(terminal.output.includes("\x1b[3J"), false);
+		tui.stop();
+	});
+
 	it("keeps the final answer in the writable viewport after many tool calls", async () => {
 		const projection = new InteractiveProjection();
 		projection.apply({ type: "agent_start" });

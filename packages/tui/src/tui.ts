@@ -259,6 +259,7 @@ export class TUI extends Container {
 	}
 
 	private handleResize(): void {
+		if (this.terminal.columns === this.previousColumns && this.terminal.rows === this.previousRows) return;
 		this.invalidate();
 		this.requestRender(true);
 	}

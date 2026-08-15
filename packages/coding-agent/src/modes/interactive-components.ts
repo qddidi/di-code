@@ -110,7 +110,7 @@ export class InteractiveChat implements Component {
 		}
 		if (state.streamingText) {
 			if (lines.length > 0) lines.push(" ");
-			lines.push(...renderLine(`  ${paint(colors.assistant, "Assistant / streaming", true)}`, width));
+			lines.push(...renderLine(`  ${paint(colors.assistant, "Assistant", true)}`, width));
 			lines.push(...new Markdown(state.streamingText, { paddingX: 4 }).render(width));
 		}
 		const hasActivity = state.status || state.toolStatus.length > 0 || state.queue.length > 0 || state.error;
