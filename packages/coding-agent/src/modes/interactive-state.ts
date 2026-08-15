@@ -6,9 +6,20 @@ export interface InteractiveMessage {
 	readonly text: string;
 }
 
+export type InteractiveProcessItem =
+	| { readonly type: "thinking"; readonly id: "thinking" }
+	| {
+			readonly type: "tool";
+			readonly id: string;
+			readonly command: string;
+			readonly status: "running" | "done" | "error";
+	  };
+
 export interface InteractiveState {
 	readonly messages: readonly string[];
 	readonly messageItems: readonly InteractiveMessage[];
+	readonly processItems: readonly InteractiveProcessItem[];
+	readonly spinnerFrame: number;
 	readonly streamingText: string;
 	readonly toolStatus: readonly string[];
 	readonly busy: boolean;
@@ -30,7 +41,9 @@ function textOf(message: Message): string {
 export class InteractiveProjection {
 	private readonly messages: string[] = [];
 	private readonly messageItems: InteractiveMessage[] = [];
+	private readonly processItems: InteractiveProcessItem[] = [];
 	private readonly toolStatus = new Map<string, string>();
+	private spinnerFrame = 0;
 	private streamingText = "";
 	private busy = false;
 	private error: string | undefined;
@@ -43,6 +56,8 @@ export class InteractiveProjection {
 		return {
 			messages: [...this.messages],
 			messageItems: this.messageItems.map((message) => ({ ...message })),
+			processItems: this.processItems.map((item) => ({ ...item })),
+			spinnerFrame: this.spinnerFrame,
 			streamingText: this.streamingText,
 			toolStatus: [...this.toolStatus.values()],
 			busy: this.busy,
@@ -62,6 +77,7 @@ export class InteractiveProjection {
 		this.messages.length = 0;
 		this.messageItems.length = 0;
 		this.streamingText = "";
+		this.processItems.length = 0;
 		this.toolStatus.clear();
 		this.error = undefined;
 	}
@@ -82,10 +98,24 @@ export class InteractiveProjection {
 		this.retrying = value;
 	}
 
+	advanceSpinner(): boolean {
+		if (!this.busy || !this.processItems.some((item) => item.type === "thinking")) return false;
+		this.spinnerFrame = (this.spinnerFrame + 1) % 4;
+		return true;
+	}
+
+	clearTransientProcess(): void {
+		this.processItems.length = 0;
+		this.toolStatus.clear();
+		this.spinnerFrame = 0;
+	}
+
 	replaceTranscript(messages: readonly Message[]): void {
 		this.messages.length = 0;
 		this.messageItems.length = 0;
+		this.processItems.length = 0;
 		this.toolStatus.clear();
+		this.spinnerFrame = 0;
 		this.streamingText = "";
 		this.busy = false;
 		this.error = undefined;
@@ -98,7 +128,10 @@ export class InteractiveProjection {
 				this.busy = true;
 				this.error = undefined;
 				this.retrying = false;
+				this.processItems.length = 0;
+				this.processItems.push({ type: "thinking", id: "thinking" });
 				this.toolStatus.clear();
+				this.spinnerFrame = 0;
 				return;
 			case "compaction_start":
 				this.compacting = true;
@@ -111,12 +144,23 @@ export class InteractiveProjection {
 				if (event.message.role === "assistant") this.streamingText = "";
 				return;
 			case "message_update":
-				if (event.event.type === "text_delta") this.streamingText += event.event.delta;
+				if (event.event.type === "text_delta") {
+					this.removeThinking();
+					this.streamingText += event.event.delta;
+				}
 				return;
 			case "tool_execution_start":
+				this.removeThinking();
+				this.processItems.push({
+					type: "tool",
+					id: event.toolCallId,
+					command: formatToolCommand(event.toolName, event.arguments),
+					status: "running",
+				});
 				this.toolStatus.set(event.toolCallId, `${event.toolName}: running`);
 				return;
 			case "tool_execution_end":
+				this.updateToolStatus(event.toolCallId, event.result.isError ? "error" : "done");
 				this.toolStatus.set(event.toolCallId, `${event.toolName}: ${event.result.isError ? "error" : "done"}`);
 				return;
 			case "message_end":
@@ -125,11 +169,31 @@ export class InteractiveProjection {
 			case "agent_end":
 				this.busy = false;
 				this.retrying = false;
+				this.processItems.length = 0;
+				this.toolStatus.clear();
+				this.spinnerFrame = 0;
 				return;
 			case "turn_start":
+				if (this.busy && !this.processItems.some((item) => item.type === "thinking")) {
+					this.processItems.push({ type: "thinking", id: "thinking" });
+					this.spinnerFrame = 0;
+				}
+				return;
 			case "turn_end":
 				return;
 		}
+	}
+
+	private removeThinking(): void {
+		const index = this.processItems.findIndex((item) => item.type === "thinking");
+		if (index >= 0) this.processItems.splice(index, 1);
+	}
+
+	private updateToolStatus(id: string, status: "done" | "error"): void {
+		const index = this.processItems.findIndex((item) => item.type === "tool" && item.id === id);
+		const item = this.processItems[index];
+		if (index < 0 || item?.type !== "tool") return;
+		this.processItems[index] = { ...item, status };
 	}
 
 	private appendCompletedMessage(message: Message): void {
@@ -149,4 +213,9 @@ export class InteractiveProjection {
 		if (message.stopReason === "error" || message.stopReason === "aborted") this.error = message.errorMessage;
 		this.streamingText = "";
 	}
+}
+
+function formatToolCommand(toolName: string, argumentsValue: Record<string, unknown>): string {
+	const serialized = JSON.stringify(argumentsValue);
+	return serialized === "{}" ? toolName : `${toolName} ${serialized}`;
 }

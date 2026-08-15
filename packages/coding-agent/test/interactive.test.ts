@@ -118,6 +118,84 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("InteractiveProjection", () => {
+	it("projects transient thinking and tool process items in event order", () => {
+		const projection = new InteractiveProjection();
+		projection.apply({ type: "agent_start" });
+		assert.deepEqual(projection.state.processItems, [{ type: "thinking", id: "thinking" }]);
+
+		projection.apply({
+			type: "tool_execution_start",
+			toolCallId: "r1",
+			toolName: "read",
+			arguments: { path: "a.txt" },
+		});
+		assert.deepEqual(projection.state.processItems, [
+			{ type: "tool", id: "r1", command: 'read {"path":"a.txt"}', status: "running" },
+		]);
+
+		projection.apply({
+			type: "tool_execution_end",
+			toolCallId: "r1",
+			toolName: "read",
+			result: {
+				role: "tool_result",
+				toolCallId: "r1",
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 2,
+			},
+		});
+		projection.apply({ type: "turn_start" });
+		assert.deepEqual(projection.state.processItems, [
+			{ type: "tool", id: "r1", command: 'read {"path":"a.txt"}', status: "done" },
+			{ type: "thinking", id: "thinking" },
+		]);
+
+		projection.apply({
+			type: "message_update",
+			event: { type: "text_delta", contentIndex: 0, delta: "answer" },
+		});
+		assert.deepEqual(projection.state.processItems, [
+			{ type: "tool", id: "r1", command: 'read {"path":"a.txt"}', status: "done" },
+		]);
+		projection.apply({ type: "agent_end", messages: [] });
+		assert.deepEqual(projection.state.processItems, []);
+	});
+
+	it("clears transient process items when the mode stops during a prompt", () => {
+		const projection = new InteractiveProjection();
+		projection.apply({ type: "agent_start" });
+		projection.apply({
+			type: "tool_execution_start",
+			toolCallId: "r1",
+			toolName: "read",
+			arguments: { path: "a.txt" },
+		});
+		projection.clearTransientProcess();
+		assert.deepEqual(projection.state.processItems, []);
+		assert.deepEqual(projection.state.toolStatus, []);
+	});
+
+	it("renders a tool command on one truncated line and removes it after the run", () => {
+		const projection = new InteractiveProjection();
+		projection.apply({ type: "agent_start" });
+		const readState = (): InteractiveViewState => ({ ...projection.state, model: "faux-model", theme: "dark" });
+		assert.equal(new InteractiveChat(readState).render(32).join("\n").includes("Thinking"), true);
+		projection.apply({
+			type: "tool_execution_start",
+			toolCallId: "bash-1",
+			toolName: "bash",
+			arguments: { command: "echo this command is deliberately longer than the terminal" },
+		});
+		const output = new InteractiveChat(readState).render(32).join("\n");
+		assert.equal(output.includes("bash"), true);
+		assert.equal(output.includes("..."), true);
+		assert.equal(output.includes("ACTIVITY"), false);
+		projection.apply({ type: "agent_end", messages: [] });
+		assert.equal(new InteractiveChat(readState).render(32).join("\n").includes("bash"), false);
+	});
+
 	it("projects user and assistant streaming messages", () => {
 		const projection = new InteractiveProjection();
 		const user = { role: "user" as const, content: [{ type: "text" as const, text: "hello" }], timestamp: 1 };

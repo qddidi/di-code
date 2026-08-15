@@ -20,7 +20,7 @@ import { InteractiveLayout } from "./interactive-layout.ts";
 import { InteractiveProjection } from "./interactive-state.ts";
 
 export type { AgentSessionEvent };
-export type { InteractiveMessage, InteractiveState } from "./interactive-state.ts";
+export type { InteractiveMessage, InteractiveProcessItem, InteractiveState } from "./interactive-state.ts";
 export { InteractiveProjection } from "./interactive-state.ts";
 
 export interface InteractiveModeOptions {
@@ -55,6 +55,7 @@ export class InteractiveMode {
 	private theme: "dark" | "light" = "dark";
 	private overlay?: OverlayHandle;
 	private autocompleteOverlay?: OverlayHandle;
+	private spinnerTimer?: ReturnType<typeof setInterval>;
 
 	constructor(options: InteractiveModeOptions) {
 		this.session = options.session;
@@ -117,6 +118,7 @@ export class InteractiveMode {
 			this.unsubscribeSession = undefined;
 			throw cause;
 		}
+		this.startSpinnerTimer();
 		if (initialPrompt?.trim()) void this.submit(initialPrompt);
 	}
 
@@ -125,6 +127,8 @@ export class InteractiveMode {
 		this.started = false;
 		this.activeAbort?.abort();
 		this.activeAbort = undefined;
+		this.stopSpinnerTimer();
+		this.projection.clearTransientProcess();
 		this.closeOverlay();
 		this.closeAutocompleteOverlay();
 		this.unsubscribeSession?.();
@@ -303,6 +307,19 @@ export class InteractiveMode {
 	private refresh(): void {
 		this.root.invalidate();
 		this.tui.requestRender();
+	}
+
+	private startSpinnerTimer(): void {
+		this.stopSpinnerTimer();
+		this.spinnerTimer = setInterval(() => {
+			if (this.projection.advanceSpinner()) this.refresh();
+		}, 120);
+		this.spinnerTimer.unref?.();
+	}
+
+	private stopSpinnerTimer(): void {
+		if (this.spinnerTimer) clearInterval(this.spinnerTimer);
+		this.spinnerTimer = undefined;
 	}
 
 	private subscribeToSession(): void {

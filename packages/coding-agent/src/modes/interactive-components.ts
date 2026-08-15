@@ -18,7 +18,8 @@ interface Palette {
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
-const MAX_VISIBLE_TOOL_STATUSES = 6;
+const MAX_VISIBLE_TOOL_ITEMS = 6;
+const SPINNER_FRAMES = ["|", "/", "-", "\\"] as const;
 
 function paletteFor(theme: InteractiveViewState["theme"]): Palette {
 	return theme === "light"
@@ -108,28 +109,38 @@ export class InteractiveChat implements Component {
 				lines.push(...new Markdown(message.text, { paddingX: 4 }).render(width));
 			}
 		}
+		const toolCount = state.processItems.filter((item) => item.type === "tool").length;
+		const hiddenToolItems = Math.max(0, toolCount - MAX_VISIBLE_TOOL_ITEMS);
+		let skippedToolItems = 0;
+		for (const item of state.processItems) {
+			if (item.type === "tool" && skippedToolItems < hiddenToolItems) {
+				skippedToolItems += 1;
+				continue;
+			}
+			if (item.type === "tool" && skippedToolItems === hiddenToolItems && hiddenToolItems > 0) {
+				lines.push(...renderLine(`    ${paint(colors.dim, `${hiddenToolItems} earlier tool updates`)}`, width));
+				skippedToolItems += 1;
+			}
+			if (item.type === "thinking") {
+				const frame = SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length] ?? SPINNER_FRAMES[0];
+				lines.push(...renderLine(`    ${paint(colors.accent, `${frame} Thinking`)}`, width));
+				continue;
+			}
+			const marker = item.status === "running" ? ">" : item.status === "error" ? "!" : "+";
+			const command = truncateToWidth(item.command, Math.max(1, width - 6), "...");
+			const color = item.status === "error" ? colors.error : item.status === "done" ? colors.success : colors.warning;
+			lines.push(...renderLine(`    ${paint(color, marker)} ${paint(colors.dim, command)}`, width));
+		}
 		if (state.streamingText) {
 			if (lines.length > 0) lines.push(" ");
 			lines.push(...renderLine(`  ${paint(colors.assistant, "Assistant", true)}`, width));
 			lines.push(...new Markdown(state.streamingText, { paddingX: 4 }).render(width));
 		}
-		const hasActivity = state.status || state.toolStatus.length > 0 || state.queue.length > 0 || state.error;
+		const hasActivity = state.status || state.queue.length > 0 || state.error;
 		if (hasActivity) {
 			if (lines.length > 0) lines.push(" ");
 			lines.push(...renderLine(`  ${paint(colors.dim, "ACTIVITY", true)}`, width));
 			if (state.status) lines.push(...renderLine(`    ${paint(colors.dim, state.status)}`, width));
-			const hiddenToolStatuses = Math.max(0, state.toolStatus.length - MAX_VISIBLE_TOOL_STATUSES);
-			if (hiddenToolStatuses > 0) {
-				lines.push(...renderLine(`    ${paint(colors.dim, `${hiddenToolStatuses} earlier tool updates`)}`, width));
-			}
-			for (const status of state.toolStatus.slice(-MAX_VISIBLE_TOOL_STATUSES)) {
-				const separator = status.indexOf(": ");
-				const name = separator < 0 ? status : status.slice(0, separator);
-				const result = separator < 0 ? "" : status.slice(separator + 2);
-				lines.push(
-					...renderLine(`    ${paint(colors.warning, "[tool]")} ${name}  ${paint(colors.dim, result)}`, width),
-				);
-			}
 			if (state.queue.length > 0) {
 				lines.push(...renderLine(`    ${paint(colors.dim, `Queue (${state.queue.length})`)}`, width));
 				for (const prompt of state.queue) lines.push(...new Text(`      ${prompt}`).render(width));

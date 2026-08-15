@@ -31,7 +31,8 @@ export const MODEL_SOURCE: readonly Model[] = [
 		contextWindow: 200_000,
 		maxOutputTokens: 100_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},{
+	},
+	{
 		id: "gpt-5.6-terra",
 		name: "gpt-5.6-terra",
 		provider: "openai",
@@ -42,7 +43,7 @@ export const MODEL_SOURCE: readonly Model[] = [
 		contextWindow: 200_000,
 		maxOutputTokens: 100_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	}
+	},
 ];
 
 function requireNonEmptyString(value: string | undefined, field: string, label: string): string {
