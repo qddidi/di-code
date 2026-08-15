@@ -231,9 +231,6 @@ function createZeroUsage(): Usage {
 }
 
 function assertSupportedModel(model: Model): void {
-	if (model.provider !== "openai") {
-		throw new Error('OpenAI Responses requires model.provider to be "openai"');
-	}
 	if (model.api !== "openai-responses") {
 		throw new Error('OpenAI Responses requires model.api to be "openai-responses"');
 	}
@@ -619,7 +616,7 @@ function requireNonNegativeInteger(value: unknown, field: string): number {
 	return value as number;
 }
 
-function readUsage(responseValue: unknown): Usage {
+function readUsage(responseValue: unknown, model: Model): Usage {
 	const response = requireRecord(responseValue, "response");
 	if (response.usage === undefined || response.usage === null) return createZeroUsage();
 	const usage = requireRecord(response.usage, "response.usage");
@@ -639,13 +636,23 @@ function readUsage(responseValue: unknown): Usage {
 		throw new InvalidOpenAIStreamError("cached input tokens must not exceed input tokens");
 	}
 
+	const input = inputTokens - cachedTokens;
+	const output = outputTokens;
+	const cacheRead = cachedTokens;
+	const cacheWrite = 0;
+	const cost = {
+		input: input * model.cost.input,
+		output: output * model.cost.output,
+		cacheRead: cacheRead * model.cost.cacheRead,
+		cacheWrite: cacheWrite * model.cost.cacheWrite,
+	};
 	return {
-		input: inputTokens - cachedTokens,
-		output: outputTokens,
-		cacheRead: cachedTokens,
-		cacheWrite: 0,
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
 		totalTokens: inputTokens + outputTokens,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		cost: { ...cost, total: cost.input + cost.output + cost.cacheRead + cost.cacheWrite },
 	};
 }
 
@@ -1203,7 +1210,7 @@ function handleOpenAIEvent(
 				}
 			}
 			supplementReasoningEncryption(event.response, progress);
-			progress.usage = readUsage(event.response);
+			progress.usage = readUsage(event.response, model);
 			const reason: SuccessfulStopReason =
 				eventType === "response.incomplete"
 					? "length"

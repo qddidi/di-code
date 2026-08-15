@@ -787,7 +787,11 @@ describe("streamOpenAIResponses", () => {
 			.join("");
 		const deps = dependencies(chunkedSse(payload, [3, 19, 77, 131]));
 
-		const stream = streamOpenAIResponses(model, context, options, deps);
+		const pricedModel: Model = {
+			...model,
+			cost: { input: 0.000002, output: 0.000008, cacheRead: 0.0000005, cacheWrite: 0 },
+		};
+		const stream = streamOpenAIResponses(pricedModel, context, options, deps);
 		const events = await collect(stream);
 
 		expect(events.map((event) => event.type)).toEqual([
@@ -809,7 +813,7 @@ describe("streamOpenAIResponses", () => {
 				cacheRead: 3,
 				cacheWrite: 0,
 				totalTokens: 12,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				cost: { input: 0.000014, output: 0.000016, cacheRead: 0.0000015, cacheWrite: 0, total: 0.0000315 },
 			},
 			timestamp: 1234,
 			stopReason: "stop",

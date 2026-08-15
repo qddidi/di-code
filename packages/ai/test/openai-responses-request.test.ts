@@ -454,10 +454,8 @@ describe("buildOpenAIResponsesRequest", () => {
 		}
 	});
 
-	it("validates model ownership and numeric stream options", () => {
-		expect(() => buildOpenAIResponsesRequest({ ...model, provider: "faux" }, textContext())).toThrow(
-			'OpenAI Responses requires model.provider to be "openai"',
-		);
+	it("validates API ownership and numeric stream options", () => {
+		expect(() => buildOpenAIResponsesRequest({ ...model, provider: "amux" }, textContext())).not.toThrow();
 		expect(() => buildOpenAIResponsesRequest({ ...model, api: "other" }, textContext())).toThrow(
 			'OpenAI Responses requires model.api to be "openai-responses"',
 		);

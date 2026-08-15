@@ -64,16 +64,36 @@ npm install
 
 ## 配置
 
-从 `.env.example` 创建本地 `.env`，并填入模型配置：
+从 `.env.example` 创建本地 `.env`，并填入所选 Provider 的凭据：
 
 ```dotenv
-DI_CODE_PROVIDER=openai
-OPENAI_API_KEY=<your-openai-api-key>
-OPENAI_MODEL=gpt-4o
-OPENAI_BASE_URL=https://api.openai.com/v1
+DI_CODE_PROVIDER=custom-openai
+DI_CODE_MODEL=custom-model
+CUSTOM_OPENAI_API_KEY=<your-custom-openai-api-key>
 ```
 
-`OPENAI_MODEL` 必须是项目内 OpenAI 模型目录定义的模型 ID。`OPENAI_BASE_URL` 可用于兼容 OpenAI Responses API 的服务端点。
+配置文件使用 Pi 风格的 `providers` 映射。Provider 的 `api` 当前必须是 `openai-responses`；`baseUrl` 放在 Provider 级别时由其模型继承，模型也可以单独覆盖。模型字段遵循 Pi 的默认值：`name` 默认等于 `id`，`input` 默认是 `["text"]`，`reasoning` 默认是 `false`，`contextWindow` 默认是 `128000`，`maxTokens` 默认是 `16384`。
+
+项目根目录的 `.di-code/settings.json` 保存 Provider 和模型元数据：
+
+```json
+{
+  "providers": {
+    "custom-openai": {
+      "baseUrl": "https://api.example.com/v1",
+      "api": "openai-responses",
+      "apiKey": "$CUSTOM_OPENAI_API_KEY",
+      "models": [
+        { "id": "custom-model", "maxTokens": 16384 }
+      ]
+    }
+  }
+}
+```
+
+`apiKey` 推荐使用 `$ENV_VAR` 或 `${ENV_VAR}` 引用，不要把真实凭据写入 JSON。`DI_CODE_PROVIDER` 和 `DI_CODE_MODEL` 只负责选择已配置的 Provider 和模型；只配置一个 Provider 时可以省略 `DI_CODE_PROVIDER`，只配置一个模型时可以省略 `DI_CODE_MODEL`。显式设置 `DI_CODE_PROVIDER=faux` 可运行无网络的确定性 Provider。
+
+`cost.input`、`cost.output`、`cost.cacheRead`、`cost.cacheWrite` 的单位是美元/百万 token。自定义模型目录只属于对应 Provider，不会自动成为另一个 Provider 的模型。
 
 使用无网络的测试 Provider：
 

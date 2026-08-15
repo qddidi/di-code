@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { resolveStartupArgs, resolveStartupRuntime } from "../src/startup.ts";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadStartupConfiguration, resolveStartupArgs, resolveStartupRuntime } from "../src/startup.ts";
 
 describe("resolveStartupArgs", () => {
 	it("starts interactive mode when the process receives no arguments", () => {
@@ -12,56 +15,201 @@ describe("resolveStartupArgs", () => {
 	});
 });
 
+describe("Pi-style startup configuration", () => {
+	let root: string;
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), "di-code-settings-"));
+	});
+
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	async function writeSettings(value: unknown): Promise<void> {
+		await mkdir(join(root, ".di-code"), { recursive: true });
+		await writeFile(join(root, ".di-code", "settings.json"), JSON.stringify(value));
+	}
+
+	it("loads providers, inherits provider fields, and applies Pi model defaults", async () => {
+		await writeSettings({
+			providers: {
+				amux: {
+					name: "AMUX",
+					baseUrl: "https://api.example.test/v1",
+					api: "openai-responses",
+					apiKey: "$AMUX_API_KEY",
+					models: [{ id: "gpt-custom" }],
+				},
+			},
+		});
+
+		const configuration = await loadStartupConfiguration(root, { AMUX_API_KEY: "test-key" });
+
+		expect(configuration.providers).toHaveLength(1);
+		expect(configuration.providers[0]).toMatchObject({
+			id: "amux",
+			name: "AMUX",
+			api: "openai-responses",
+			apiKey: "$AMUX_API_KEY",
+			baseUrl: "https://api.example.test/v1",
+			models: [
+				{
+					id: "gpt-custom",
+					name: "gpt-custom",
+					provider: "amux",
+					api: "openai-responses",
+					baseUrl: "https://api.example.test/v1",
+					input: ["text"],
+					reasoning: false,
+					contextWindow: 128000,
+					maxOutputTokens: 16384,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+			],
+		});
+	});
+
+	it("maps maxTokens and per-million prices into the internal model contract", async () => {
+		await writeSettings({
+			providers: {
+				amux: {
+					baseUrl: "https://api.example.test/v1",
+					api: "openai-responses",
+					models: [
+						{
+							id: "gpt-custom",
+							input: ["text", "image"],
+							reasoning: true,
+							contextWindow: 256000,
+							maxTokens: 32000,
+							cost: { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 0 },
+						},
+					],
+				},
+			},
+		});
+
+		const configuration = await loadStartupConfiguration(root, {});
+
+		expect(configuration.providers[0]?.models?.[0]).toMatchObject({
+			input: ["text", "image"],
+			reasoning: true,
+			contextWindow: 256000,
+			maxOutputTokens: 32000,
+			cost: { input: 0.0000025, output: 0.00001, cacheRead: 0.00000125, cacheWrite: 0 },
+		});
+	});
+
+	it("keeps a model endpoint override over the provider endpoint", async () => {
+		await writeSettings({
+			providers: {
+				amux: {
+					baseUrl: "https://provider.example.test/v1",
+					api: "openai-responses",
+					apiKey: "$AMUX_API_KEY",
+					models: [{ id: "gpt-custom", baseUrl: "https://model.example.test/v1" }],
+				},
+			},
+		});
+
+		const configuration = await loadStartupConfiguration(root, { AMUX_API_KEY: "test-key" });
+		const runtime = resolveStartupRuntime(configuration.environment, configuration.providers);
+
+		expect(runtime.model.baseUrl).toBe("https://model.example.test/v1");
+	});
+
+	it("rejects the removed legacy settings shape", async () => {
+		await writeSettings({ provider: "openai", openai: { model: "gpt-4o" } });
+
+		await expect(loadStartupConfiguration(root, {})).rejects.toThrow(
+			".di-code\\settings.json: providers must be an object",
+		);
+	});
+
+	it("reports invalid settings files", async () => {
+		await mkdir(join(root, ".di-code"));
+		await writeFile(join(root, ".di-code", "settings.json"), "{");
+
+		await expect(loadStartupConfiguration(root, {})).rejects.toThrow(".di-code\\settings.json: invalid JSON");
+	});
+
+	it("returns no configured providers when the file does not exist", async () => {
+		await expect(loadStartupConfiguration(root, { DI_CODE_PROVIDER: "faux" })).resolves.toEqual({
+			environment: { DI_CODE_PROVIDER: "faux" },
+			providers: [],
+		});
+	});
+});
+
 describe("resolveStartupRuntime", () => {
-	it("defaults to OpenAI and selects the configured catalog model", () => {
-		const runtime = resolveStartupRuntime({
-			OPENAI_API_KEY: "test-key",
-			OPENAI_MODEL: "gpt-4o",
-		});
+	const amux = {
+		id: "amux",
+		name: "AMUX",
+		api: "openai-responses",
+		apiKey: "$AMUX_API_KEY",
+		baseUrl: "https://api.example.test/v1",
+		models: [
+			{
+				id: "gpt-a",
+				name: "GPT A",
+				provider: "amux",
+				api: "openai-responses",
+				baseUrl: "https://api.example.test/v1",
+				input: ["text" as const],
+				reasoning: false,
+				contextWindow: 128000,
+				maxOutputTokens: 16384,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			},
+		],
+	};
 
-		expect(runtime.provider.id).toBe("openai");
-		expect(runtime.model.id).toBe("gpt-4o");
-		expect(runtime.provider.models.map((model) => model.id)).toContain("gpt-4o");
+	it("selects the only provider and its first model", () => {
+		const runtime = resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [amux]);
+
+		expect(runtime.provider).toMatchObject({ id: "amux", name: "AMUX" });
+		expect(runtime.model).toMatchObject({ id: "gpt-a", provider: "amux" });
 	});
 
-	it("accepts an explicit OpenAI provider with trimmed configuration", () => {
-		const runtime = resolveStartupRuntime({
-			DI_CODE_PROVIDER: " openai ",
-			OPENAI_API_KEY: "test-key",
-			OPENAI_MODEL: " o3-mini ",
-		});
+	it("selects an explicit provider and model", () => {
+		const other = { ...amux, id: "other", models: amux.models.map((model) => ({ ...model, provider: "other" })) };
+		const runtime = resolveStartupRuntime(
+			{ DI_CODE_PROVIDER: "other", DI_CODE_MODEL: "gpt-a", AMUX_API_KEY: "test-key" },
+			[amux, other],
+		);
 
-		expect(runtime.provider.id).toBe("openai");
-		expect(runtime.model.id).toBe("o3-mini");
+		expect(runtime.provider.id).toBe("other");
+		expect(runtime.model.id).toBe("gpt-a");
 	});
 
-	it("requires a model before constructing the OpenAI provider", () => {
-		expect(() => resolveStartupRuntime({ OPENAI_API_KEY: "test-key" })).toThrow(
-			"OPENAI_MODEL is required when DI_CODE_PROVIDER=openai",
+	it("requires a configured API key environment variable without exposing a value", () => {
+		expect(() => resolveStartupRuntime({}, [amux])).toThrow(
+			'Configured apiKey environment variable "AMUX_API_KEY" is not set.',
 		);
 	});
 
-	it("requires an API key without including credential values in the error", () => {
-		expect(() => resolveStartupRuntime({ OPENAI_MODEL: "gpt-4o" })).toThrow("OpenAI API key is required");
-	});
-
-	it("rejects a model outside the OpenAI catalog", () => {
-		expect(() =>
-			resolveStartupRuntime({
-				OPENAI_API_KEY: "test-key",
-				OPENAI_MODEL: "not-a-model",
-			}),
-		).toThrow('Unknown OpenAI model "not-a-model". Available models: gpt-4o, gpt-5.6-terra, o3-mini.');
-	});
-
-	it("rejects an unsupported provider before inspecting provider credentials", () => {
-		expect(() => resolveStartupRuntime({ DI_CODE_PROVIDER: "other" })).toThrow(
-			'Unsupported DI_CODE_PROVIDER "other". Expected openai or faux.',
+	it("rejects unsupported APIs", () => {
+		expect(() => resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [{ ...amux, api: "openai-completions" }])).toThrow(
+			'Unsupported API "openai-completions" for provider "amux". Expected openai-responses.',
 		);
 	});
 
-	it("uses the deterministic Faux provider only when explicitly selected", () => {
-		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "faux" });
+	it("requires a provider choice when several are configured", () => {
+		const other = { ...amux, id: "other", models: amux.models.map((model) => ({ ...model, provider: "other" })) };
+		expect(() => resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [amux, other])).toThrow(
+			"DI_CODE_PROVIDER is required when more than one provider is configured.",
+		);
+	});
+
+	it("rejects a provider outside the configured set", () => {
+		expect(() => resolveStartupRuntime({ DI_CODE_PROVIDER: "missing", AMUX_API_KEY: "test-key" }, [amux])).toThrow(
+			'Unknown configured provider "missing". Available providers: amux.',
+		);
+	});
+
+	it("uses the deterministic Faux provider when explicitly selected", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "faux" }, []);
 
 		expect(runtime.provider.id).toBe("faux");
 		expect(runtime.model).toEqual(runtime.provider.models[0]);

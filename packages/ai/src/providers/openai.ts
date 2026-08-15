@@ -4,6 +4,8 @@ import type { Context, Model, Provider, StreamOptions, StreamResult } from "../t
 
 export interface OpenAIProviderOptions {
 	readonly models?: readonly Model[];
+	readonly providerId?: string;
+	readonly name?: string;
 	readonly apiKey?: string;
 	readonly baseUrl?: string;
 	readonly env?: Readonly<Record<string, string | undefined>>;
@@ -60,11 +62,11 @@ function cloneModels(models: readonly Model[]): Model[] {
 	return models.map((model) => ({ ...model, input: [...model.input], cost: { ...model.cost } }));
 }
 
-function assertModels(models: readonly Model[]): void {
+function assertModels(models: readonly Model[], providerId: string): void {
 	if (models.length === 0) throw new Error("OpenAI provider requires at least one model");
 	for (const model of models) {
-		if (model.provider !== "openai" || model.api !== "openai-responses") {
-			throw new Error('OpenAI provider models must use provider "openai" and api "openai-responses"');
+		if (model.provider !== providerId || model.api !== "openai-responses") {
+			throw new Error(`OpenAI Responses provider models must use provider "${providerId}" and api "openai-responses"`);
 		}
 		const baseUrl = model.baseUrl?.trim();
 		if (baseUrl) normalizeBaseUrl(baseUrl);
@@ -182,9 +184,10 @@ async function retryingFetch(
 
 /** Creates the OpenAI Provider while keeping catalog, credentials, and retry policy outside the Agent contract. */
 export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
+	const providerId = options.providerId?.trim() || "openai";
 	const configuredModels =
 		options.models ?? MODELS.filter((model) => model.provider === "openai" && model.api === "openai-responses");
-	assertModels(configuredModels);
+	assertModels(configuredModels, providerId);
 	const apiKey = resolveApiKey(options);
 	const configuredBaseUrl = resolveConfiguredBaseUrl(options);
 	const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -192,8 +195,8 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
 	const models = cloneModels(configuredModels);
 
 	return {
-		id: "openai",
-		name: "OpenAI",
+		id: providerId,
+		name: options.name?.trim() || (providerId === "openai" ? "OpenAI" : providerId),
 		models,
 		stream(model: Model, context: Context, streamOptions?: StreamOptions): StreamResult {
 			const fetchWithRetry = (input: string | URL | Request, init?: RequestInit) =>

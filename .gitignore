@@ -14,6 +14,8 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+.di-code/settings.json
+.di-code/sessions/
 
 # Editors and operating systems
 .vscode/
