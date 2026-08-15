@@ -38,7 +38,7 @@ describe("public extension SDK", () => {
 		const events: string[] = [];
 		const unsubscribe = session.subscribeSession(async (event) => {
 			events.push(event.type);
-			if (event.type === "compaction_start" || event.type === "compaction_end") return;
+			if (event.type === "compaction_start" || event.type === "compaction_end" || event.type === "usage_update") return;
 			await loaded.host.emit(event);
 		});
 		await session.prompt("hello");

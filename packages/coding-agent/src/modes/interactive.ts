@@ -47,6 +47,7 @@ export class InteractiveMode {
 	private unsubscribeSession?: () => void;
 	private sessionSwitching = false;
 	private promptInFlight = false;
+	private compactionInFlight = false;
 	private activeAbort?: AbortController;
 	private started = false;
 	private lastFailedPrompt?: string;
@@ -69,6 +70,8 @@ export class InteractiveMode {
 			{ name: "session", description: "Open the session selector" },
 			{ name: "theme", description: "Open the theme selector" },
 			{ name: "settings", description: "Open the settings selector" },
+			{ name: "compact", description: "Compact the persisted context now" },
+			{ name: "usage", description: "Show token and cost usage" },
 			{ name: "retry", description: "Retry the last failed prompt" },
 		] as const;
 		const autocomplete: AutocompleteProvider = {
@@ -109,6 +112,7 @@ export class InteractiveMode {
 		if (this.started) throw new Error("Interactive mode is already started");
 		this.started = true;
 		this.projection.replaceTranscript(this.session.transcript);
+		this.projection.setUsage(this.session.usage);
 		this.subscribeToSession();
 		try {
 			this.tui.start();
@@ -348,6 +352,7 @@ export class InteractiveMode {
 			this.queuedPrompts = [];
 			this.projection.setQueue([]);
 			this.projection.replaceTranscript(next.transcript);
+			this.projection.setUsage(next.usage);
 			this.projection.setStatus(`session=${choice.id}`);
 			this.subscribeToSession();
 		} catch (cause) {
@@ -368,6 +373,11 @@ export class InteractiveMode {
 		}
 		if (this.sessionSwitching) {
 			this.projection.setError("A session is opening; wait before submitting a prompt.");
+			this.refresh();
+			return;
+		}
+		if (this.compactionInFlight) {
+			this.projection.setError("A compaction is running; wait before submitting a prompt.");
 			this.refresh();
 			return;
 		}
@@ -405,7 +415,7 @@ export class InteractiveMode {
 		const command = input.slice(1).trim().split(/\s+/, 1)[0]?.toLowerCase();
 		switch (command) {
 			case "help":
-				this.projection.setStatus("commands: /clear /model /session /theme /settings /retry");
+				this.projection.setStatus("commands: /clear /model /session /theme /settings /compact /usage /retry");
 				break;
 			case "clear":
 				this.projection.clearVisibleMessages();
@@ -423,6 +433,12 @@ export class InteractiveMode {
 			case "settings":
 				this.openSettingsSelector();
 				return;
+			case "compact":
+				void this.runManualCompaction();
+				return;
+			case "usage":
+				this.projection.setStatus(this.formatUsage());
+				break;
 			case "retry":
 				if (this.lastFailedPrompt && !this.promptInFlight) void this.submit(this.lastFailedPrompt, true);
 				else this.projection.setStatus("nothing to retry");
@@ -431,5 +447,30 @@ export class InteractiveMode {
 				this.projection.setError(`Unknown command: /${command ?? ""}`);
 		}
 		this.refresh();
+	}
+
+	private formatUsage(): string {
+		const usage = this.session.usage;
+		return `usage: requests=${usage.requestCount} input=${usage.inputTokens} output=${usage.outputTokens} total=${usage.totalTokens} cost=$${usage.cost.total.toFixed(4)} context=${usage.estimatedContextTokens}/${usage.contextWindow}`;
+	}
+
+	private async runManualCompaction(): Promise<void> {
+		if (this.promptInFlight || this.compactionInFlight) {
+			this.projection.setError("Cannot compact while a prompt is running.");
+			this.refresh();
+			return;
+		}
+		this.compactionInFlight = true;
+		this.projection.setStatus("starting manual compaction");
+		this.refresh();
+		try {
+			await this.session.compact();
+			this.projection.setStatus("manual compaction complete");
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			this.compactionInFlight = false;
+			this.refresh();
+		}
 	}
 }

@@ -9,7 +9,7 @@ import {
 	resolveContextBudget,
 	shouldCompact,
 } from "@di-code/agent";
-import type { AssistantMessage, Message, Model, Provider } from "@di-code/ai";
+import type { AssistantMessage, Message, Model, Provider, Usage } from "@di-code/ai";
 import { buildSessionContext } from "./context-builder.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic } from "./session/types.ts";
@@ -23,6 +23,20 @@ export interface AgentSessionCompactionOptions {
 	readonly keepRecentTokens?: number;
 }
 
+export interface SessionUsage {
+	readonly requestCount: number;
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly cacheReadTokens: number;
+	readonly cacheWriteTokens: number;
+	readonly totalTokens: number;
+	readonly cost: Usage["cost"];
+	readonly estimatedContextTokens: number;
+	readonly contextWindow: number;
+	readonly reserveTokens: number;
+	readonly triggerTokens: number;
+}
+
 export interface AgentSessionOptions {
 	readonly allowedRoot: string;
 	readonly provider: Provider;
@@ -34,8 +48,9 @@ export interface AgentSessionOptions {
 
 export type AgentSessionEvent =
 	| import("@di-code/agent").AgentEvent
-	| { type: "compaction_start"; reason: "threshold" }
-	| { type: "compaction_end"; reason: "threshold"; success: boolean; errorMessage?: string };
+	| { type: "compaction_start"; reason: "threshold" | "manual" }
+	| { type: "compaction_end"; reason: "threshold" | "manual"; success: boolean; errorMessage?: string }
+	| { type: "usage_update"; usage: SessionUsage };
 
 export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<void>;
 
@@ -50,6 +65,10 @@ export class AgentSession {
 	private compactionEnabledValue: boolean;
 	private contextBudget: ContextBudget;
 	private keepRecentTokens: number;
+	private usageTotals: Omit<
+		SessionUsage,
+		"estimatedContextTokens" | "contextWindow" | "reserveTokens" | "triggerTokens"
+	>;
 	private persistenceError?: unknown;
 	private promptActive = false;
 	private readonly sessionListeners = new Set<AgentSessionListener>();
@@ -70,6 +89,18 @@ export class AgentSession {
 		this.keepRecentTokens = options.compaction?.keepRecentTokens ?? defaultKeepRecentTokens;
 		if (!Number.isInteger(this.keepRecentTokens) || this.keepRecentTokens <= 0) {
 			throw new RangeError("compaction.keepRecentTokens must be a positive integer");
+		}
+		this.usageTotals = {
+			requestCount: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		for (const message of options.sessionManager?.messages ?? []) {
+			if (message.role === "assistant") this.addUsage(message.usage);
 		}
 		const initialContext = options.sessionManager ? buildSessionContext(options.sessionManager.entries) : undefined;
 		this.agent = new Agent({
@@ -96,6 +127,11 @@ export class AgentSession {
 				this.persistenceError = cause;
 				throw cause;
 			}
+		});
+		this.agent.subscribe(async (event) => {
+			if (event.type !== "message_end" || event.message.role !== "assistant") return;
+			this.addUsage(event.message.usage);
+			await this.emitSession({ type: "usage_update", usage: this.usage });
 		});
 		this.agent.subscribe(async (event) => {
 			await this.emitSession(event);
@@ -158,6 +194,17 @@ export class AgentSession {
 		return this.sessionManager?.diagnostics ?? [];
 	}
 
+	get usage(): SessionUsage {
+		return {
+			...this.usageTotals,
+			cost: { ...this.usageTotals.cost },
+			estimatedContextTokens: estimateContextTokens(this.agent.contextMessages),
+			contextWindow: this.contextBudget.contextWindow,
+			reserveTokens: this.contextBudget.reserveTokens,
+			triggerTokens: this.contextBudget.triggerTokens,
+		};
+	}
+
 	async prompt(text: string, signal?: AbortSignal): Promise<AssistantMessage> {
 		if (this.persistenceError !== undefined) {
 			throw this.persistenceError;
@@ -170,6 +217,17 @@ export class AgentSession {
 		try {
 			await this.compactIfNeeded(text, signal);
 			return await this.agent.prompt(text, signal);
+		} finally {
+			this.promptActive = false;
+		}
+	}
+
+	async compact(signal?: AbortSignal): Promise<void> {
+		if (this.promptActive) throw new Error("AgentSession is already processing a prompt.");
+		if (!this.sessionManager) throw new Error("Cannot compact without a persisted session.");
+		this.promptActive = true;
+		try {
+			await this.compactNow(signal, "manual");
 		} finally {
 			this.promptActive = false;
 		}
@@ -188,6 +246,24 @@ export class AgentSession {
 		for (const listener of this.sessionListeners) await listener(structuredClone(event));
 	}
 
+	private addUsage(usage: Usage): void {
+		this.usageTotals = {
+			requestCount: this.usageTotals.requestCount + 1,
+			inputTokens: this.usageTotals.inputTokens + usage.input,
+			outputTokens: this.usageTotals.outputTokens + usage.output,
+			cacheReadTokens: this.usageTotals.cacheReadTokens + usage.cacheRead,
+			cacheWriteTokens: this.usageTotals.cacheWriteTokens + usage.cacheWrite,
+			totalTokens: this.usageTotals.totalTokens + usage.totalTokens,
+			cost: {
+				input: this.usageTotals.cost.input + usage.cost.input,
+				output: this.usageTotals.cost.output + usage.cost.output,
+				cacheRead: this.usageTotals.cost.cacheRead + usage.cost.cacheRead,
+				cacheWrite: this.usageTotals.cost.cacheWrite + usage.cost.cacheWrite,
+				total: this.usageTotals.cost.total + usage.cost.total,
+			},
+		};
+	}
+
 	private async compactIfNeeded(text: string, signal?: AbortSignal): Promise<void> {
 		if (!this.compactionEnabledValue || !this.sessionManager) return;
 
@@ -200,12 +276,18 @@ export class AgentSession {
 		const estimatedTokens = estimateContextTokens([...context.messages, pendingUser]);
 		if (!shouldCompact(estimatedTokens, this.contextBudget)) return;
 
-		await this.emitSession({ type: "compaction_start", reason: "threshold" });
+		await this.compactNow(signal, "threshold");
+	}
+
+	private async compactNow(signal: AbortSignal | undefined, reason: "threshold" | "manual"): Promise<void> {
+		if (!this.sessionManager) throw new Error("Cannot compact without a persisted session.");
+		const context = buildSessionContext(this.sessionManager.entries);
+		await this.emitSession({ type: "compaction_start", reason });
 		const preparation = prepareCompaction(context.messages, this.keepRecentTokens);
 		const firstKeptEntryId = preparation ? context.sourceEntryIds[preparation.firstKeptMessageIndex] : undefined;
 		if (!preparation || typeof firstKeptEntryId !== "string") {
 			const errorMessage = "Context limit reached but no valid compaction cut point was found.";
-			await this.emitSession({ type: "compaction_end", reason: "threshold", success: false, errorMessage });
+			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage });
 			throw new Error(errorMessage);
 		}
 
@@ -215,10 +297,12 @@ export class AgentSession {
 				reserveTokens: this.contextBudget.reserveTokens,
 				signal,
 				now: this.now,
+				onUsage: (usage) => this.addUsage(usage),
 			});
+			await this.emitSession({ type: "usage_update", usage: this.usage });
 		} catch (cause) {
 			const errorMessage = cause instanceof Error ? cause.message : String(cause);
-			await this.emitSession({ type: "compaction_end", reason: "threshold", success: false, errorMessage });
+			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage });
 			throw cause;
 		}
 
@@ -231,11 +315,11 @@ export class AgentSession {
 		} catch (cause) {
 			this.persistenceError = cause;
 			const errorMessage = cause instanceof Error ? cause.message : String(cause);
-			await this.emitSession({ type: "compaction_end", reason: "threshold", success: false, errorMessage });
+			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage });
 			throw cause;
 		}
 
 		this.agent.replaceContext(buildSessionContext(this.sessionManager.entries).messages);
-		await this.emitSession({ type: "compaction_end", reason: "threshold", success: true });
+		await this.emitSession({ type: "compaction_end", reason, success: true });
 	}
 }

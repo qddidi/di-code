@@ -1,4 +1,4 @@
-import type { Message, Model, Provider } from "@di-code/ai";
+import type { Message, Model, Provider, Usage } from "@di-code/ai";
 
 const CHARS_PER_TOKEN = 4;
 const MESSAGE_OVERHEAD_CHARS = 4;
@@ -185,6 +185,7 @@ export interface GenerateCompactionSummaryOptions {
 	readonly reserveTokens: number;
 	readonly signal?: AbortSignal;
 	readonly now?: () => number;
+	readonly onUsage?: (usage: Usage) => void;
 }
 
 const SUMMARIZATION_SYSTEM_PROMPT =
@@ -219,6 +220,7 @@ export async function generateCompactionSummary(
 		},
 	);
 	const response = await stream.result();
+	options.onUsage?.(response.usage);
 
 	switch (response.stopReason) {
 		case "error":

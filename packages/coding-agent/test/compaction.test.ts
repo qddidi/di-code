@@ -96,6 +96,31 @@ describe("AgentSession automatic compaction", () => {
 		expect(manager.messages.map(messageText)).toEqual(["short", "answer"]);
 	});
 
+	it("supports an explicit manual compaction request", async () => {
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		await seedTwoTurns(manager);
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "manual summary" }] }],
+		});
+		const events: string[] = [];
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: smallModel(faux.model),
+			sessionManager: manager,
+			compaction: { keepRecentTokens: 5 },
+		});
+		session.subscribeSession((event) => {
+			if (event.type === "compaction_start" || event.type === "compaction_end")
+				events.push(`${event.type}:${event.reason}`);
+		});
+
+		await session.compact();
+
+		expect(manager.latestSummary?.summary).toBe("manual summary");
+		expect(events).toEqual(["compaction_start:manual", "compaction_end:manual"]);
+	});
+
 	it("compacts when context plus the pending user is exactly at the threshold", async () => {
 		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
 		await seedTwoTurns(manager);

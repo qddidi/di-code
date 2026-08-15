@@ -187,7 +187,10 @@ export class InteractiveFooter implements Component {
 		const colors = paletteFor(state.theme);
 		const activity = activityLabel(state);
 		const left = paint(activity.color, `* ${activity.text}`, true);
-		const context = paint(colors.dim, `${state.messageItems.length} messages  ${state.queue.length} queued`);
+		const context = paint(
+			colors.dim,
+			`${state.messageItems.length} messages  ctx ${formatTokenCount(state.usage.estimatedContextTokens)}/${formatTokenCount(state.usage.contextWindow)}  total ${formatTokenCount(state.usage.totalTokens)} tok`,
+		);
 		const right = paint(colors.dim, `${state.model}  ${state.theme}`);
 		const status = width >= 60 ? alignEnds(`${left}  ${context}`, right, width) : `${left}  ${right}`;
 		const hints = width >= 60 ? "Enter send   Esc cancel   Ctrl+O model   Ctrl+L session" : "Enter send  Ctrl+O model";
@@ -197,6 +200,12 @@ export class InteractiveFooter implements Component {
 			...renderLine(paint(colors.dim, hints), width),
 		];
 	}
+}
+
+function formatTokenCount(value: number): string {
+	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
+	if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+	return String(value);
 }
 
 export interface AutocompleteMenuState {

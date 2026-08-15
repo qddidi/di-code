@@ -1,5 +1,5 @@
 import type { Message } from "@di-code/ai";
-import type { AgentSessionEvent } from "../core/session.ts";
+import type { AgentSessionEvent, SessionUsage } from "../core/session.ts";
 
 export interface InteractiveMessage {
 	readonly role: "user" | "assistant";
@@ -28,6 +28,7 @@ export interface InteractiveState {
 	readonly status?: string;
 	readonly compacting: boolean;
 	readonly retrying: boolean;
+	readonly usage: SessionUsage;
 }
 
 function textOf(message: Message): string {
@@ -51,6 +52,19 @@ export class InteractiveProjection {
 	private status: string | undefined;
 	private compacting = false;
 	private retrying = false;
+	private usage: SessionUsage = {
+		requestCount: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		estimatedContextTokens: 0,
+		contextWindow: 0,
+		reserveTokens: 0,
+		triggerTokens: 0,
+	};
 
 	get state(): InteractiveState {
 		return {
@@ -66,6 +80,7 @@ export class InteractiveProjection {
 			status: this.status,
 			compacting: this.compacting,
 			retrying: this.retrying,
+			usage: { ...this.usage, cost: { ...this.usage.cost } },
 		};
 	}
 
@@ -96,6 +111,10 @@ export class InteractiveProjection {
 
 	setRetrying(value: boolean): void {
 		this.retrying = value;
+	}
+
+	setUsage(usage: SessionUsage): void {
+		this.usage = structuredClone(usage);
 	}
 
 	advanceSpinner(): boolean {
@@ -139,6 +158,9 @@ export class InteractiveProjection {
 			case "compaction_end":
 				this.compacting = false;
 				if (!event.success) this.error = event.errorMessage;
+				return;
+			case "usage_update":
+				this.setUsage(event.usage);
 				return;
 			case "message_start":
 				if (event.message.role === "assistant") this.streamingText = "";

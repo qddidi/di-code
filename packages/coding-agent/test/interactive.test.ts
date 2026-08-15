@@ -727,6 +727,27 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
+	it("shows token usage through the /usage command", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }],
+		});
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("question");
+		terminal.sendInput("\r");
+		await waitFor(() => session.transcript.length === 2);
+		terminal.sendInput("/usage");
+		terminal.sendInput("\r");
+		await waitFor(() => terminal.output.includes("usage: requests=1"));
+
+		assert.equal(terminal.output.includes("context="), true);
+		mode.stop();
+	});
+
 	it("uses a SettingsList overlay to update compaction", async () => {
 		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-settings-"));
 		try {
