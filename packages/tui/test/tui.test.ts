@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { type Component, Container, CURSOR_MARKER, type Focusable, TUI } from "../src/tui.ts";
+import { EmulatedTerminal } from "./emulated-terminal.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class Probe implements Component {
@@ -37,7 +38,7 @@ class FocusProbe extends Probe implements Focusable {
 }
 
 async function flushRender(): Promise<void> {
-	await new Promise<void>((resolve) => queueMicrotask(resolve));
+	await new Promise<void>((resolve) => setTimeout(resolve, 20));
 }
 
 describe("Container", () => {
@@ -130,7 +131,7 @@ describe("TUI frame contract", () => {
 
 		assert.equal(terminal.output.includes("older message"), true);
 		assert.equal(terminal.output.includes("latest message"), true);
-		assert.equal(terminal.output.includes("\x1b[?2026l\r\n\x1b[?25h"), true);
+		assert.equal(terminal.output.includes("\r\n\x1b[?25h"), true);
 	});
 
 	it("shows the hardware cursor at a marker and hides it when focus is lost", async () => {
@@ -196,6 +197,145 @@ describe("TUI differential rendering", () => {
 		assert.equal(terminal.output.includes("\r\n"), true);
 		assert.equal(terminal.output.includes("new history"), true);
 		tui.stop();
+	});
+
+	it("rewrites only the changed visible line in a long frame", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const probe = new Probe(["history 0", "history 1", "stream A", "editor", "footer"]);
+		tui.addChild(probe);
+		tui.start();
+		terminal.clearOutput();
+
+		probe.lines = ["history 0", "history 1", "stream B", "editor", "footer"];
+		tui.requestRender();
+		await flushRender();
+
+		assert.equal(terminal.output.split("\x1b[2K").length - 1, 1);
+		assert.equal(terminal.output.includes("history 1"), false);
+		assert.equal(terminal.output.includes("stream B"), true);
+		tui.stop();
+	});
+
+	it("does not duplicate scrollback when an offscreen history line changes", async () => {
+		const terminal = new EmulatedTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		const probe = new Probe(lines);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		probe.lines = ["changed history", ...lines.slice(1)];
+		tui.requestRender();
+		await flushRender();
+		await terminal.flush();
+
+		assert.deepEqual(terminal.getScrollBuffer(), probe.lines);
+		tui.stop();
+	});
+
+	it("preserves one copy of scrollback and clears vacated rows when a long frame shrinks", async () => {
+		const terminal = new EmulatedTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		const probe = new Probe(lines);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		probe.lines = lines.slice(0, 10);
+		tui.requestRender();
+		await flushRender();
+		await terminal.flush();
+
+		const buffer = terminal.getScrollBuffer();
+		assert.deepEqual(buffer.slice(0, probe.lines.length), probe.lines);
+		assert.equal(
+			buffer.slice(probe.lines.length).every((line) => line === ""),
+			true,
+		);
+		assert.equal(buffer.filter((line) => line === "history 0").length, 1);
+		tui.stop();
+	});
+
+	it("does not replay long streaming history when visible content shrinks before the footer", async () => {
+		const terminal = new EmulatedTerminal(24, 6, { ignoreClearScrollback: true });
+		const tui = new TUI(terminal);
+		const history = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		const footer = ["composer", "editor", "status", "footer"];
+		const probe = new Probe([...history, "stream first", "stream second", ...footer]);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		probe.lines = [...history, "stream merged", ...footer];
+		tui.requestRender();
+		await flushRender();
+		await terminal.flush();
+
+		const buffer = terminal.getScrollBuffer();
+		assert.equal(buffer.filter((line) => line === "history 0").length, 1);
+		assert.equal(buffer.filter((line) => line === "history 11").length, 1);
+		assert.equal(
+			terminal.getViewport().some((line) => line === "stream merged"),
+			true,
+		);
+		tui.stop();
+	});
+
+	it("preserves every line when a long frame grows by more than one viewport", async () => {
+		const terminal = new EmulatedTerminal(20, 4, { ignoreClearScrollback: true });
+		const tui = new TUI(terminal);
+		const lines = Array.from({ length: 8 }, (_, index) => `history ${index}`);
+		const probe = new Probe([...lines, "editor", "footer"]);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		const added = Array.from({ length: 5 }, (_, index) => `new ${index}`);
+		probe.lines = [...lines, ...added, "editor", "footer"];
+		tui.requestRender();
+		await flushRender();
+		await terminal.flush();
+
+		assert.deepEqual(terminal.getScrollBuffer(), probe.lines);
+		tui.stop();
+	});
+
+	it("coalesces stream updates that arrive within one render interval", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const probe = new Probe(["initial"]);
+		tui.addChild(probe);
+		tui.start();
+
+		probe.lines = ["first delta"];
+		tui.requestRender();
+		await new Promise<void>((resolve) => setTimeout(resolve, 1));
+		probe.lines = ["second delta"];
+		tui.requestRender();
+		await flushRender();
+
+		assert.deepEqual(probe.widths, [20, 20]);
+		assert.equal(terminal.output.includes("first delta"), false);
+		assert.equal(terminal.output.includes("second delta"), true);
+		tui.stop();
+	});
+
+	it("prints final long-frame lines once when stopping", async () => {
+		const terminal = new EmulatedTerminal(20, 4, { ignoreClearScrollback: true });
+		const tui = new TUI(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		const probe = new Probe(lines);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		tui.stop({ finalLines: lines });
+		await terminal.flush();
+
+		assert.deepEqual(terminal.getScrollBuffer(), [...lines, ""]);
 	});
 
 	it("coalesces requests and writes nothing for an unchanged frame", async () => {

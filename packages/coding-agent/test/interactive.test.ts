@@ -294,7 +294,7 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
-	it("prints the complete transcript before Ctrl+C returns control to the shell", async () => {
+	it("returns control to the shell without replaying the complete transcript", async () => {
 		const responses = Array.from({ length: 8 }, (_, index) => ({
 			type: "success" as const,
 			content: [{ type: "text" as const, text: `answer ${index}` }],
@@ -318,8 +318,10 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("\x03");
 
 		assert.equal(exited, true);
-		assert.equal(terminal.output.includes("question 0"), true);
-		assert.equal(terminal.output.includes("answer 7"), true);
+		assert.equal(terminal.output.includes("question 0"), false);
+		assert.equal(terminal.output.includes("\r\n"), true);
+		assert.equal(terminal.started, false);
+		assert.equal(terminal.cursorHidden, false);
 	});
 
 	it("submits editor input through AgentSession and renders the answer", async () => {
@@ -336,6 +338,7 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("hello");
 		terminal.sendInput("\r");
 		await waitFor(() => session.transcript.length === 2);
+		await waitFor(() => terminal.output.includes("hello from model"));
 
 		assert.equal(session.transcript.at(-1)?.role, "assistant");
 		assert.equal(terminal.output.includes("hello from model"), true);
@@ -354,6 +357,7 @@ describe("InteractiveMode", () => {
 
 		mode.start("question");
 		await waitFor(() => session.transcript.length === 2);
+		await waitFor(() => terminal.output.includes("bold answer"));
 
 		assert.equal(terminal.output.includes("Assistant"), true);
 		assert.equal(terminal.output.includes("bold answer"), true);
@@ -372,6 +376,7 @@ describe("InteractiveMode", () => {
 
 		mode.start("A focused question");
 		await waitFor(() => session.transcript.length === 2);
+		await waitFor(() => terminal.output.includes("A focused answer"));
 
 		assert.equal(terminal.output.includes("You"), true);
 		assert.equal(terminal.output.includes("Assistant"), true);
@@ -463,7 +468,7 @@ describe("InteractiveMode", () => {
 		assert.equal(tui.hasOverlay(), true);
 		terminal.sendInput("\x1b[B");
 		terminal.sendInput("\r");
-		await flush();
+		await waitFor(() => terminal.output.includes("theme=light"));
 
 		assert.equal(tui.hasOverlay(), false);
 		assert.equal(terminal.output.includes("theme=light"), true);
@@ -497,6 +502,7 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("question");
 		terminal.sendInput("\r");
 		await waitFor(() => streamedModels.length === 1);
+		await waitFor(() => terminal.output.includes("MODEL  alternate-model"));
 
 		assert.equal(session.modelId, "alternate-model");
 		assert.deepEqual(streamedModels, ["alternate-model"]);
@@ -602,6 +608,7 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("/mo");
 		terminal.sendInput("\t");
 		await waitFor(() => tui.hasOverlay());
+		await waitFor(() => terminal.output.includes("Open the model selector"));
 		assert.equal(terminal.output.includes("Open the model selector"), true);
 		terminal.sendInput("\r");
 		assert.equal(tui.hasOverlay(), false);
@@ -638,8 +645,9 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("third");
 		terminal.sendInput("\r");
 		await flush();
-		assert.equal(terminal.output.includes("Queue (1)"), true);
-		assert.equal(terminal.output.includes("third"), true);
+		const queuedFrame = tui.render(terminal.columns).join("\n");
+		assert.equal(queuedFrame.includes("Queue (1)"), true);
+		assert.equal(queuedFrame.includes("third"), true);
 		await waitFor(() => session.transcript.length === 8);
 		assert.equal(session.transcript.at(-1)?.role, "assistant");
 		mode.stop();

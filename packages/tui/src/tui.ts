@@ -21,6 +21,7 @@ export const CURSOR_MARKER = "\x1b_pi:c\x07";
 const LINE_RESET = "\x1b[0m\x1b]8;;\x07";
 const SYNC_START = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
+const CLEAR_SCROLLBACK = "\x1b[3J";
 
 interface CursorPosition {
 	readonly row: number;
@@ -69,15 +70,20 @@ export class Container implements Component {
 }
 
 export class TUI extends Container {
+	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private readonly terminal: Terminal;
 	private previousLines: string[] = [];
 	private previousColumns = 0;
 	private previousRows = 0;
 	private focusedComponent: Component | null = null;
 	private cursorPosition: CursorPosition | null = null;
-	private hardwareRow = 0;
+	private cursorRow = 0;
+	private hardwareCursorRow = 0;
+	private previousViewportTop = 0;
 	private started = false;
-	private renderPending = false;
+	private renderRequested = false;
+	private renderTimer: NodeJS.Timeout | undefined;
+	private lastRenderAt = 0;
 	private forcePending = false;
 	private readonly overlays: OverlayEntry[] = [];
 
@@ -103,7 +109,8 @@ export class TUI extends Container {
 				() => this.handleResize(),
 			);
 			this.terminal.hideCursor();
-			this.renderFrame(true);
+			this.renderFrame(false);
+			this.lastRenderAt = performance.now();
 		} catch (error) {
 			this.started = false;
 			this.terminal.showCursor();
@@ -114,16 +121,23 @@ export class TUI extends Container {
 
 	stop(options: TUIStopOptions = {}): void {
 		if (!this.started) return;
-		this.started = false;
-		this.renderPending = false;
+		this.renderRequested = false;
 		this.forcePending = false;
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = undefined;
+		}
 		if (options.finalLines) {
-			const { lines } = this.prepareFrame([...options.finalLines], this.terminal.columns);
-			this.fullRender(lines);
+			this.renderFrame(false, [...options.finalLines]);
+			const targetRow = this.cursorRow + 1;
+			const rowDelta = targetRow - this.hardwareCursorRow;
+			if (rowDelta > 0) this.terminal.write(`\x1b[${rowDelta}B`);
+			else if (rowDelta < 0) this.terminal.write(`\x1b[${-rowDelta}A`);
 			this.terminal.write("\r\n");
 		} else {
 			this.terminal.clearScreen();
 		}
+		this.started = false;
 		this.terminal.showCursor();
 		this.terminal.stop();
 	}
@@ -207,15 +221,36 @@ export class TUI extends Container {
 	requestRender(force = false): void {
 		if (!this.started) return;
 		this.forcePending ||= force;
-		if (this.renderPending) return;
-		this.renderPending = true;
-		queueMicrotask(() => {
-			if (!this.started || !this.renderPending) return;
-			const shouldForce = this.forcePending;
-			this.renderPending = false;
-			this.forcePending = false;
-			this.renderFrame(shouldForce);
-		});
+		this.renderRequested = true;
+		if (force) {
+			if (this.renderTimer) {
+				clearTimeout(this.renderTimer);
+				this.renderTimer = undefined;
+			}
+			queueMicrotask(() => this.flushRenderRequest());
+			return;
+		}
+		queueMicrotask(() => this.scheduleRender());
+	}
+
+	private scheduleRender(): void {
+		if (!this.started || this.renderTimer || !this.renderRequested) return;
+		const elapsed = performance.now() - this.lastRenderAt;
+		const delay = Math.max(0, TUI.MIN_RENDER_INTERVAL_MS - elapsed);
+		this.renderTimer = setTimeout(() => {
+			this.renderTimer = undefined;
+			this.flushRenderRequest();
+		}, delay);
+	}
+
+	private flushRenderRequest(): void {
+		if (!this.started || !this.renderRequested) return;
+		const shouldForce = this.forcePending;
+		this.renderRequested = false;
+		this.forcePending = false;
+		this.lastRenderAt = performance.now();
+		this.renderFrame(shouldForce);
+		if (this.renderRequested) this.scheduleRender();
 	}
 
 	private handleTerminalInput(data: string): void {
@@ -253,29 +288,137 @@ export class TUI extends Container {
 		this.setFocus(topCapturing?.component ?? entry.preFocus);
 	}
 
-	private renderFrame(force: boolean): void {
+	private renderFrame(force: boolean, sourceLines?: string[]): void {
 		const columns = this.terminal.columns;
 		const rows = this.terminal.rows;
-		const { lines, cursor } = this.prepareFrame(this.render(columns), columns);
+		const { lines, cursor } = this.prepareFrame(sourceLines ?? this.render(columns), columns);
 		const firstFrame = this.previousColumns === 0;
-		const sizeChanged = !firstFrame && (this.previousColumns !== columns || this.previousRows !== rows);
-		const frameChanged = !this.framesEqual(lines, this.previousLines);
-		const cursorChanged = !this.cursorsEqual(cursor, this.cursorPosition);
+		const widthChanged = !firstFrame && this.previousColumns !== columns;
+		const heightChanged = !firstFrame && this.previousRows !== rows;
+		const previousBufferLength = this.previousRows > 0 ? this.previousViewportTop + this.previousRows : rows;
+		let previousViewportTop = heightChanged ? Math.max(0, previousBufferLength - rows) : this.previousViewportTop;
+		let viewportTop = previousViewportTop;
+		let hardwareCursorRow = this.hardwareCursorRow;
+		const computeLineDiff = (targetRow: number): number => {
+			const currentScreenRow = hardwareCursorRow - previousViewportTop;
+			const targetScreenRow = targetRow - viewportTop;
+			return targetScreenRow - currentScreenRow;
+		};
 
-		if (force || firstFrame || sizeChanged) {
-			this.fullRender(lines);
-		} else if (lines.length > rows || this.previousLines.length > rows) {
-			this.renderLongFrame(lines, rows, frameChanged);
-		} else if (frameChanged) {
-			this.differentialRender(lines);
-		}
-
-		this.previousLines = lines;
-		this.previousColumns = columns;
-		this.previousRows = rows;
-		if (force || firstFrame || sizeChanged || frameChanged || cursorChanged) {
+		const finish = (finalHardwareCursorRow: number, finalViewportTop: number): void => {
+			this.cursorRow = Math.max(0, lines.length - 1);
+			this.hardwareCursorRow = finalHardwareCursorRow;
+			this.previousViewportTop = finalViewportTop;
+			this.previousLines = lines;
+			this.previousColumns = columns;
+			this.previousRows = rows;
 			this.positionCursor(cursor, lines.length, rows);
+		};
+
+		if (firstFrame) {
+			this.fullRender(lines, false, rows);
+			finish(this.hardwareCursorRow, this.previousViewportTop);
+			return;
 		}
+		if (force || widthChanged || heightChanged) {
+			this.fullRender(lines, true, rows);
+			finish(this.hardwareCursorRow, this.previousViewportTop);
+			return;
+		}
+
+		let firstChanged = -1;
+		let lastChanged = -1;
+		const totalLines = Math.max(lines.length, this.previousLines.length);
+		for (let row = 0; row < totalLines; row += 1) {
+			if ((lines[row] ?? "") === (this.previousLines[row] ?? "")) continue;
+			if (firstChanged < 0) firstChanged = row;
+			lastChanged = row;
+		}
+		const appendedLines = lines.length > this.previousLines.length;
+		if (appendedLines) {
+			if (firstChanged < 0) firstChanged = this.previousLines.length;
+			lastChanged = lines.length - 1;
+		}
+		const cursorChanged = !this.cursorsEqual(cursor, this.cursorPosition);
+		if (firstChanged < 0) {
+			this.previousRows = rows;
+			if (cursorChanged) this.positionCursor(cursor, lines.length, rows);
+			return;
+		}
+
+		if (firstChanged >= lines.length) {
+			const targetRow = Math.max(0, lines.length - 1);
+			const extraLines = this.previousLines.length - lines.length;
+			if (targetRow < previousViewportTop || extraLines > rows) {
+				this.fullRender(lines, true, rows);
+				finish(this.hardwareCursorRow, this.previousViewportTop);
+				return;
+			}
+			let output = SYNC_START;
+			const lineDiff = computeLineDiff(targetRow);
+			if (lineDiff > 0) output += `\x1b[${lineDiff}B`;
+			else if (lineDiff < 0) output += `\x1b[${-lineDiff}A`;
+			output += "\r";
+			const clearStartOffset = lines.length === 0 ? 0 : 1;
+			if (extraLines > 0 && clearStartOffset > 0) output += `\x1b[${clearStartOffset}B`;
+			for (let index = 0; index < extraLines; index += 1) {
+				output += "\r\x1b[2K";
+				if (index < extraLines - 1) output += "\x1b[1B";
+			}
+			const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
+			if (moveBack > 0) output += `\x1b[${moveBack}A`;
+			output += SYNC_END;
+			this.terminal.write(output);
+			finish(targetRow, previousViewportTop);
+			return;
+		}
+
+		if (firstChanged < previousViewportTop) {
+			this.fullRender(lines, true, rows);
+			finish(this.hardwareCursorRow, this.previousViewportTop);
+			return;
+		}
+
+		let output = SYNC_START;
+		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
+		const previousViewportBottom = previousViewportTop + rows - 1;
+		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
+		if (moveTargetRow > previousViewportBottom) {
+			const currentScreenRow = Math.max(0, Math.min(rows - 1, hardwareCursorRow - previousViewportTop));
+			const moveToBottom = rows - 1 - currentScreenRow;
+			if (moveToBottom > 0) output += `\x1b[${moveToBottom}B`;
+			const scroll = moveTargetRow - previousViewportBottom;
+			output += "\r\n".repeat(scroll);
+			previousViewportTop += scroll;
+			viewportTop += scroll;
+			hardwareCursorRow = moveTargetRow;
+		}
+
+		const lineDiff = computeLineDiff(moveTargetRow);
+		if (lineDiff > 0) output += `\x1b[${lineDiff}B`;
+		else if (lineDiff < 0) output += `\x1b[${-lineDiff}A`;
+		output += appendStart ? "\r\n" : "\r";
+
+		const renderEnd = Math.min(lastChanged, lines.length - 1);
+		for (let row = firstChanged; row <= renderEnd; row += 1) {
+			if (row > firstChanged) output += "\r\n";
+			output += `\x1b[2K${lines[row] ?? ""}`;
+		}
+
+		let finalCursorRow = renderEnd;
+		if (this.previousLines.length > lines.length) {
+			if (renderEnd < lines.length - 1) {
+				const moveDown = lines.length - 1 - renderEnd;
+				output += `\x1b[${moveDown}B`;
+				finalCursorRow = lines.length - 1;
+			}
+			const extraLines = this.previousLines.length - lines.length;
+			for (let row = lines.length; row < this.previousLines.length; row += 1) output += "\r\n\x1b[2K";
+			if (extraLines > 0) output += `\x1b[${extraLines}A`;
+		}
+		output += SYNC_END;
+		this.terminal.write(output);
+		finish(finalCursorRow, Math.max(previousViewportTop, finalCursorRow - rows + 1));
 	}
 
 	private prepareFrame(sourceLines: string[], width: number): PreparedFrame {
@@ -303,69 +446,15 @@ export class TUI extends Container {
 		return { lines, cursor };
 	}
 
-	private fullRender(lines: string[]): void {
-		this.terminal.clearScreen();
-		this.terminal.write(`${SYNC_START}${lines.join("\r\n")}${SYNC_END}`);
-		this.hardwareRow = Math.max(0, Math.min(lines.length, this.terminal.rows) - 1);
-	}
-
-	private renderLongFrame(lines: string[], rows: number, frameChanged: boolean): void {
-		if (!frameChanged) return;
-		if (lines.length <= rows || this.previousLines.length <= rows) {
-			this.fullRender(lines);
-			return;
-		}
-
-		const sharedPrefix = Math.max(0, Math.min(lines.length, this.previousLines.length) - rows);
-		if (!this.prefixEqual(lines, this.previousLines, sharedPrefix) || lines.length < this.previousLines.length) {
-			this.fullRender(lines);
-			return;
-		}
-
-		const addedLines = lines.length - this.previousLines.length;
+	private fullRender(lines: string[], clear: boolean, rows: number): void {
 		let output = SYNC_START;
-		if (addedLines > 0) {
-			output += this.moveRows(this.hardwareRow, rows - 1);
-			output += "\r\n".repeat(addedLines);
-			this.hardwareRow = rows - 1;
-		}
-		output += this.renderViewport(lines, rows);
+		if (clear) output += `\x1b[2J\x1b[H${CLEAR_SCROLLBACK}`;
+		output += lines.join("\r\n");
 		output += SYNC_END;
 		this.terminal.write(output);
-		this.hardwareRow = rows - 1;
-	}
-
-	private renderViewport(lines: readonly string[], rows: number): string {
-		const viewport = lines.slice(-rows);
-		let output = this.moveRows(this.hardwareRow, 0);
-		for (let row = 0; row < viewport.length; row += 1) {
-			if (row > 0) output += "\x1b[1B";
-			output += `\r\x1b[2K${viewport[row] ?? ""}`;
-		}
-		return output;
-	}
-
-	private differentialRender(lines: string[]): void {
-		const totalRows = Math.max(lines.length, this.previousLines.length);
-		let firstChanged = -1;
-		let lastChanged = -1;
-
-		for (let row = 0; row < totalRows; row += 1) {
-			if ((lines[row] ?? "") === (this.previousLines[row] ?? "")) continue;
-			if (firstChanged < 0) firstChanged = row;
-			lastChanged = row;
-		}
-		if (firstChanged < 0) return;
-
-		let output = SYNC_START;
-		output += this.moveRows(this.hardwareRow, firstChanged);
-		for (let row = firstChanged; row <= lastChanged; row += 1) {
-			if (row > firstChanged) output += "\x1b[1B";
-			output += `\r\x1b[2K${lines[row] ?? ""}`;
-		}
-		output += SYNC_END;
-		this.terminal.write(output);
-		this.hardwareRow = lastChanged;
+		this.cursorRow = Math.max(0, lines.length - 1);
+		this.hardwareCursorRow = this.cursorRow;
+		this.previousViewportTop = Math.max(0, Math.max(rows, lines.length) - rows);
 	}
 
 	private positionCursor(cursor: CursorPosition | null, lineCount: number, rows: number): void {
@@ -374,35 +463,20 @@ export class TUI extends Container {
 			this.terminal.hideCursor();
 			return;
 		}
-		const viewportStart = Math.max(0, lineCount - rows);
-		if (cursor.row < viewportStart) {
+		const viewportEnd = this.previousViewportTop + rows - 1;
+		if (cursor.row < this.previousViewportTop || cursor.row > viewportEnd || cursor.row >= lineCount) {
 			this.terminal.hideCursor();
 			return;
 		}
-		const row = cursor.row - viewportStart;
-		let output = this.moveRows(this.hardwareRow, row);
+		const rowDelta = cursor.row - this.hardwareCursorRow;
+		let output = "";
+		if (rowDelta > 0) output += `\x1b[${rowDelta}B`;
+		else if (rowDelta < 0) output += `\x1b[${-rowDelta}A`;
 		output += "\r";
 		if (cursor.column > 0) output += `\x1b[${cursor.column}C`;
 		this.terminal.write(output);
-		this.hardwareRow = row;
+		this.hardwareCursorRow = cursor.row;
 		this.terminal.showCursor();
-	}
-
-	private prefixEqual(left: readonly string[], right: readonly string[], length: number): boolean {
-		for (let index = 0; index < length; index += 1) {
-			if (left[index] !== right[index]) return false;
-		}
-		return true;
-	}
-
-	private moveRows(from: number, to: number): string {
-		if (to > from) return `\x1b[${to - from}B`;
-		if (to < from) return `\x1b[${from - to}A`;
-		return "";
-	}
-
-	private framesEqual(left: string[], right: string[]): boolean {
-		return left.length === right.length && left.every((line, index) => line === right[index]);
 	}
 
 	private cursorsEqual(left: CursorPosition | null, right: CursorPosition | null): boolean {
