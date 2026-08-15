@@ -1,27 +1,37 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const entryPath = resolve(process.cwd(), "dist/entry.js");
 
 async function runCli(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
-	return await new Promise((resolveResult, reject) => {
-		const child = spawn(process.execPath, [entryPath, ...args], {
-			cwd: process.cwd(),
-			env: { ...process.env, DI_CODE_PROVIDER: "faux" },
-			stdio: ["ignore", "pipe", "pipe"],
+	const root = await mkdtemp(join(tmpdir(), "di-code-cli-process-"));
+	const sessionPath = join(root, "session.jsonl");
+	const needsSession =
+		!args.includes("--help") && !args.includes("-h") && !args.includes("--version") && !args.includes("-v");
+	try {
+		return await new Promise((resolveResult, reject) => {
+			const child = spawn(process.execPath, [entryPath, ...args, ...(needsSession ? ["--session", sessionPath] : [])], {
+				cwd: process.cwd(),
+				env: { ...process.env, DI_CODE_PROVIDER: "faux" },
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+			let stdout = "";
+			let stderr = "";
+			child.stdout.on("data", (chunk: Buffer) => {
+				stdout += chunk.toString();
+			});
+			child.stderr.on("data", (chunk: Buffer) => {
+				stderr += chunk.toString();
+			});
+			child.on("error", reject);
+			child.on("close", (code) => resolveResult({ code, stdout, stderr }));
 		});
-		let stdout = "";
-		let stderr = "";
-		child.stdout.on("data", (chunk: Buffer) => {
-			stdout += chunk.toString();
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString();
-		});
-		child.on("error", reject);
-		child.on("close", (code) => resolveResult({ code, stdout, stderr }));
-	});
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 }
 
 describe("CLI process entry", () => {
