@@ -3,12 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider, type Provider } from "@di-code/ai";
-import type { Terminal } from "@di-code/tui";
+import type { Component, Terminal } from "@di-code/tui";
 import { CURSOR_MARKER, TUI } from "@di-code/tui";
 import { describe, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
+import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
 
 class TestTerminal implements Terminal {
 	private input?: (data: string) => void;
@@ -167,6 +168,33 @@ describe("InteractiveProjection", () => {
 		assert.deepEqual(projection.state.toolStatus, ["read: done"]);
 	});
 
+	it("clears tool activity when the next agent turn starts", () => {
+		const projection = new InteractiveProjection();
+		projection.apply({
+			type: "tool_execution_start",
+			toolCallId: "r1",
+			toolName: "read",
+			arguments: { path: "a.txt" },
+		});
+		projection.apply({
+			type: "tool_execution_end",
+			toolCallId: "r1",
+			toolName: "read",
+			result: {
+				role: "tool_result",
+				toolCallId: "r1",
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 2,
+			},
+		});
+
+		projection.apply({ type: "agent_start" });
+
+		assert.deepEqual(projection.state.toolStatus, []);
+	});
+
 	it("commits final assistant text and clears streaming state", () => {
 		const projection = new InteractiveProjection();
 		projection.apply({ type: "agent_start" });
@@ -208,6 +236,77 @@ describe("InteractiveProjection", () => {
 		projection.apply({ type: "compaction_end", reason: "threshold", success: false, errorMessage: "compact failed" });
 		assert.equal(projection.state.compacting, false);
 		assert.equal(projection.state.error, "compact failed");
+	});
+});
+
+describe("InteractiveChat streaming layout", () => {
+	it("keeps the final answer in the writable viewport after many tool calls", async () => {
+		const projection = new InteractiveProjection();
+		projection.apply({ type: "agent_start" });
+		for (let index = 0; index < 30; index += 1) {
+			projection.apply({
+				type: "tool_execution_start",
+				toolCallId: `tool-${index}`,
+				toolName: `tool-${index}`,
+				arguments: {},
+			});
+			projection.apply({
+				type: "tool_execution_end",
+				toolCallId: `tool-${index}`,
+				toolName: `tool-${index}`,
+				result: {
+					role: "tool_result",
+					toolCallId: `tool-${index}`,
+					toolName: `tool-${index}`,
+					content: [{ type: "text", text: "ok" }],
+					isError: false,
+					timestamp: index,
+				},
+			});
+		}
+		projection.apply({ type: "message_start", message: preview("") });
+		projection.apply({
+			type: "message_update",
+			event: { type: "text_delta", contentIndex: 0, delta: "final answer" },
+		});
+		const readState = (): InteractiveViewState => ({
+			...projection.state,
+			model: "faux-model",
+			theme: "dark",
+		});
+		const terminal = new TestTerminal(false, 80, 24);
+		const tui = new TUI(terminal);
+		const tail: Component = {
+			invalidate() {},
+			render: () => Array.from({ length: 8 }, (_, index) => `tail ${index}`),
+		};
+		tui.addChild(new InteractiveChat(readState));
+		tui.addChild(tail);
+		tui.start();
+		terminal.clearOutput();
+
+		projection.apply({
+			type: "message_update",
+			event: { type: "text_delta", contentIndex: 0, delta: " continues" },
+		});
+		tui.requestRender();
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+		const frame = tui.render(terminal.columns).join("\n");
+		assert.equal(frame.includes("24 earlier tool updates"), true);
+		assert.equal(frame.includes("tool-0"), false);
+		assert.equal(frame.includes("tool-29"), true);
+		assert.equal(terminal.output.includes("\x1b[3J"), false);
+		assert.equal(terminal.output.includes("final answer continues"), true);
+
+		terminal.clearOutput();
+		projection.apply({ type: "message_end", message: assistantMessage("final answer continues") });
+		projection.apply({ type: "agent_end", messages: [] });
+		tui.requestRender();
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+		assert.equal(terminal.output.includes("\x1b[3J"), false);
+		tui.stop();
 	});
 });
 

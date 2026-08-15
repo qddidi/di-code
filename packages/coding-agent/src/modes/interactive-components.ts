@@ -18,6 +18,7 @@ interface Palette {
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
+const MAX_VISIBLE_TOOL_STATUSES = 6;
 
 function paletteFor(theme: InteractiveViewState["theme"]): Palette {
 	return theme === "light"
@@ -117,7 +118,11 @@ export class InteractiveChat implements Component {
 			if (lines.length > 0) lines.push(" ");
 			lines.push(...renderLine(`  ${paint(colors.dim, "ACTIVITY", true)}`, width));
 			if (state.status) lines.push(...renderLine(`    ${paint(colors.dim, state.status)}`, width));
-			for (const status of state.toolStatus) {
+			const hiddenToolStatuses = Math.max(0, state.toolStatus.length - MAX_VISIBLE_TOOL_STATUSES);
+			if (hiddenToolStatuses > 0) {
+				lines.push(...renderLine(`    ${paint(colors.dim, `${hiddenToolStatuses} earlier tool updates`)}`, width));
+			}
+			for (const status of state.toolStatus.slice(-MAX_VISIBLE_TOOL_STATUSES)) {
 				const separator = status.indexOf(": ");
 				const name = separator < 0 ? status : status.slice(0, separator);
 				const result = separator < 0 ? "" : status.slice(separator + 2);

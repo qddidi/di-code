@@ -98,6 +98,7 @@ export class InteractiveProjection {
 				this.busy = true;
 				this.error = undefined;
 				this.retrying = false;
+				this.toolStatus.clear();
 				return;
 			case "compaction_start":
 				this.compacting = true;
