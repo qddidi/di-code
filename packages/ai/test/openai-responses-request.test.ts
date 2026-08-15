@@ -163,6 +163,23 @@ describe("buildOpenAIResponsesRequest", () => {
 		expect(request.tools?.[0]?.parameters).toBe(parameters);
 	});
 
+	it("maps a stable session id to a bounded prompt cache key", () => {
+		const longSessionId = `session-${"cache".repeat(20)}`;
+
+		const request = buildOpenAIResponsesRequest(model, textContext(), {
+			sessionId: longSessionId,
+		});
+
+		expect(request.prompt_cache_key).toBe(Array.from(longSessionId).slice(0, 64).join(""));
+		expect(Array.from(request.prompt_cache_key ?? "")).toHaveLength(64);
+	});
+
+	it("omits prompt_cache_key when the session id is blank", () => {
+		expect(buildOpenAIResponsesRequest(model, textContext(), { sessionId: "   " })).not.toHaveProperty(
+			"prompt_cache_key",
+		);
+	});
+
 	it("preserves tool failure and empty-output semantics as text", () => {
 		const context: Context = {
 			messages: [

@@ -35,6 +35,30 @@ describe("AgentSession read integration", () => {
 		expect(events).toContain("agent_end");
 	});
 
+	it("uses one stable cache session id across provider requests", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first" }] },
+				{ type: "success", content: [{ type: "text", text: "second" }] },
+			],
+		});
+		const requestedSessionIds: Array<string | undefined> = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				requestedSessionIds.push(options?.sessionId);
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+
+		await session.prompt("first");
+		await session.prompt("second");
+
+		expect(session.sessionId).toBeTruthy();
+		expect(requestedSessionIds).toEqual([session.sessionId, session.sessionId]);
+	});
+
 	afterEach(async () => {
 		await rm(root, { recursive: true, force: true });
 	});
@@ -169,6 +193,7 @@ describe("AgentSession persistence", () => {
 			model: firstFaux.model,
 			sessionManager: manager,
 		});
+		expect(firstSession.sessionId).toBe(manager.header.id);
 
 		await firstSession.prompt("saved question");
 

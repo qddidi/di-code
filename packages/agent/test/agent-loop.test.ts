@@ -62,6 +62,33 @@ describe("agent loop contracts", () => {
 		expect(faux.pendingResponses()).toBe(0);
 	});
 
+	it("forwards the stable session id to the provider", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "ok" }] }],
+		});
+		let requestedSessionId: string | undefined;
+		const provider = {
+			...faux.provider,
+			stream(
+				model: typeof faux.model,
+				providerContext: Parameters<typeof faux.provider.stream>[1],
+				options?: Parameters<typeof faux.provider.stream>[2],
+			) {
+				requestedSessionId = options?.sessionId;
+				return faux.provider.stream(model, providerContext, options);
+			},
+		};
+
+		const stream = agentLoop(userMessage("cache me"), context(), {
+			provider,
+			model: faux.model,
+			sessionId: "session-cache-1",
+		});
+		await collect(stream);
+
+		expect(requestedSessionId).toBe("session-cache-1");
+	});
+
 	it("settles with a failed assistant message for a model error", async () => {
 		const faux = createFauxProvider({
 			responses: [{ type: "failure", errorMessage: "model failed" }],

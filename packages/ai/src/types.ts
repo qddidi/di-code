@@ -256,6 +256,8 @@ export type StreamEvent =
 export interface StreamOptions {
 	/** 用于中止底层请求和后续流式生成。 */
 	signal?: AbortSignal;
+	/** 同一会话内保持稳定的标识；支持的 Provider 可用它提高提示词缓存命中率。 */
+	sessionId?: string;
 	/** 控制采样随机性的温度参数，支持情况和有效范围由具体 Provider 决定。 */
 	temperature?: number;
 	/** 本次调用允许生成的最大 token 数。 */

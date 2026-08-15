@@ -34,6 +34,7 @@ export interface AssistantMessagePreview {
 export interface AgentLoopConfig {
 	readonly provider: Provider;
 	readonly model: Model;
+	readonly sessionId?: string;
 	readonly now?: () => number;
 }
 

@@ -5,6 +5,7 @@ import type { AgentContext, AgentEvent, AgentTool } from "./types.ts";
 export interface AgentOptions {
 	readonly provider: Provider;
 	readonly model: Model;
+	readonly sessionId?: string;
 	readonly tools?: readonly AgentTool[];
 	readonly systemPrompt?: string;
 	readonly now?: () => number;
@@ -42,12 +43,14 @@ export class Agent {
 	private readonly listeners = new Set<AgentListener>();
 	private readonly provider: Provider;
 	private model: Model;
+	private readonly sessionId?: string;
 	private readonly systemPrompt?: string;
 	private readonly now: () => number;
 	private readonly tools: readonly AgentTool[];
 	constructor(options: AgentOptions) {
 		this.provider = options.provider;
 		this.model = options.model;
+		this.sessionId = options.sessionId;
 		this.tools = [...(options.tools ?? [])];
 		const initialMessages = structuredClone([...(options.initialMessages ?? [])]);
 		this.transcriptMessages = initialMessages;
@@ -110,7 +113,12 @@ export class Agent {
 			messages: structuredClone(this.contextMessageState),
 			tools: [...this.tools],
 		};
-		const stream = agentLoop(prompt, context, { provider: this.provider, model: this.model, now: this.now }, signal);
+		const stream = agentLoop(
+			prompt,
+			context,
+			{ provider: this.provider, model: this.model, sessionId: this.sessionId, now: this.now },
+			signal,
+		);
 
 		let finalAssistant: AssistantMessage | undefined;
 		let listenerFailed = false;

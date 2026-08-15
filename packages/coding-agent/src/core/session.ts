@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
 	Agent,
 	type AgentListener,
@@ -44,6 +45,7 @@ export class AgentSession {
 	private readonly sessionManager?: SessionManager;
 	private readonly provider: Provider;
 	private model: Model;
+	private readonly sessionIdValue: string;
 	private readonly now: () => number;
 	private compactionEnabledValue: boolean;
 	private contextBudget: ContextBudget;
@@ -57,6 +59,7 @@ export class AgentSession {
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
 		this.model = options.model;
+		this.sessionIdValue = options.sessionManager?.header.id ?? randomUUID();
 		this.now = options.now ?? Date.now;
 		this.contextBudget = resolveContextBudget(options.model);
 		if (options.compaction?.enabled !== undefined && typeof options.compaction.enabled !== "boolean") {
@@ -72,6 +75,7 @@ export class AgentSession {
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
+			sessionId: this.sessionIdValue,
 			tools: [
 				createReadTool(options.allowedRoot),
 				createWriteTool(options.allowedRoot),
@@ -104,6 +108,10 @@ export class AgentSession {
 
 	get isStreaming(): boolean {
 		return this.promptActive;
+	}
+
+	get sessionId(): string {
+		return this.sessionIdValue;
 	}
 
 	get modelId(): string {

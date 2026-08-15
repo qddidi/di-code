@@ -108,6 +108,7 @@ export interface OpenAIResponsesRequest {
 	readonly instructions?: string;
 	readonly input: readonly OpenAIResponsesInputItem[];
 	readonly tools?: readonly OpenAIResponsesFunctionTool[];
+	readonly prompt_cache_key?: string;
 	readonly max_output_tokens?: number;
 	readonly temperature?: number;
 	readonly reasoning?: { readonly summary: "auto" };
@@ -115,6 +116,8 @@ export interface OpenAIResponsesRequest {
 	readonly stream: true;
 	readonly store: false;
 }
+
+const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 
 export interface OpenAIResponsesStreamOptions extends StreamOptions {
 	readonly apiKey: string;
@@ -470,10 +473,15 @@ export function buildOpenAIResponsesRequest(
 ): OpenAIResponsesRequest {
 	assertSupportedModel(model);
 	assertOptions(options);
+	const sessionId = options.sessionId?.trim();
+	const promptCacheKey = sessionId
+		? Array.from(sessionId).slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("")
+		: undefined;
 
 	return {
 		model: model.id,
 		input: projectMessages(model, context),
+		...(promptCacheKey !== undefined ? { prompt_cache_key: promptCacheKey } : {}),
 		stream: true,
 		store: false,
 		...(model.reasoning
