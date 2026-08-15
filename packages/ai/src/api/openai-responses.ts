@@ -958,10 +958,11 @@ function supplementReasoningEncryption(responseValue: unknown, progress: Respons
 	for (const [index, value] of response.output.entries()) {
 		const item = requireRecord(value, `response.output[${index}]`);
 		if (item.type !== "reasoning") continue;
-		const id = requireNonEmptyString(item.id, `response.output[${index}].id`);
 		if (item.encrypted_content === undefined || item.encrypted_content === null) continue;
 		const encryptedContent = requireString(item.encrypted_content, `response.output[${index}].encrypted_content`);
-		if (encryptedContent.length > 0) encryptedById.set(id, encryptedContent);
+		if (encryptedContent.length === 0) continue;
+		const id = requireNonEmptyString(item.id, `response.output[${index}].id`);
+		encryptedById.set(id, encryptedContent);
 	}
 
 	for (const [outputIndex, value] of progress.replayOutputItems) {

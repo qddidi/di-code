@@ -295,6 +295,77 @@ describe("streamOpenAIResponses", () => {
 		});
 	});
 
+	it.each([
+		["a missing id and no encryption", {}],
+		["a null id and no encryption", { id: null }],
+		["a null id and empty encryption", { id: null, encrypted_content: "" }],
+	])("ignores a terminal reasoning item with %s", async (_label, terminalFields) => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_done", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_done", summary: [], status: "completed" },
+			},
+			{
+				type: "response.completed",
+				response: {
+					output: [{ type: "reasoning", summary: [], status: "completed", ...terminalFields }],
+					usage: { input_tokens: 2, output_tokens: 1 },
+				},
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		const result = await stream.result();
+		expect(result).toMatchObject({ stopReason: "stop" });
+		expect(result).not.toHaveProperty("providerReplay");
+	});
+
+	it("rejects terminal reasoning encryption without a usable id", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_done", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_done", summary: [], status: "completed" },
+			},
+			{
+				type: "response.completed",
+				response: {
+					output: [
+						{
+							type: "reasoning",
+							id: null,
+							summary: [],
+							encrypted_content: "encrypted-late",
+							status: "completed",
+						},
+					],
+					usage: { input_tokens: 2, output_tokens: 1 },
+				},
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			stopReason: "error",
+			errorMessage: "Invalid OpenAI Responses stream: response.output[0].id must be a string",
+		});
+	});
+
 	it("maps reasoning summary deltas into a thinking block", async () => {
 		const response = sse(
 			{
