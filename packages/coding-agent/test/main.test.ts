@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionManager } from "../src/core/session/session-manager.ts";
 import { runMain } from "../src/main.ts";
 
 function createIo() {
@@ -115,5 +116,30 @@ describe("runMain", () => {
 		expect(createRuntime).not.toHaveBeenCalled();
 		expect(io.stdout.mock.calls[0]?.[0]).toContain("Usage: di-code");
 		expect(io.stderr).not.toHaveBeenCalled();
+	});
+
+	it("creates and resumes the default persistent session", async () => {
+		const io = createIo();
+		const firstExit = await runMain(["--print", "hello"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "first" }] }]),
+		});
+
+		expect(firstExit).toBe(0);
+		const sessionFile = join(root, ".di-code", "sessions", "default.jsonl");
+		expect(await import("node:fs/promises").then(({ access }) => access(sessionFile))).toBeUndefined();
+
+		const secondExit = await runMain(["--print", "again"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "second" }] }]),
+		});
+		const restored = await SessionManager.open(sessionFile);
+
+		expect(secondExit).toBe(0);
+		expect(restored.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
 	});
 });

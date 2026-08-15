@@ -1,6 +1,9 @@
 export type OutputMode = "print" | "json" | "interactive";
 
-export type CliCommand = { kind: "help" } | { kind: "version" } | { kind: "run"; mode: OutputMode; prompt: string };
+export type CliCommand =
+	| { kind: "help" }
+	| { kind: "version" }
+	| { kind: "run"; mode: OutputMode; prompt: string; sessionPath?: string };
 
 export class CliUsageError extends Error {
 	constructor(message: string) {
@@ -21,6 +24,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 
 	let mode: OutputMode = "print";
 	let printAlias = false;
+	let sessionPath: string | undefined;
 	const promptParts: string[] = [];
 
 	for (let index = 0; index < args.length; index++) {
@@ -45,6 +49,18 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			index++;
 			continue;
 		}
+		if (argument === "--session") {
+			const value = args[index + 1];
+			if (value === undefined) {
+				throw new CliUsageError("Option --session requires a value.");
+			}
+			if (value.trim().length === 0) {
+				throw new CliUsageError("Option --session requires a non-empty value.");
+			}
+			sessionPath = value;
+			index++;
+			continue;
+		}
 		if (argument?.startsWith("-")) {
 			throw new CliUsageError(`Unknown option "${argument}".`);
 		}
@@ -60,7 +76,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		throw new CliUsageError("A prompt is required.");
 	}
 
-	return { kind: "run", mode, prompt: promptParts.join(" ") };
+	return { kind: "run", mode, prompt: promptParts.join(" "), ...(sessionPath ? { sessionPath } : {}) };
 }
 
 const HELP_TEXT = `Usage: di-code [options] <prompt>
@@ -69,6 +85,7 @@ Options:
   -p, --print        Print only the final assistant text (default)
   --mode <mode>      Output mode: print, json, or interactive
   --interactive      Start interactive terminal mode
+  --session <path>   Create or resume a JSONL session (relative to the work root)
   -h, --help         Show help
   -v, --version      Show version
 `;

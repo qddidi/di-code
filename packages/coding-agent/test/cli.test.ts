@@ -21,11 +21,25 @@ describe("parseCliArgs", () => {
 		expect(parseCliArgs(["--mode", "json", "hello"])).toEqual({ kind: "run", mode: "json", prompt: "hello" });
 	});
 
+	it("parses an optional session path", () => {
+		expect(parseCliArgs(["--session", "work.jsonl", "hello"])).toEqual({
+			kind: "run",
+			mode: "print",
+			prompt: "hello",
+			sessionPath: "work.jsonl",
+		});
+	});
+
 	it("rejects missing and unsupported mode values", () => {
 		expect(() => parseCliArgs(["--mode"])).toThrow("Option --mode requires a value.");
 		expect(() => parseCliArgs(["--mode", "xml", "hello"])).toThrow(
 			'Unsupported mode "xml". Expected print, json, or interactive.',
 		);
+	});
+
+	it("rejects a missing session path", () => {
+		expect(() => parseCliArgs(["--session"])).toThrow("Option --session requires a value.");
+		expect(() => parseCliArgs(["--session", "   ", "hello"])).toThrow("Option --session requires a non-empty value.");
 	});
 
 	it("rejects conflicting or unknown options", () => {
