@@ -51,7 +51,7 @@ describe("resolveStartupRuntime", () => {
 				OPENAI_API_KEY: "test-key",
 				OPENAI_MODEL: "not-a-model",
 			}),
-		).toThrow('Unknown OpenAI model "not-a-model". Available models: gpt-4o, o3-mini.');
+		).toThrow('Unknown OpenAI model "not-a-model". Available models: gpt-4o, gpt-5.6-terra, o3-mini.');
 	});
 
 	it("rejects an unsupported provider before inspecting provider credentials", () => {

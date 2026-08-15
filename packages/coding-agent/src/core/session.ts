@@ -286,7 +286,10 @@ export class AgentSession {
 		const preparation = prepareCompaction(context.messages, this.keepRecentTokens);
 		const firstKeptEntryId = preparation ? context.sourceEntryIds[preparation.firstKeptMessageIndex] : undefined;
 		if (!preparation || typeof firstKeptEntryId !== "string") {
-			const errorMessage = "Context limit reached but no valid compaction cut point was found.";
+			const errorMessage =
+				reason === "manual"
+					? "No valid compaction cut point was found for the current session."
+					: "Context limit reached but no valid compaction cut point was found.";
 			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage });
 			throw new Error(errorMessage);
 		}

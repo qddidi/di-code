@@ -104,6 +104,7 @@ Options:
   -p, --print        Print only the final assistant text (default)
   --mode <mode>      Output mode: print, json, or interactive
   --interactive      Start interactive terminal mode
+  --session <path>   Create or resume a JSONL session (relative to the work root)
   -h, --help         Show help
   -v, --version      Show version
 ```
@@ -126,6 +127,12 @@ npm run dev -- --mode json "检查测试状态"
 npm run dev -- --interactive
 ```
 
+默认会话保存在 `.di-code/sessions/default.jsonl`。使用 `--session` 可以创建或恢复指定会话：
+
+```powershell
+npm run dev -- --session .di-code/sessions/review.jsonl --interactive
+```
+
 构建后可执行程序为 `di-code`：
 
 ```powershell
@@ -145,6 +152,8 @@ node --env-file-if-exists=.env packages/coding-agent/dist/entry.js --help
 | `/session` | 打开会话选择器。 |
 | `/theme` | 切换深色或浅色终端主题。 |
 | `/settings` | 配置上下文压缩。 |
+| `/compact` | 立即压缩当前持久化会话的旧上下文。 |
+| `/usage` | 查看请求数、token、费用和当前上下文占用。 |
 | `/retry` | 重试最后一次失败或取消的提示。 |
 
 `Esc` 会取消当前模型请求或工具执行；提示在执行期间提交会进入队列。
@@ -173,7 +182,7 @@ node --env-file-if-exists=.env packages/coding-agent/dist/entry.js --help
 
 扩展默认导出一个 factory 函数，可注册命令、只读工具和事件监听器。扩展加载器会在未授予项目可信状态时跳过项目扩展。
 
-目前会话持久化和扩展运行时已实现并有测试覆盖，但默认 CLI 启动链尚未自动创建/恢复磁盘会话或加载项目扩展。
+默认 CLI 会创建或恢复磁盘会话；上下文压缩依赖持久化会话，并会保留完整 JSONL 历史。扩展运行时已实现并有测试覆盖，但默认 CLI 启动链尚未自动加载项目扩展。
 
 ## 开发
 
