@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Message } from "@di-code/ai";
@@ -51,6 +51,21 @@ describe("SessionManager", () => {
 		expect(manager.entries).toEqual([]);
 		expect(manager.messages).toEqual([]);
 		expect(manager.leafId).toBe("session-1");
+	});
+
+	it("can defer creating an empty session file until the first append", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			deferCreate: true,
+			now: () => Date.parse("2026-08-12T13:00:00.000Z"),
+			createId: idSequence("session-1", "entry-1"),
+		});
+
+		await expect(access(sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+		await manager.appendMessage(userMessage("first", 1));
+		await expect(access(sessionFile)).resolves.toBeUndefined();
+		expect((await SessionManager.open(sessionFile)).messages).toEqual([userMessage("first", 1)]);
 	});
 
 	it("appends messages as a linear parent chain", async () => {

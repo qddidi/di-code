@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
-import { runMain } from "../src/main.ts";
+import { formatSessionLabel, runMain } from "../src/main.ts";
 
 function createIo() {
 	return { stdout: vi.fn(), stderr: vi.fn() };
@@ -100,6 +100,22 @@ describe("runMain", () => {
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
 	});
 
+	it("labels saved sessions with the first user question and its timestamp", async () => {
+		const sessionFile = join(root, "label.jsonl");
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			now: () => Date.parse("2026-08-12T13:00:00.000Z"),
+		});
+		await manager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "  Explain the session flow\nwith a second line  " }],
+			timestamp: Date.parse("2026-08-12T13:05:00.000Z"),
+		});
+
+		expect(formatSessionLabel(manager)).toBe("Explain the session flow with a second line (2026-08-12 13:05)");
+	});
+
 	it("preserves help as a no-runtime command", async () => {
 		const io = createIo();
 		const createRuntime = vi.fn(() => {
@@ -118,7 +134,7 @@ describe("runMain", () => {
 		expect(io.stderr).not.toHaveBeenCalled();
 	});
 
-	it("creates and resumes the default persistent session", async () => {
+	it("creates a new persistent session on each default launch", async () => {
 		const io = createIo();
 		const firstExit = await runMain(["--print", "hello"], {
 			...io,
@@ -128,18 +144,68 @@ describe("runMain", () => {
 		});
 
 		expect(firstExit).toBe(0);
-		const sessionFile = join(root, ".di-code", "sessions", "default.jsonl");
-		expect(await import("node:fs/promises").then(({ access }) => access(sessionFile))).toBeUndefined();
-
 		const secondExit = await runMain(["--print", "again"], {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "second" }] }]),
 		});
-		const restored = await SessionManager.open(sessionFile);
 
 		expect(secondExit).toBe(0);
-		expect(restored.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+		const sessionDirectory = join(root, ".di-code", "sessions");
+		const sessionFiles = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".jsonl"));
+		expect(sessionFiles).toHaveLength(2);
+		const sessions = await Promise.all(sessionFiles.map((name) => SessionManager.open(join(sessionDirectory, name))));
+		expect(sessions.map((session) => session.messages.map((message) => message.role))).toEqual([
+			["user", "assistant"],
+			["user", "assistant"],
+		]);
+	});
+
+	it("continues the most recently modified session only when requested", async () => {
+		const io = createIo();
+		const olderPath = join(root, ".di-code", "sessions", "older.jsonl");
+		const newerPath = join(root, ".di-code", "sessions", "newer.jsonl");
+		await runMain(["--session", olderPath, "--print", "older"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "older answer" }] }]),
+		});
+		await runMain(["--session", newerPath, "--print", "newer"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "newer answer" }] }]),
+		});
+		await utimes(olderPath, new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"));
+		await utimes(newerPath, new Date("2026-01-02T00:00:00.000Z"), new Date("2026-01-02T00:00:00.000Z"));
+
+		const exitCode = await runMain(["--continue", "--print", "continued"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "continued answer" }] }]),
+		});
+
+		expect(exitCode).toBe(0);
+		const older = await SessionManager.open(olderPath);
+		const newer = await SessionManager.open(newerPath);
+		expect(older.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(newer.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+	});
+
+	it("creates a new session when continue has no history to resume", async () => {
+		const io = createIo();
+		const exitCode = await runMain(["--continue", "--print", "hello"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "answer" }] }]),
+		});
+
+		expect(exitCode).toBe(0);
+		const sessionFiles = (await readdir(join(root, ".di-code", "sessions"))).filter((name) => name.endsWith(".jsonl"));
+		expect(sessionFiles).toHaveLength(1);
 	});
 });

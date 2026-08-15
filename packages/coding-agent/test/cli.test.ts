@@ -30,6 +30,21 @@ describe("parseCliArgs", () => {
 		});
 	});
 
+	it("parses continue as an explicit request to resume the most recent session", () => {
+		expect(parseCliArgs(["--continue", "hello"])).toEqual({
+			kind: "run",
+			mode: "print",
+			prompt: "hello",
+			continueSession: true,
+		});
+		expect(parseCliArgs(["-c", "hello"])).toEqual({
+			kind: "run",
+			mode: "print",
+			prompt: "hello",
+			continueSession: true,
+		});
+	});
+
 	it("rejects missing and unsupported mode values", () => {
 		expect(() => parseCliArgs(["--mode"])).toThrow("Option --mode requires a value.");
 		expect(() => parseCliArgs(["--mode", "xml", "hello"])).toThrow(
@@ -45,6 +60,9 @@ describe("parseCliArgs", () => {
 	it("rejects conflicting or unknown options", () => {
 		expect(() => parseCliArgs(["--print", "--mode", "json", "hello"])).toThrow(
 			"Cannot combine --print with --mode json.",
+		);
+		expect(() => parseCliArgs(["--continue", "--session", "work.jsonl", "hello"])).toThrow(
+			"Cannot combine --continue with --session.",
 		);
 		expect(() => parseCliArgs(["--wat", "hello"])).toThrow('Unknown option "--wat".');
 	});
@@ -67,6 +85,7 @@ describe("runCli", () => {
 		expect(await runCli(["--version"], dependencies)).toBe(0);
 		expect(run).not.toHaveBeenCalled();
 		expect(stdout.mock.calls[0]?.[0]).toContain("Usage: di-code");
+		expect(stdout.mock.calls[0]?.[0]).toContain("--continue, -c");
 		expect(stdout.mock.calls[1]?.[0]).toBe("0.0.0\n");
 		expect(stderr).not.toHaveBeenCalled();
 	});

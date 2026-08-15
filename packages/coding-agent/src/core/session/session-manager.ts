@@ -23,6 +23,7 @@ export interface SessionManagerCreateOptions {
 	readonly now?: () => number;
 	readonly createId?: () => string;
 	readonly appendOptions?: SessionAppendOptions;
+	readonly deferCreate?: boolean;
 }
 
 export interface SessionManagerOpenOptions {
@@ -53,9 +54,10 @@ export class SessionManager {
 	private readonly appendOptions: SessionAppendOptions;
 	private readonly sessionEntries: SessionEntry[];
 	private readonly sessionDiagnostics: SessionDiagnostic[];
+	private fileCreated: boolean;
 	private appendQueue: Promise<void> = Promise.resolve();
 
-	private constructor(filePath: string, loaded: LoadedSession, options: SessionManagerOpenOptions) {
+	private constructor(filePath: string, loaded: LoadedSession, options: SessionManagerOpenOptions, fileCreated = true) {
 		this.filePath = filePath;
 		this.sessionHeader = structuredClone(loaded.header);
 		this.sessionEntries = structuredClone([...loaded.entries]);
@@ -63,6 +65,7 @@ export class SessionManager {
 		this.now = options.now ?? Date.now;
 		this.createId = options.createId ?? randomUUID;
 		this.appendOptions = options.appendOptions ?? {};
+		this.fileCreated = fileCreated;
 	}
 
 	static async create(options: SessionManagerCreateOptions): Promise<SessionManager> {
@@ -80,11 +83,12 @@ export class SessionManager {
 			timestamp: createIsoTimestamp(now),
 			cwd,
 		};
-		await createSessionFile(filePath, header);
+		if (!options.deferCreate) await createSessionFile(filePath, header);
 		return new SessionManager(
 			filePath,
 			{ header, entries: [], messages: [], diagnostics: [] },
 			{ now, createId, appendOptions: options.appendOptions },
+			!options.deferCreate,
 		);
 	}
 
@@ -125,9 +129,16 @@ export class SessionManager {
 		return this.sessionEntries.at(-1)?.id ?? this.sessionHeader.id;
 	}
 
+	private async ensureFileCreated(): Promise<void> {
+		if (this.fileCreated) return;
+		await createSessionFile(this.filePath, this.sessionHeader);
+		this.fileCreated = true;
+	}
+
 	appendMessage(message: Message): Promise<SessionMessageEntry> {
 		const messageSnapshot = structuredClone(message);
 		const operation = this.appendQueue.then(async () => {
+			await this.ensureFileCreated();
 			const id = this.createId();
 			assertRecordId(id);
 			const expectedParentId = this.leafId;
@@ -158,6 +169,7 @@ export class SessionManager {
 	}): Promise<SessionSummaryEntry> {
 		const inputSnapshot = structuredClone(input);
 		const operation = this.appendQueue.then(async () => {
+			await this.ensureFileCreated();
 			const id = this.createId();
 			assertRecordId(id);
 			const expectedParentId = this.leafId;

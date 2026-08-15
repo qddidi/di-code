@@ -77,6 +77,42 @@ function dependencies(response: Response): OpenAIResponsesDependencies & { fetch
 const options: OpenAIResponsesStreamOptions = { apiKey: "test-key", temperature: 0, maxTokens: 64 };
 
 describe("streamOpenAIResponses", () => {
+	it("ignores Codex response metadata events", async () => {
+		const response = sse(
+			{
+				type: "codex.rate_limits",
+				rate_limits: {
+					limit_id: "codex",
+					primary: null,
+					secondary: null,
+					credits: null,
+				},
+			},
+			{ type: "codex.response.metadata", metadata: { request_id: "req_test" } },
+			{ type: "response.completed", response: { status: "completed" } },
+		);
+		const stream = streamOpenAIResponses(model, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({ content: [], stopReason: "stop" });
+	});
+
+	it("still rejects unsupported non-Codex event types", async () => {
+		const response = sse(
+			{ type: "provider.unrecognized_event" },
+			{ type: "response.completed", response: { status: "completed" } },
+		);
+		const stream = streamOpenAIResponses(model, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			stopReason: "error",
+			errorMessage: 'Invalid OpenAI Responses stream: unsupported event type "provider.unrecognized_event"',
+		});
+	});
+
 	it("preserves encrypted reasoning and paired function calls for stateless replay", async () => {
 		const response = sse(
 			{

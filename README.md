@@ -124,6 +124,7 @@ Options:
   -p, --print        Print only the final assistant text (default)
   --mode <mode>      Output mode: print, json, or interactive
   --interactive      Start interactive terminal mode
+  --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
   -h, --help         Show help
   -v, --version      Show version
@@ -147,7 +148,11 @@ npm run dev -- --mode json "检查测试状态"
 npm run dev -- --interactive
 ```
 
-默认会话保存在 `.di-code/sessions/default.jsonl`。使用 `--session` 可以创建或恢复指定会话：
+默认启动会在 `.di-code/sessions/` 中创建独立的 JSONL 会话。使用 `--continue`（或 `-c`）恢复最近修改的会话；没有历史会话时会新建。使用 `--session` 可以创建或恢复指定路径的会话：
+
+```powershell
+npm run dev -- --continue --interactive
+```
 
 ```powershell
 npm run dev -- --session .di-code/sessions/review.jsonl --interactive

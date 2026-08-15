@@ -3,7 +3,7 @@ export type OutputMode = "print" | "json" | "interactive";
 export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
-	| { kind: "run"; mode: OutputMode; prompt: string; sessionPath?: string };
+	| { kind: "run"; mode: OutputMode; prompt: string; sessionPath?: string; continueSession?: true };
 
 export class CliUsageError extends Error {
 	constructor(message: string) {
@@ -25,6 +25,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	let mode: OutputMode = "print";
 	let printAlias = false;
 	let sessionPath: string | undefined;
+	let continueSession = false;
 	const promptParts: string[] = [];
 
 	for (let index = 0; index < args.length; index++) {
@@ -35,6 +36,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		}
 		if (argument === "--interactive") {
 			mode = "interactive";
+			continue;
+		}
+		if (argument === "-c" || argument === "--continue") {
+			continueSession = true;
 			continue;
 		}
 		if (argument === "--mode") {
@@ -72,11 +77,20 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	if (printAlias && mode !== "print") {
 		throw new CliUsageError(`Cannot combine --print with --mode ${mode}.`);
 	}
+	if (continueSession && sessionPath !== undefined) {
+		throw new CliUsageError("Cannot combine --continue with --session.");
+	}
 	if (promptParts.length === 0 && mode !== "interactive") {
 		throw new CliUsageError("A prompt is required.");
 	}
 
-	return { kind: "run", mode, prompt: promptParts.join(" "), ...(sessionPath ? { sessionPath } : {}) };
+	return {
+		kind: "run",
+		mode,
+		prompt: promptParts.join(" "),
+		...(sessionPath ? { sessionPath } : {}),
+		...(continueSession ? { continueSession: true as const } : {}),
+	};
 }
 
 const HELP_TEXT = `Usage: di-code [options] <prompt>
@@ -85,6 +99,7 @@ Options:
   -p, --print        Print only the final assistant text (default)
   --mode <mode>      Output mode: print, json, or interactive
   --interactive      Start interactive terminal mode
+  --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
   -h, --help         Show help
   -v, --version      Show version

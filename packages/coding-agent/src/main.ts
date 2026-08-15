@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { access, readdir } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
 import { ProcessTerminal, TUI } from "@di-code/tui";
-import { type CliDependencies, runCli } from "./cli.ts";
+import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
 import { SessionManager } from "./core/session/session-manager.ts";
 import { AgentSession } from "./core/session.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
@@ -22,16 +22,97 @@ export interface MainOptions extends PrintIo {
 	readonly now?: () => number;
 }
 
-const DEFAULT_SESSION_PATH = join(".di-code", "sessions", "default.jsonl");
+const DEFAULT_SESSION_DIRECTORY = join(".di-code", "sessions");
+const MAX_SESSION_QUESTION_LENGTH = 72;
 
-async function openOrCreateSession(filePath: string, cwd: string): Promise<SessionManager> {
+async function openOrCreateSession(filePath: string, cwd: string, now: () => number): Promise<SessionManager> {
 	try {
 		await access(filePath);
-		return await SessionManager.open(filePath);
+		return await SessionManager.open(filePath, { now });
 	} catch (cause) {
 		if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
-		return SessionManager.create({ filePath, cwd });
+		return SessionManager.create({ filePath, cwd, now, deferCreate: true });
 	}
+}
+
+function newSessionPath(sessionDirectory: string, now: () => number): string {
+	return join(sessionDirectory, `session-${now()}-${randomUUID().slice(0, 8)}.jsonl`);
+}
+
+async function mostRecentSessionPath(sessionDirectory: string): Promise<string | undefined> {
+	let names: string[];
+	try {
+		names = (await readdir(sessionDirectory, { withFileTypes: true }))
+			.filter((entry) => entry.isFile() && extname(entry.name) === ".jsonl")
+			.map((entry) => entry.name);
+	} catch (cause) {
+		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+		throw cause;
+	}
+
+	const candidates = await Promise.all(
+		names.map(async (name) => {
+			const filePath = join(sessionDirectory, name);
+			try {
+				return { filePath, modifiedAt: (await stat(filePath)).mtimeMs };
+			} catch (cause) {
+				if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+				throw cause;
+			}
+		}),
+	);
+	return candidates
+		.filter((candidate): candidate is { filePath: string; modifiedAt: number } => candidate !== undefined)
+		.sort((left, right) => right.modifiedAt - left.modifiedAt || right.filePath.localeCompare(left.filePath))[0]
+		?.filePath;
+}
+
+async function selectStartupSession(
+	command: Extract<CliCommand, { kind: "run" }>,
+	allowedRoot: string,
+	now: () => number,
+): Promise<SessionManager> {
+	const sessionDirectory = resolve(allowedRoot, DEFAULT_SESSION_DIRECTORY);
+	if (command.sessionPath !== undefined) {
+		return openOrCreateSession(resolve(allowedRoot, command.sessionPath), allowedRoot, now);
+	}
+	if (command.continueSession) {
+		const recentPath = await mostRecentSessionPath(sessionDirectory);
+		if (recentPath !== undefined) return SessionManager.open(recentPath, { now });
+	}
+	return SessionManager.create({
+		filePath: newSessionPath(sessionDirectory, now),
+		cwd: allowedRoot,
+		now,
+		deferCreate: true,
+	});
+}
+
+function formatSessionTimestamp(timestamp: number, fallback: string): string {
+	const date = new Date(timestamp);
+	const isoTimestamp = Number.isNaN(date.getTime()) ? fallback : date.toISOString();
+	return isoTimestamp.slice(0, 16).replace("T", " ");
+}
+
+export function formatSessionLabel(manager: SessionManager): string {
+	const firstUserEntry = manager.entries.find((entry) => entry.type === "message" && entry.message.role === "user");
+	const fileName = basename(manager.filePath, extname(manager.filePath));
+	if (firstUserEntry?.type !== "message" || firstUserEntry.message.role !== "user") {
+		return `${fileName} (${formatSessionTimestamp(Date.parse(manager.header.timestamp), manager.header.timestamp)})`;
+	}
+
+	const question = firstUserEntry.message.content
+		.filter((content) => content.type === "text")
+		.map((content) => content.text)
+		.join(" ")
+		.replace(/\s+/g, " ")
+		.trim();
+	const label =
+		question.length > MAX_SESSION_QUESTION_LENGTH
+			? `${question.slice(0, MAX_SESSION_QUESTION_LENGTH - 3)}...`
+			: question || fileName;
+	const timestamp = formatSessionTimestamp(firstUserEntry.message.timestamp, firstUserEntry.timestamp);
+	return `${label} (${timestamp})`;
 }
 
 async function sessionChoices(
@@ -49,18 +130,26 @@ async function sessionChoices(
 		if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
 	}
 
-	return names
-		.filter((name) => resolve(sessionDirectory, name) !== resolve(currentFile))
-		.map((name) => {
-			const filePath = join(sessionDirectory, name);
-			const id = basename(name, extname(name));
-			return {
-				id,
-				label: id,
-				description: filePath,
-				open: () => open(filePath),
-			};
-		});
+	return Promise.all(
+		names
+			.filter((name) => resolve(sessionDirectory, name) !== resolve(currentFile))
+			.map(async (name) => {
+				const filePath = join(sessionDirectory, name);
+				const id = basename(name, extname(name));
+				let label = id;
+				try {
+					label = formatSessionLabel(await SessionManager.open(filePath));
+				} catch {
+					// Keep damaged sessions selectable so opening one can report the detailed load error.
+				}
+				return {
+					id,
+					label,
+					description: filePath,
+					open: () => open(filePath),
+				};
+			}),
+	);
 }
 
 export async function runMain(args: readonly string[], options: MainOptions): Promise<number> {
@@ -70,8 +159,9 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		version: options.version,
 		run: async (command) => {
 			const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
-			const sessionFile = resolve(allowedRoot, command.sessionPath ?? DEFAULT_SESSION_PATH);
-			const manager = await openOrCreateSession(sessionFile, allowedRoot);
+			const now = options.now ?? Date.now;
+			const manager = await selectStartupSession(command, allowedRoot, now);
+			const sessionFile = manager.filePath;
 			const runtime = options.createRuntime();
 			const session = new AgentSession({
 				allowedRoot,
@@ -95,8 +185,13 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 							label: "New session",
 							description: "Start a new persistent conversation.",
 							open: async () => {
-								const filePath = join(dirname(sessionFile), `session-${Date.now()}-${randomUUID().slice(0, 8)}.jsonl`);
-								const nextManager = await SessionManager.create({ filePath, cwd: allowedRoot });
+								const filePath = newSessionPath(dirname(sessionFile), now);
+								const nextManager = await SessionManager.create({
+									filePath,
+									cwd: allowedRoot,
+									now,
+									deferCreate: true,
+								});
 								return new AgentSession({
 									allowedRoot,
 									provider: runtime.provider,
@@ -107,7 +202,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 							},
 						},
 						...(await sessionChoices(dirname(sessionFile), sessionFile, async (filePath) => {
-							const nextManager = await SessionManager.open(filePath);
+							const nextManager = await SessionManager.open(filePath, { now });
 							return new AgentSession({
 								allowedRoot,
 								provider: runtime.provider,

@@ -995,6 +995,8 @@ function handleOpenAIEvent(
 	switch (eventType) {
 		case "response.created":
 		case "response.in_progress":
+		case "codex.rate_limits":
+		case "codex.response.metadata":
 			return;
 		case "response.output_item.added":
 			handleOutputItemAdded(event, stream, progress);
