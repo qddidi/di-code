@@ -217,7 +217,7 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 
-	it("does not duplicate scrollback when an offscreen history line changes", async () => {
+	it("keeps committed scrollback immutable when an offscreen history line changes", async () => {
 		const terminal = new EmulatedTerminal(20, 4);
 		const tui = new TUI(terminal);
 		const lines = Array.from({ length: 12 }, (_, index) => `history ${index}`);
@@ -231,7 +231,73 @@ describe("TUI differential rendering", () => {
 		await flushRender();
 		await terminal.flush();
 
-		assert.deepEqual(terminal.getScrollBuffer(), probe.lines);
+		assert.deepEqual(terminal.getScrollBuffer(), lines);
+		assert.deepEqual(terminal.getViewport(), probe.lines.slice(-terminal.rows));
+		tui.stop();
+	});
+
+	it("does not replay committed history when scrollback clearing is unsupported", async () => {
+		const terminal = new EmulatedTerminal(20, 4, { ignoreClearScrollback: true });
+		const tui = new TUI(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		const probe = new Probe(lines);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		probe.lines = ["changed history", ...lines.slice(1)];
+		tui.requestRender();
+		await flushRender();
+		await terminal.flush();
+
+		const buffer = terminal.getScrollBuffer();
+		assert.equal(buffer.filter((line) => line === "history 1").length, 1);
+		assert.deepEqual(terminal.getViewport(), probe.lines.slice(-terminal.rows));
+		tui.stop();
+	});
+
+	it("rebuilds only the writable viewport when a full redraw is forced", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		tui.addChild(new Probe(lines));
+		tui.start();
+		terminal.clearOutput();
+
+		tui.requestRender(true);
+		await flushRender();
+
+		assert.equal(terminal.output.includes("\x1b[3J"), false);
+		assert.equal(terminal.output.includes("history 0"), false);
+		assert.equal(terminal.output.includes("history 8"), true);
+		assert.equal(terminal.output.includes("history 11"), true);
+		tui.stop();
+	});
+
+	it("keeps one committed header across mixed long-frame transitions", async () => {
+		const terminal = new EmulatedTerminal(24, 6, { ignoreClearScrollback: true });
+		const tui = new TUI(terminal);
+		const history = Array.from({ length: 12 }, (_, index) => `history ${index}`);
+		const tail = ["compose", "editor", "status", "footer"];
+		const probe = new Probe(["HEADER", ...history, "stream 0", ...tail]);
+		tui.addChild(probe);
+		tui.start();
+		await terminal.flush();
+
+		const frames = [
+			["HEADER", "changed history", ...history.slice(1), "stream 1", ...tail],
+			["HEADER", ...history.slice(0, 5), "stream merged", ...tail],
+			["HEADER", ...history, "stream 1", "stream 2", "stream 3", ...tail],
+		];
+		for (const frame of frames) {
+			probe.lines = frame;
+			tui.requestRender();
+			await flushRender();
+			await terminal.flush();
+
+			assert.equal(terminal.getScrollBuffer().filter((line) => line === "HEADER").length, 1);
+			assert.deepEqual(terminal.getViewport(), frame.slice(-terminal.rows));
+		}
 		tui.stop();
 	});
 

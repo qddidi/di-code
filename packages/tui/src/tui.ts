@@ -21,7 +21,6 @@ export const CURSOR_MARKER = "\x1b_pi:c\x07";
 const LINE_RESET = "\x1b[0m\x1b]8;;\x07";
 const SYNC_START = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
-const CLEAR_SCROLLBACK = "\x1b[3J";
 
 interface CursorPosition {
 	readonly row: number;
@@ -449,8 +448,10 @@ export class TUI extends Container {
 
 	private fullRender(lines: string[], clear: boolean, rows: number): void {
 		let output = SYNC_START;
-		if (clear) output += `\x1b[2J\x1b[H${CLEAR_SCROLLBACK}`;
-		output += lines.join("\r\n");
+		// After the first frame, scrollback is immutable; rebuild only the writable viewport.
+		const firstRenderedRow = clear ? Math.max(0, lines.length - rows) : 0;
+		if (clear) output += "\x1b[2J\x1b[H";
+		output += lines.slice(firstRenderedRow).join("\r\n");
 		output += SYNC_END;
 		this.terminal.write(output);
 		this.cursorRow = Math.max(0, lines.length - 1);
