@@ -5,6 +5,29 @@ import type { Model } from "./types.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutputPath = resolve(packageRoot, "src", "models.generated.ts");
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
+
+interface OpenAiModelOptions {
+	readonly reasoning: boolean;
+	readonly contextWindow: number;
+	readonly maxOutputTokens: number;
+	readonly input?: Model["input"];
+}
+
+function openAiModel(id: string, name: string, options: OpenAiModelOptions): Model {
+	return {
+		id,
+		name,
+		provider: "openai",
+		api: "openai-responses",
+		baseUrl: OPENAI_BASE_URL,
+		input: options.input ?? ["text", "image"],
+		reasoning: options.reasoning,
+		contextWindow: options.contextWindow,
+		maxOutputTokens: options.maxOutputTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+}
 
 /** 唯一可手工维护的真实模型源；生成文件由本模块写出。 */
 export const MODEL_SOURCE: readonly Model[] = [
@@ -32,42 +55,109 @@ export const MODEL_SOURCE: readonly Model[] = [
 		maxOutputTokens: 384_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
-	{
-		id: "gpt-4o",
-		name: "GPT-4o",
-		provider: "openai",
-		api: "openai-responses",
-		baseUrl: "https://api.openai.com/v1",
-		input: ["text", "image"],
+	openAiModel("gpt-4", "GPT-4", { reasoning: false, input: ["text"], contextWindow: 8_192, maxOutputTokens: 8_192 }),
+	openAiModel("gpt-4-turbo", "GPT-4 Turbo", { reasoning: false, contextWindow: 128_000, maxOutputTokens: 4_096 }),
+	openAiModel("gpt-4.1", "GPT-4.1", { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 }),
+	openAiModel("gpt-4.1-mini", "GPT-4.1 mini", { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 }),
+	openAiModel("gpt-4.1-nano", "GPT-4.1 nano", { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 }),
+	openAiModel("gpt-4o", "GPT-4o", { reasoning: false, contextWindow: 128_000, maxOutputTokens: 16_384 }),
+	openAiModel("gpt-4o-2024-05-13", "GPT-4o (2024-05-13)", {
+		reasoning: false,
+		contextWindow: 128_000,
+		maxOutputTokens: 4_096,
+	}),
+	openAiModel("gpt-4o-2024-08-06", "GPT-4o (2024-08-06)", {
 		reasoning: false,
 		contextWindow: 128_000,
 		maxOutputTokens: 16_384,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},
-	{
-		id: "o3-mini",
-		name: "o3-mini",
-		provider: "openai",
-		api: "openai-responses",
-		baseUrl: "https://api.openai.com/v1",
-		input: ["text"],
+	}),
+	openAiModel("gpt-4o-2024-11-20", "GPT-4o (2024-11-20)", {
+		reasoning: false,
+		contextWindow: 128_000,
+		maxOutputTokens: 16_384,
+	}),
+	openAiModel("gpt-4o-mini", "GPT-4o mini", { reasoning: false, contextWindow: 128_000, maxOutputTokens: 16_384 }),
+	openAiModel("gpt-5", "GPT-5", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5-chat-latest", "GPT-5 Chat Latest", {
+		reasoning: false,
+		contextWindow: 128_000,
+		maxOutputTokens: 16_384,
+	}),
+	openAiModel("gpt-5-codex", "GPT-5-Codex", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5-mini", "GPT-5 Mini", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5-nano", "GPT-5 Nano", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5-pro", "GPT-5 Pro", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.1", "GPT-5.1", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.1-chat-latest", "GPT-5.1 Chat", {
+		reasoning: true,
+		contextWindow: 128_000,
+		maxOutputTokens: 16_384,
+	}),
+	openAiModel("gpt-5.1-codex", "GPT-5.1 Codex", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.1-codex-max", "GPT-5.1 Codex Max", {
+		reasoning: true,
+		contextWindow: 400_000,
+		maxOutputTokens: 128_000,
+	}),
+	openAiModel("gpt-5.1-codex-mini", "GPT-5.1 Codex mini", {
+		reasoning: true,
+		contextWindow: 400_000,
+		maxOutputTokens: 128_000,
+	}),
+	openAiModel("gpt-5.2", "GPT-5.2", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.2-chat-latest", "GPT-5.2 Chat", {
+		reasoning: true,
+		contextWindow: 128_000,
+		maxOutputTokens: 16_384,
+	}),
+	openAiModel("gpt-5.2-codex", "GPT-5.2 Codex", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.2-pro", "GPT-5.2 Pro", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.3-chat-latest", "GPT-5.3 Chat (latest)", {
+		reasoning: false,
+		contextWindow: 128_000,
+		maxOutputTokens: 16_384,
+	}),
+	openAiModel("gpt-5.3-codex", "GPT-5.3 Codex", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark", {
+		reasoning: true,
+		contextWindow: 128_000,
+		maxOutputTokens: 32_000,
+	}),
+	openAiModel("gpt-5.4", "GPT-5.4", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.4-mini", "GPT-5.4 mini", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.4-nano", "GPT-5.4 nano", { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.4-pro", "GPT-5.4 Pro", { reasoning: true, contextWindow: 1_050_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.5", "GPT-5.5", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.5-pro", "GPT-5.5 Pro", { reasoning: true, contextWindow: 1_050_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.6-luna", "GPT-5.6 Luna", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.6-sol", "GPT-5.6 Sol", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-5.6-terra", "GPT-5.6 Terra", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
+	openAiModel("gpt-realtime-2.1", "GPT-Realtime-2.1", {
+		reasoning: true,
+		contextWindow: 128_000,
+		maxOutputTokens: 32_000,
+	}),
+	openAiModel("o1", "o1", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
+	openAiModel("o1-pro", "o1-pro", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
+	openAiModel("o3", "o3", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
+	openAiModel("o3-deep-research", "o3-deep-research", {
 		reasoning: true,
 		contextWindow: 200_000,
 		maxOutputTokens: 100_000,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},
-	{
-		id: "gpt-5.6-terra",
-		name: "gpt-5.6-terra",
-		provider: "openai",
-		api: "openai-responses",
-		baseUrl: "https://api.openai.com/v1",
+	}),
+	openAiModel("o3-mini", "o3-mini", {
+		reasoning: true,
 		input: ["text"],
+		contextWindow: 200_000,
+		maxOutputTokens: 100_000,
+	}),
+	openAiModel("o3-pro", "o3-pro", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
+	openAiModel("o4-mini", "o4-mini", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
+	openAiModel("o4-mini-deep-research", "o4-mini-deep-research", {
 		reasoning: true,
 		contextWindow: 200_000,
 		maxOutputTokens: 100_000,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},
+	}),
 ];
 
 function requireNonEmptyString(value: string | undefined, field: string, label: string): string {
