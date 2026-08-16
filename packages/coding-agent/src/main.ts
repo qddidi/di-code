@@ -17,7 +17,9 @@ export interface MainRuntime {
 
 export interface MainOptions extends PrintIo {
 	readonly version: string;
-	readonly createRuntime: () => MainRuntime;
+	readonly createRuntime: (
+		command: Extract<CliCommand, { kind: "run" }>,
+	) => MainRuntime | undefined | Promise<MainRuntime | undefined>;
 	readonly allowedRoot?: string;
 	readonly now?: () => number;
 }
@@ -160,9 +162,10 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		run: async (command) => {
 			const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 			const now = options.now ?? Date.now;
+			const runtime = await options.createRuntime(command);
+			if (runtime === undefined) return 0;
 			const manager = await selectStartupSession(command, allowedRoot, now);
 			const sessionFile = manager.filePath;
-			const runtime = options.createRuntime();
 			const session = new AgentSession({
 				allowedRoot,
 				provider: runtime.provider,

@@ -5,6 +5,30 @@ import type { Model } from "./types.ts";
 
 export const MODELS: readonly Model[] = [
 	{
+		id: "deepseek-v4-flash",
+		name: "DeepSeek V4 Flash",
+		provider: "deepseek",
+		api: "deepseek-responses",
+		baseUrl: "https://api.deepseek.com",
+		input: ["text"],
+		reasoning: true,
+		contextWindow: 1000000,
+		maxOutputTokens: 384000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "deepseek-v4-pro",
+		name: "DeepSeek V4 Pro",
+		provider: "deepseek",
+		api: "deepseek-responses",
+		baseUrl: "https://api.deepseek.com",
+		input: ["text"],
+		reasoning: true,
+		contextWindow: 1000000,
+		maxOutputTokens: 384000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
 		id: "gpt-4o",
 		name: "GPT-4o",
 		provider: "openai",

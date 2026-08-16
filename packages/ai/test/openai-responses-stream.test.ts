@@ -30,6 +30,17 @@ const model: Model = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
+const deepSeekModel: Model = {
+	...model,
+	id: "deepseek-v4-pro",
+	name: "DeepSeek V4 Pro",
+	provider: "deepseek",
+	api: "deepseek-responses",
+	reasoning: true,
+	contextWindow: 1_000_000,
+	maxOutputTokens: 384_000,
+};
+
 const context: Context = {
 	systemPrompt: "Answer briefly.",
 	messages: [{ role: "user", content: [{ type: "text", text: "Hello" }], timestamp: 1 }],
@@ -290,6 +301,142 @@ describe("streamOpenAIResponses", () => {
 		expect(secondRequest.input.at(-3)).toMatchObject({
 			id: "rs_round_trip",
 			encrypted_content: "encrypted-round-trip",
+		});
+	});
+
+	it("replays DeepSeek plain reasoning through a stateless tool turn", async () => {
+		const firstResponse = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_deepseek", status: "in_progress", summary: [], content: [] },
+			},
+			{
+				type: "response.reasoning_text.delta",
+				output_index: 0,
+				content_index: 0,
+				delta: "Inspect the workspace",
+			},
+			{
+				type: "response.reasoning_text.done",
+				output_index: 0,
+				content_index: 0,
+				text: "Inspect the workspace",
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_deepseek",
+					status: "completed",
+					summary: [],
+					content: [{ type: "reasoning_text", text: "Inspect the workspace" }],
+				},
+			},
+			{
+				type: "response.output_item.added",
+				output_index: 1,
+				item: { type: "function_call", id: "fc_deepseek", call_id: "call_deepseek", name: "bash" },
+			},
+			{
+				type: "response.function_call_arguments.delta",
+				output_index: 1,
+				delta: '{"command":"Get-Location"}',
+			},
+			{
+				type: "response.function_call_arguments.done",
+				output_index: 1,
+				arguments: '{"command":"Get-Location"}',
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 1,
+				item: {
+					type: "function_call",
+					id: "fc_deepseek",
+					call_id: "call_deepseek",
+					name: "bash",
+					arguments: '{"command":"Get-Location"}',
+					status: "completed",
+				},
+			},
+			{
+				type: "response.completed",
+				response: {
+					status: "completed",
+					output: [
+						{
+							type: "reasoning",
+							id: "rs_deepseek",
+							summary: [],
+							encrypted_content: "ignored-deepseek-encryption",
+							status: "completed",
+						},
+					],
+					usage: {
+						input_tokens: 5,
+						input_tokens_details: { cached_tokens: 1 },
+						output_tokens: 4,
+					},
+				},
+			},
+		);
+		const secondResponse = sse({
+			type: "response.completed",
+			response: { status: "completed", usage: { input_tokens: 7, output_tokens: 1 } },
+		});
+		const fetch = vi
+			.fn<typeof globalThis.fetch>()
+			.mockResolvedValueOnce(firstResponse)
+			.mockResolvedValueOnce(secondResponse);
+		const firstStream = streamOpenAIResponses(deepSeekModel, context, options, { fetch, now: () => 1234 });
+
+		await collect(firstStream);
+		const assistant = await firstStream.result();
+		expect(assistant).toMatchObject({
+			content: [
+				{ type: "thinking", thinking: "Inspect the workspace" },
+				{ type: "tool_call", id: "call_deepseek", name: "bash", arguments: { command: "Get-Location" } },
+			],
+			provider: "deepseek",
+			model: "deepseek-v4-pro",
+			stopReason: "tool_use",
+			usage: { input: 4, cacheRead: 1, output: 4, totalTokens: 9 },
+			providerReplay: { api: "deepseek-responses" },
+		});
+
+		const secondContext: Context = {
+			...context,
+			messages: [
+				...context.messages,
+				assistant,
+				{
+					role: "tool_result",
+					toolCallId: "call_deepseek",
+					toolName: "bash",
+					content: [{ type: "text", text: "D:\\pi\\di-code" }],
+					isError: false,
+					timestamp: 1235,
+				},
+			],
+		};
+		const secondStream = streamOpenAIResponses(deepSeekModel, secondContext, options, { fetch, now: () => 1236 });
+		await collect(secondStream);
+
+		const secondRequest = JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)) as {
+			input: Array<Record<string, unknown>>;
+		};
+		expect(secondRequest.input.slice(-3).map((item) => item.type)).toEqual([
+			"reasoning",
+			"function_call",
+			"function_call_output",
+		]);
+		expect(secondRequest.input.at(-3)).toEqual({
+			type: "reasoning",
+			id: "rs_deepseek",
+			status: "completed",
+			content: [{ type: "reasoning_text", text: "Inspect the workspace" }],
 		});
 	});
 
@@ -742,6 +889,34 @@ describe("streamOpenAIResponses", () => {
 			content: [{ type: "thinking", thinking: "checked" }],
 			stopReason: "error",
 			errorMessage: 'Invalid OpenAI Responses stream: item.summary[0].type must be "summary_text"',
+		});
+	});
+
+	it("requires a summary on completed OpenAI reasoning items", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_missing_summary", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_missing_summary",
+					encrypted_content: "encrypted-missing-summary",
+					status: "completed",
+				},
+			},
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			stopReason: "error",
+			errorMessage: "Invalid OpenAI Responses stream: item.summary must be an array",
 		});
 	});
 

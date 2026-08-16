@@ -134,6 +134,22 @@ describe("runMain", () => {
 		expect(io.stderr).not.toHaveBeenCalled();
 	});
 
+	it("does not create a session when interactive provider setup is cancelled", async () => {
+		const io = createIo();
+		const createRuntime = vi.fn(async () => undefined);
+
+		const exitCode = await runMain(["--interactive"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime,
+		});
+
+		expect(exitCode).toBe(0);
+		expect(createRuntime).toHaveBeenCalledWith({ kind: "run", mode: "interactive", prompt: "" });
+		await expect(readdir(join(root, ".di-code", "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	it("creates a new persistent session on each default launch", async () => {
 		const io = createIo();
 		const firstExit = await runMain(["--print", "hello"], {

@@ -8,6 +8,12 @@ import { checkGeneratedModelCatalog, MODEL_SOURCE, renderModelCatalog } from "..
 const generatedCatalogPath = fileURLToPath(new URL("../src/models.generated.ts", import.meta.url));
 const temporaryDirectories: string[] = [];
 
+function openAiSourceModel() {
+	const model = MODEL_SOURCE.find((entry) => entry.provider === "openai" && entry.id === "gpt-4o");
+	if (model === undefined) throw new Error("Expected the OpenAI source model");
+	return model;
+}
+
 afterEach(async () => {
 	await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
@@ -21,9 +27,26 @@ describe("model catalog", () => {
 		expect(reasoningModel).toMatchObject({ reasoning: true, input: ["text"] });
 	});
 
+	it("advertises DeepSeek Responses models as text-only reasoning models", () => {
+		const deepSeekModels = MODEL_SOURCE.filter((model) => model.provider === "deepseek");
+
+		expect(deepSeekModels.map((model) => model.id)).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+		expect(deepSeekModels).toHaveLength(2);
+		for (const model of deepSeekModels) {
+			expect(model).toMatchObject({
+				api: "deepseek-responses",
+				baseUrl: "https://api.deepseek.com",
+				input: ["text"],
+				reasoning: true,
+				contextWindow: 1_000_000,
+				maxOutputTokens: 384_000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			});
+		}
+	});
+
 	it("sorts entries by provider then model id", () => {
-		const [openAiModel] = MODEL_SOURCE;
-		if (openAiModel === undefined) throw new Error("Expected the OpenAI source model");
+		const openAiModel = openAiSourceModel();
 
 		const output = renderModelCatalog([
 			{ ...openAiModel, provider: "z-provider", id: "a-model", name: "Z provider model" },
@@ -39,8 +62,7 @@ describe("model catalog", () => {
 	});
 
 	it("rejects a model endpoint outside http or https", () => {
-		const [openAiModel] = MODEL_SOURCE;
-		if (openAiModel === undefined) throw new Error("Expected the OpenAI source model");
+		const openAiModel = openAiSourceModel();
 
 		expect(() => renderModelCatalog([{ ...openAiModel, baseUrl: "file:///tmp/model" }])).toThrow(
 			"baseUrl must use http or https",
@@ -48,8 +70,7 @@ describe("model catalog", () => {
 	});
 
 	it("rejects credentials embedded in a model endpoint", () => {
-		const [openAiModel] = MODEL_SOURCE;
-		if (openAiModel === undefined) throw new Error("Expected the OpenAI source model");
+		const openAiModel = openAiSourceModel();
 
 		expect(() => renderModelCatalog([{ ...openAiModel, baseUrl: "https://user:secret@example.com/v1" }])).toThrow(
 			"baseUrl must not contain credentials, query, or hash",
@@ -57,8 +78,7 @@ describe("model catalog", () => {
 	});
 
 	it("rejects duplicate provider and model ids", () => {
-		const [openAiModel] = MODEL_SOURCE;
-		if (openAiModel === undefined) throw new Error("Expected the OpenAI source model");
+		const openAiModel = openAiSourceModel();
 
 		expect(() => renderModelCatalog([openAiModel, { ...openAiModel }])).toThrow("model(openai/gpt-4o) is duplicated");
 	});

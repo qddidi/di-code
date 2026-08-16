@@ -37,6 +37,16 @@ export class Input implements Component, Focusable {
 	private cursor = 0;
 	private pasteBuffer = "";
 	private isPasting = false;
+	private readonly mask?: string;
+	private readonly cancelOnEndOfTransmission: boolean;
+
+	constructor(options: { readonly mask?: string; readonly cancelOnEndOfTransmission?: boolean } = {}) {
+		if (options.mask !== undefined && (options.mask.length !== 1 || visibleWidth(options.mask) !== 1)) {
+			throw new Error("Input mask must be one visible column");
+		}
+		this.mask = options.mask;
+		this.cancelOnEndOfTransmission = options.cancelOnEndOfTransmission ?? false;
+	}
 
 	getValue(): string {
 		return this.value;
@@ -54,12 +64,17 @@ export class Input implements Component, Focusable {
 
 	handleInput(data: string): void {
 		if (this.consumePaste(data)) return;
+		if (data === "\x04" && this.cancelOnEndOfTransmission) {
+			this.onEscape?.();
+			return;
+		}
 		switch (data) {
 			case "\r":
 			case "\n":
 				this.onSubmit?.(this.value);
 				return;
 			case "\x1b":
+			case "\x03":
 				this.onEscape?.();
 				return;
 			case "\x1b[D":
@@ -91,12 +106,18 @@ export class Input implements Component, Focusable {
 
 	render(width: number): string[] {
 		if (width <= 0) return [];
-		const cursorColumn = visibleWidth(this.value.slice(0, this.cursor));
+		const beforeValue = this.value.slice(0, this.cursor);
+		const afterValue = this.value.slice(this.cursor);
+		const display = (value: string): string =>
+			this.mask === undefined ? value : [...segmenter.segment(value)].map(() => this.mask).join("");
+		const before = display(beforeValue);
+		const after = display(afterValue);
+		const cursorColumn = visibleWidth(before);
 		const startColumn = Math.max(0, cursorColumn - width + 1);
-		const beforeCursor = sliceByColumn(this.value, startColumn, cursorColumn - startColumn);
+		const beforeCursor = sliceByColumn(before, startColumn, cursorColumn - startColumn);
 		const usedBefore = visibleWidth(beforeCursor);
 		const remaining = Math.max(0, width - usedBefore);
-		const afterCursor = sliceByColumn(this.value, cursorColumn, remaining);
+		const afterCursor = sliceByColumn(after, 0, remaining);
 		let line = `${beforeCursor}${this.focused ? CURSOR_MARKER : ""}${afterCursor}`;
 		const lineWidth = visibleWidth(line);
 		if (lineWidth < width) line += " ".repeat(width - lineWidth);

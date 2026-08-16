@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createFauxProvider, createOpenAIProvider, type FauxResponse, type Model, type Provider } from "@di-code/ai";
+import {
+	createDeepSeekProvider,
+	createFauxProvider,
+	createOpenAIProvider,
+	type FauxResponse,
+	type Model,
+	type Provider,
+} from "@di-code/ai";
 
 export interface StartupRuntime {
 	readonly provider: Provider;
@@ -173,38 +180,60 @@ function createFauxRuntime(): StartupRuntime {
 	return { provider: faux.provider, model: faux.model };
 }
 
-function createConfiguredRuntime(env: Environment, configuration: StartupProviderConfiguration): StartupRuntime {
-	if (configuration.api !== "openai-responses") {
-		throw new Error(
-			`Unsupported API "${configuration.api ?? "missing"}" for provider "${configuration.id}". Expected openai-responses.`,
-		);
-	}
-	if (configuration.id !== "openai" && !configuration.models) {
-		throw new Error(`${SETTINGS_PATH}: providers.${configuration.id}.models is required for a custom provider`);
-	}
-	const modelId = env.DI_CODE_MODEL?.trim() || configuration.models?.[0]?.id;
+function selectProviderModel(provider: Provider, providerId: string, env: Environment): Model {
+	const modelId = env.DI_CODE_MODEL?.trim() || provider.models[0]?.id;
 	if (!modelId) throw new Error("DI_CODE_MODEL is required when the selected provider has no models");
-	const providerEnvironment =
-		configuration.id === "openai"
-			? env
-			: Object.fromEntries(
-					Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
-				);
-	const provider = createOpenAIProvider({
-		env: providerEnvironment,
-		models: configuration.models,
-		apiKey: resolveConfigValue(configuration.apiKey, env),
-		baseUrl: configuration.models ? undefined : configuration.baseUrl,
-		providerId: configuration.id,
-		name: configuration.name,
-	});
 	const model = provider.models.find((candidate) => candidate.id === modelId);
 	if (!model) {
 		const availableModels = provider.models.map((candidate) => candidate.id).join(", ");
+		throw new Error(`Unknown model "${modelId}" for provider "${providerId}". Available models: ${availableModels}.`);
+	}
+	return model;
+}
+
+function createBuiltInRuntime(env: Environment, providerId: string): StartupRuntime | undefined {
+	if (providerId === "openai") {
+		const provider = createOpenAIProvider({ env });
+		return { provider, model: selectProviderModel(provider, providerId, env) };
+	}
+	if (providerId === "deepseek") {
+		const provider = createDeepSeekProvider({ env });
+		return { provider, model: selectProviderModel(provider, providerId, env) };
+	}
+	return undefined;
+}
+
+function createConfiguredRuntime(env: Environment, configuration: StartupProviderConfiguration): StartupRuntime {
+	if (configuration.api !== "openai-responses" && configuration.api !== "deepseek-responses") {
 		throw new Error(
-			`Unknown model "${modelId}" for provider "${configuration.id}". Available models: ${availableModels}.`,
+			`Unsupported API "${configuration.api ?? "missing"}" for provider "${configuration.id}". Expected openai-responses or deepseek-responses.`,
 		);
 	}
+	if (configuration.id !== "openai" && configuration.id !== "deepseek" && !configuration.models) {
+		throw new Error(`${SETTINGS_PATH}: providers.${configuration.id}.models is required for a custom provider`);
+	}
+	const provider =
+		configuration.id === "deepseek"
+			? createDeepSeekProvider({
+					env,
+					models: configuration.models,
+					apiKey: resolveConfigValue(configuration.apiKey, env),
+					baseUrl: configuration.models ? undefined : configuration.baseUrl,
+				})
+			: createOpenAIProvider({
+					env:
+						configuration.id === "openai"
+							? env
+							: Object.fromEntries(
+									Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
+								),
+					models: configuration.models,
+					apiKey: resolveConfigValue(configuration.apiKey, env),
+					baseUrl: configuration.models ? undefined : configuration.baseUrl,
+					providerId: configuration.id,
+					name: configuration.name,
+				});
+	const model = selectProviderModel(provider, configuration.id, env);
 	return { provider, model };
 }
 
@@ -215,15 +244,18 @@ export function resolveStartupRuntime(
 	const selectedProviderId = env.DI_CODE_PROVIDER?.trim() || (providers.length === 1 ? providers[0]?.id : undefined);
 	if (selectedProviderId === "faux") return createFauxRuntime();
 	if (!selectedProviderId) {
+		if (providers.length === 0) {
+			throw new Error("Provider is not configured. Set DI_CODE_PROVIDER or start interactive mode in a TTY.");
+		}
 		throw new Error("DI_CODE_PROVIDER is required when more than one provider is configured.");
 	}
 	const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
-	if (!selectedProvider) {
-		throw new Error(
-			`Unknown configured provider "${selectedProviderId}". Available providers: ${providers.map((provider) => provider.id).join(", ")}.`,
-		);
-	}
-	return createConfiguredRuntime(env, selectedProvider);
+	if (selectedProvider) return createConfiguredRuntime(env, selectedProvider);
+	const builtInRuntime = createBuiltInRuntime(env, selectedProviderId);
+	if (builtInRuntime) return builtInRuntime;
+	throw new Error(
+		`Unknown configured provider "${selectedProviderId}". Available providers: ${providers.map((provider) => provider.id).join(", ")}.`,
+	);
 }
 
 export async function loadStartupConfiguration(
@@ -232,7 +264,9 @@ export async function loadStartupConfiguration(
 ): Promise<StartupConfiguration> {
 	let settings: SettingsFile;
 	try {
-		settings = parseSettings(JSON.parse(await readFile(join(cwd, SETTINGS_PATH), "utf8")));
+		const source = await readFile(join(cwd, SETTINGS_PATH), "utf8");
+		if (source.trim().length === 0) return { environment, providers: [] };
+		settings = parseSettings(JSON.parse(source));
 	} catch (cause) {
 		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
 			return { environment, providers: [] };

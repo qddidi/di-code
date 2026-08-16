@@ -6,16 +6,31 @@ import { describe, expect, it } from "vitest";
 
 const entryPath = resolve(process.cwd(), "dist/entry.js");
 
-async function runCli(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+async function runCli(
+	args: string[],
+	options: { readonly configured?: boolean } = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
 	const root = await mkdtemp(join(tmpdir(), "di-code-cli-process-"));
 	const sessionPath = join(root, "session.jsonl");
 	const needsSession =
-		!args.includes("--help") && !args.includes("-h") && !args.includes("--version") && !args.includes("-v");
+		args.length > 0 &&
+		!args.includes("--help") &&
+		!args.includes("-h") &&
+		!args.includes("--version") &&
+		!args.includes("-v");
 	try {
+		const environment = { ...process.env };
+		if (options.configured ?? true) environment.DI_CODE_PROVIDER = "faux";
+		else {
+			delete environment.DI_CODE_PROVIDER;
+			delete environment.DI_CODE_MODEL;
+			delete environment.OPENAI_API_KEY;
+			delete environment.DEEPSEEK_API_KEY;
+		}
 		return await new Promise((resolveResult, reject) => {
 			const child = spawn(process.execPath, [entryPath, ...args, ...(needsSession ? ["--session", sessionPath] : [])], {
 				cwd: process.cwd(),
-				env: { ...process.env, DI_CODE_PROVIDER: "faux" },
+				env: environment,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let stdout = "";
@@ -80,5 +95,26 @@ describe("CLI process entry", () => {
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain('Unknown option "--unknown".');
+	});
+
+	it("fails fast without provider configuration when stdin is not a TTY", async () => {
+		const result = await runCli(["--print", "hello"], { configured: false });
+
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe(
+			"Provider is not configured. Set DI_CODE_PROVIDER or start interactive mode in a TTY.\n",
+		);
+		expect(result.stderr).not.toContain("at ");
+	});
+
+	it("does not wait for onboarding on a bare non-TTY launch", async () => {
+		const result = await runCli([], { configured: false });
+
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe(
+			"Provider is not configured. Set DI_CODE_PROVIDER or start interactive mode in a TTY.\n",
+		);
 	});
 });

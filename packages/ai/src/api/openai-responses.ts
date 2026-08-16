@@ -58,9 +58,9 @@ export interface OpenAIResponsesReasoningText {
 export interface OpenAIResponsesReasoningItem {
 	readonly type: "reasoning";
 	readonly id: string;
-	readonly summary: readonly OpenAIResponsesReasoningText[];
+	readonly summary?: readonly OpenAIResponsesReasoningText[];
 	readonly content?: readonly OpenAIResponsesReasoningText[];
-	readonly encrypted_content: string;
+	readonly encrypted_content?: string;
 	readonly status?: "completed" | "incomplete" | "in_progress";
 }
 
@@ -231,8 +231,8 @@ function createZeroUsage(): Usage {
 }
 
 function assertSupportedModel(model: Model): void {
-	if (model.api !== "openai-responses") {
-		throw new Error('OpenAI Responses requires model.api to be "openai-responses"');
+	if (model.api !== "openai-responses" && model.api !== "deepseek-responses") {
+		throw new Error('Responses adapter requires model.api to be "openai-responses" or "deepseek-responses"');
 	}
 }
 
@@ -343,7 +343,7 @@ function replayOutputText(value: unknown, field: string): OpenAIResponsesOutputT
 	});
 }
 
-function replayItem(value: unknown, index: number): OpenAIResponsesReplayItem {
+function replayItem(value: unknown, index: number, api: string): OpenAIResponsesReplayItem {
 	const field = `data.outputItems[${index}]`;
 	const item = replayRecord(value, field);
 	if (item.type === "message") {
@@ -361,15 +361,30 @@ function replayItem(value: unknown, index: number): OpenAIResponsesReplayItem {
 		};
 	}
 	if (item.type === "reasoning") {
+		const summary =
+			item.summary === undefined ? undefined : replayReasoningParts(item.summary, `${field}.summary`, "summary_text");
 		const content =
 			item.content === undefined ? undefined : replayReasoningParts(item.content, `${field}.content`, "reasoning_text");
+		const encryptedContent =
+			item.encrypted_content === undefined
+				? undefined
+				: replayString(item.encrypted_content, `${field}.encrypted_content`);
+		if (api === "openai-responses" && (summary === undefined || encryptedContent === undefined)) {
+			throw replayError(`${field} requires summary and encrypted_content for openai-responses`);
+		}
+		if (api === "deepseek-responses" && content === undefined) {
+			throw replayError(`${field}.content is required for deepseek-responses`);
+		}
+		if (api === "deepseek-responses" && (summary !== undefined || encryptedContent !== undefined)) {
+			throw replayError(`${field} must only contain plain content for deepseek-responses`);
+		}
 		const status = replayStatus(item.status, `${field}.status`);
 		return {
 			type: "reasoning",
 			id: replayString(item.id, `${field}.id`),
-			summary: replayReasoningParts(item.summary, `${field}.summary`, "summary_text"),
+			...(summary === undefined ? {} : { summary }),
 			...(content === undefined ? {} : { content }),
-			encrypted_content: replayString(item.encrypted_content, `${field}.encrypted_content`),
+			...(encryptedContent === undefined ? {} : { encrypted_content: encryptedContent }),
 			...(status === undefined ? {} : { status }),
 		};
 	}
@@ -400,7 +415,7 @@ function readReplayItems(message: AssistantMessage, model: Model): OpenAIRespons
 	if (!Array.isArray(data.outputItems) || data.outputItems.length === 0) {
 		throw replayError("data.outputItems must be a non-empty array");
 	}
-	return data.outputItems.map(replayItem);
+	return data.outputItems.map((item, index) => replayItem(item, index, model.api));
 }
 
 function projectMessages(model: Model, context: Context): OpenAIResponsesInputItem[] {
@@ -470,10 +485,10 @@ export function buildOpenAIResponsesRequest(
 ): OpenAIResponsesRequest {
 	assertSupportedModel(model);
 	assertOptions(options);
+	const isOpenAI = model.api === "openai-responses";
 	const sessionId = options.sessionId?.trim();
-	const promptCacheKey = sessionId
-		? Array.from(sessionId).slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("")
-		: undefined;
+	const promptCacheKey =
+		isOpenAI && sessionId ? Array.from(sessionId).slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("") : undefined;
 
 	return {
 		model: model.id,
@@ -481,7 +496,7 @@ export function buildOpenAIResponsesRequest(
 		...(promptCacheKey !== undefined ? { prompt_cache_key: promptCacheKey } : {}),
 		stream: true,
 		store: false,
-		...(model.reasoning
+		...(isOpenAI && model.reasoning
 			? {
 					reasoning: { summary: "auto" as const },
 					include: ["reasoning.encrypted_content" as const],
@@ -560,7 +575,7 @@ function readOutputTextForReplay(value: unknown, field: string): JsonValue[] {
 	});
 }
 
-function readCompletedReplayItem(item: Record<string, unknown>): JsonValue {
+function readCompletedReplayItem(item: Record<string, unknown>, api: string): JsonValue {
 	const itemType = requireString(item.type, "item.type");
 	if (itemType === "message") {
 		if (item.role !== "assistant") throw new InvalidOpenAIStreamError('item.role must be "assistant"');
@@ -578,18 +593,30 @@ function readCompletedReplayItem(item: Record<string, unknown>): JsonValue {
 	}
 	if (itemType === "reasoning") {
 		const status = readItemStatus(item.status, "item.status");
+		const receivedSummary =
+			item.summary === undefined || item.summary === null
+				? undefined
+				: readReasoningPartsForReplay(item.summary, "item.summary", "summary_text");
+		if (api === "openai-responses" && receivedSummary === undefined) {
+			throw new InvalidOpenAIStreamError("item.summary must be an array");
+		}
 		const content =
 			item.content === undefined || item.content === null
 				? undefined
 				: readReasoningPartsForReplay(item.content, "item.content", "reasoning_text");
-		const encryptedContent =
+		const receivedEncryptedContent =
 			item.encrypted_content === undefined || item.encrypted_content === null
 				? undefined
 				: requireString(item.encrypted_content, "item.encrypted_content");
+		if (api === "deepseek-responses" && content === undefined) {
+			throw new InvalidOpenAIStreamError("item.content is required for deepseek-responses");
+		}
+		const summary = api === "deepseek-responses" ? undefined : receivedSummary;
+		const encryptedContent = api === "deepseek-responses" ? undefined : receivedEncryptedContent;
 		return {
 			type: "reasoning",
 			id: requireNonEmptyString(item.id, "item.id"),
-			summary: readReasoningPartsForReplay(item.summary, "item.summary", "summary_text"),
+			...(summary === undefined ? {} : { summary }),
 			...(content === undefined ? {} : { content }),
 			...(encryptedContent === undefined ? {} : { encrypted_content: encryptedContent }),
 			...(status === undefined ? {} : { status }),
@@ -701,7 +728,11 @@ function createSuccessMessage(
 	);
 	const canReplay =
 		reasoningItems.length > 0 &&
-		reasoningItems.every((item) => typeof item.encrypted_content === "string" && item.encrypted_content.length > 0);
+		(model.api === "deepseek-responses"
+			? reasoningItems.every((item) => Array.isArray(item.content))
+			: reasoningItems.every(
+					(item) => typeof item.encrypted_content === "string" && item.encrypted_content.length > 0,
+				));
 	return {
 		role: "assistant",
 		content: [...progress.completedContent],
@@ -713,7 +744,7 @@ function createSuccessMessage(
 		...(canReplay
 			? {
 					providerReplay: {
-						api: "openai-responses",
+						api: model.api,
 						data: { outputItems: replayOutputItems },
 					},
 				}
@@ -910,6 +941,7 @@ function handleOutputItemAdded(
 function handleOutputItemDone(
 	event: Record<string, unknown>,
 	stream: ReturnType<typeof createAssistantMessageEventStream>,
+	model: Model,
 	progress: ResponseProgress,
 ): void {
 	const outputIndex = requireNonNegativeInteger(event.output_index, "output_index");
@@ -935,7 +967,7 @@ function handleOutputItemDone(
 			throw new InvalidOpenAIStreamError("reasoning output ended before its content text completed");
 		}
 		const finalText = readReasoningItemText(item);
-		progress.replayOutputItems.set(outputIndex, readCompletedReplayItem(item));
+		progress.replayOutputItems.set(outputIndex, readCompletedReplayItem(item, model.api));
 		if (!active.started && finalText === undefined) {
 			progress.completedOutputIndexes.add(outputIndex);
 			progress.active = undefined;
@@ -953,7 +985,7 @@ function handleOutputItemDone(
 	if (itemType !== "message" && itemType !== "function_call") {
 		throw new InvalidOpenAIStreamError(`unsupported output item type "${itemType}"`);
 	}
-	progress.replayOutputItems.set(outputIndex, readCompletedReplayItem(item));
+	progress.replayOutputItems.set(outputIndex, readCompletedReplayItem(item, model.api));
 }
 
 function supplementReasoningEncryption(responseValue: unknown, progress: ResponseProgress): void {
@@ -1168,7 +1200,7 @@ function handleOpenAIEvent(
 			return;
 		}
 		case "response.output_item.done":
-			handleOutputItemDone(event, stream, progress);
+			handleOutputItemDone(event, stream, model, progress);
 			return;
 		case "response.content_part.added": {
 			const active = progress.active;
@@ -1211,7 +1243,9 @@ function handleOpenAIEvent(
 					throw new InvalidOpenAIStreamError("terminal response received while an output item is active");
 				}
 			}
-			supplementReasoningEncryption(event.response, progress);
+			if (model.api === "openai-responses") {
+				supplementReasoningEncryption(event.response, progress);
+			}
 			progress.usage = readUsage(event.response, model);
 			const reason: SuccessfulStopReason =
 				eventType === "response.incomplete"

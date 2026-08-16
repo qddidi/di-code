@@ -9,6 +9,30 @@ const defaultOutputPath = resolve(packageRoot, "src", "models.generated.ts");
 /** 唯一可手工维护的真实模型源；生成文件由本模块写出。 */
 export const MODEL_SOURCE: readonly Model[] = [
 	{
+		id: "deepseek-v4-flash",
+		name: "DeepSeek V4 Flash",
+		provider: "deepseek",
+		api: "deepseek-responses",
+		baseUrl: "https://api.deepseek.com",
+		input: ["text"],
+		reasoning: true,
+		contextWindow: 1_000_000,
+		maxOutputTokens: 384_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "deepseek-v4-pro",
+		name: "DeepSeek V4 Pro",
+		provider: "deepseek",
+		api: "deepseek-responses",
+		baseUrl: "https://api.deepseek.com",
+		input: ["text"],
+		reasoning: true,
+		contextWindow: 1_000_000,
+		maxOutputTokens: 384_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
 		id: "gpt-4o",
 		name: "GPT-4o",
 		provider: "openai",

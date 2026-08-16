@@ -22,6 +22,19 @@ const model: Model = {
 
 const imageModel: Model = { ...model, input: ["text", "image"] };
 
+const deepSeekModel: Model = {
+	id: "deepseek-v4-pro",
+	name: "DeepSeek V4 Pro",
+	provider: "deepseek",
+	api: "deepseek-responses",
+	baseUrl: "https://api.deepseek.com",
+	input: ["text"],
+	reasoning: true,
+	contextWindow: 1_000_000,
+	maxOutputTokens: 384_000,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+};
+
 function textContext(): Context {
 	return {
 		systemPrompt: "Answer briefly.",
@@ -178,6 +191,23 @@ describe("buildOpenAIResponsesRequest", () => {
 		expect(buildOpenAIResponsesRequest(model, textContext(), { sessionId: "   " })).not.toHaveProperty(
 			"prompt_cache_key",
 		);
+	});
+
+	it("omits unsupported OpenAI-only fields for DeepSeek Responses", () => {
+		const request = buildOpenAIResponsesRequest(deepSeekModel, textContext(), {
+			sessionId: "session-deepseek-1",
+			maxTokens: 1024,
+		});
+
+		expect(request).toMatchObject({
+			model: "deepseek-v4-pro",
+			stream: true,
+			store: false,
+			max_output_tokens: 1024,
+		});
+		expect(request).not.toHaveProperty("prompt_cache_key");
+		expect(request).not.toHaveProperty("reasoning");
+		expect(request).not.toHaveProperty("include");
 	});
 
 	it("preserves tool failure and empty-output semantics as text", () => {
@@ -457,7 +487,7 @@ describe("buildOpenAIResponsesRequest", () => {
 	it("validates API ownership and numeric stream options", () => {
 		expect(() => buildOpenAIResponsesRequest({ ...model, provider: "amux" }, textContext())).not.toThrow();
 		expect(() => buildOpenAIResponsesRequest({ ...model, api: "other" }, textContext())).toThrow(
-			'OpenAI Responses requires model.api to be "openai-responses"',
+			'Responses adapter requires model.api to be "openai-responses" or "deepseek-responses"',
 		);
 		expect(() => buildOpenAIResponsesRequest(model, textContext(), { maxTokens: 0 })).toThrow(
 			"maxTokens must be a positive integer",

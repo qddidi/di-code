@@ -15,6 +15,9 @@ export type {
 	OpenAIResponsesStreamOptions,
 } from "./api/openai-responses.ts";
 export { buildOpenAIResponsesRequest, OpenAIProviderError, streamOpenAIResponses } from "./api/openai-responses.ts";
+export { MODELS } from "./models.generated.ts";
+export type { DeepSeekProviderOptions } from "./providers/deepseek.ts";
+export { createDeepSeekProvider } from "./providers/deepseek.ts";
 export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./providers/faux.ts";
 export { createFauxProvider } from "./providers/faux.ts";
 export type { OpenAIProviderOptions } from "./providers/openai.ts";

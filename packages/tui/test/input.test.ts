@@ -61,6 +61,38 @@ describe("Input editing", () => {
 		assert.equal(escapes, 1);
 		assert.equal(input.getValue(), "answer");
 	});
+
+	it("masks the rendered value while preserving the submitted secret", () => {
+		const input = new Input({ mask: "*" });
+		const submitted: string[] = [];
+		input.onSubmit = (value) => submitted.push(value);
+		input.focused = true;
+		input.handleInput("secret-key");
+
+		const rendered = input.render(32).join("\n");
+		input.handleInput("\r");
+
+		assert.equal(input.getValue(), "secret-key");
+		assert.deepEqual(submitted, ["secret-key"]);
+		assert.equal(rendered.includes("secret-key"), false);
+		assert.equal(rendered.includes("**********"), true);
+	});
+
+	it("rejects a multi-column mask", () => {
+		assert.throws(() => new Input({ mask: "界" }), /one visible column/);
+	});
+
+	it("can treat Ctrl-D as end-of-input cancellation", () => {
+		const input = new Input({ cancelOnEndOfTransmission: true });
+		let cancellations = 0;
+		input.onEscape = () => {
+			cancellations += 1;
+		};
+
+		input.handleInput("\x04");
+
+		assert.equal(cancellations, 1);
+	});
 });
 
 describe("Input rendering", () => {

@@ -140,6 +140,13 @@ describe("Pi-style startup configuration", () => {
 			providers: [],
 		});
 	});
+
+	it("treats an empty or whitespace-only settings file as unconfigured", async () => {
+		await mkdir(join(root, ".di-code"));
+		await writeFile(join(root, ".di-code", "settings.json"), " \r\n\t");
+
+		await expect(loadStartupConfiguration(root, {})).resolves.toEqual({ environment: {}, providers: [] });
+	});
 });
 
 describe("resolveStartupRuntime", () => {
@@ -191,7 +198,7 @@ describe("resolveStartupRuntime", () => {
 
 	it("rejects unsupported APIs", () => {
 		expect(() => resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [{ ...amux, api: "openai-completions" }])).toThrow(
-			'Unsupported API "openai-completions" for provider "amux". Expected openai-responses.',
+			'Unsupported API "openai-completions" for provider "amux". Expected openai-responses or deepseek-responses.',
 		);
 	});
 
@@ -199,6 +206,12 @@ describe("resolveStartupRuntime", () => {
 		const other = { ...amux, id: "other", models: amux.models.map((model) => ({ ...model, provider: "other" })) };
 		expect(() => resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [amux, other])).toThrow(
 			"DI_CODE_PROVIDER is required when more than one provider is configured.",
+		);
+	});
+
+	it("explains how to start when no provider is configured", () => {
+		expect(() => resolveStartupRuntime({}, [])).toThrow(
+			"Provider is not configured. Set DI_CODE_PROVIDER or start interactive mode in a TTY.",
 		);
 	});
 
@@ -213,5 +226,45 @@ describe("resolveStartupRuntime", () => {
 
 		expect(runtime.provider.id).toBe("faux");
 		expect(runtime.model).toEqual(runtime.provider.models[0]);
+	});
+
+	it("uses the built-in OpenAI provider without settings models", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "openai", OPENAI_API_KEY: "test-key" }, []);
+
+		expect(runtime.provider).toMatchObject({ id: "openai", name: "OpenAI" });
+		expect(runtime.model).toMatchObject({ id: "gpt-4o", provider: "openai", api: "openai-responses" });
+	});
+
+	it("uses the built-in DeepSeek provider from environment configuration", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "test-key" }, []);
+
+		expect(runtime.provider).toMatchObject({ id: "deepseek", name: "DeepSeek" });
+		expect(runtime.model).toMatchObject({
+			id: "deepseek-v4-flash",
+			provider: "deepseek",
+			api: "deepseek-responses",
+		});
+	});
+
+	it("selects an explicit built-in DeepSeek model", () => {
+		const runtime = resolveStartupRuntime(
+			{
+				DI_CODE_PROVIDER: "deepseek",
+				DI_CODE_MODEL: "deepseek-v4-pro",
+				DEEPSEEK_API_KEY: "test-key",
+			},
+			[],
+		);
+
+		expect(runtime.model).toMatchObject({ id: "deepseek-v4-pro", provider: "deepseek" });
+	});
+
+	it("allows a configured DeepSeek provider to use generated models", () => {
+		const runtime = resolveStartupRuntime({ DEEPSEEK_API_KEY: "test-key" }, [
+			{ id: "deepseek", api: "deepseek-responses" },
+		]);
+
+		expect(runtime.provider.id).toBe("deepseek");
+		expect(runtime.model).toMatchObject({ id: "deepseek-v4-flash", api: "deepseek-responses" });
 	});
 });
