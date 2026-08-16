@@ -30,6 +30,32 @@ describe("parseCliArgs", () => {
 		});
 	});
 
+	it("parses resource flags and a persisted project trust decision", () => {
+		expect(
+			parseCliArgs([
+				"--no-skills",
+				"--no-context-files",
+				"--trust-project",
+				"--skill",
+				"one/SKILL.md",
+				"--skill",
+				"two",
+				"hello",
+			]),
+		).toEqual({
+			kind: "run",
+			mode: "print",
+			prompt: "hello",
+			noSkills: true,
+			noContextFiles: true,
+			projectTrust: true,
+			skillPaths: ["one/SKILL.md", "two"],
+		});
+		expect(() => parseCliArgs(["--trust-project", "--untrust-project", "hello"])).toThrow(
+			"Cannot combine --trust-project with --untrust-project.",
+		);
+	});
+
 	it("parses continue as an explicit request to resume the most recent session", () => {
 		expect(parseCliArgs(["--continue", "hello"])).toEqual({
 			kind: "run",

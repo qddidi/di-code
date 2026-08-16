@@ -3,7 +3,17 @@ export type OutputMode = "print" | "json" | "interactive";
 export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
-	| { kind: "run"; mode: OutputMode; prompt: string; sessionPath?: string; continueSession?: true };
+	| {
+			kind: "run";
+			mode: OutputMode;
+			prompt: string;
+			sessionPath?: string;
+			continueSession?: true;
+			noSkills?: true;
+			noContextFiles?: true;
+			skillPaths?: readonly string[];
+			projectTrust?: boolean;
+	  };
 
 export class CliUsageError extends Error {
 	constructor(message: string) {
@@ -26,6 +36,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	let printAlias = false;
 	let sessionPath: string | undefined;
 	let continueSession = false;
+	let noSkills = false;
+	let noContextFiles = false;
+	let projectTrust: boolean | undefined;
+	const skillPaths: string[] = [];
 	const promptParts: string[] = [];
 
 	for (let index = 0; index < args.length; index++) {
@@ -40,6 +54,31 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		}
 		if (argument === "-c" || argument === "--continue") {
 			continueSession = true;
+			continue;
+		}
+		if (argument === "--no-skills") {
+			noSkills = true;
+			continue;
+		}
+		if (argument === "--no-context-files") {
+			noContextFiles = true;
+			continue;
+		}
+		if (argument === "--trust-project" || argument === "--untrust-project") {
+			const nextTrust = argument === "--trust-project";
+			if (projectTrust !== undefined && projectTrust !== nextTrust) {
+				throw new CliUsageError("Cannot combine --trust-project with --untrust-project.");
+			}
+			projectTrust = nextTrust;
+			continue;
+		}
+		if (argument === "--skill") {
+			const value = args[index + 1];
+			if (value === undefined || value.trim().length === 0) {
+				throw new CliUsageError("Option --skill requires a non-empty value.");
+			}
+			skillPaths.push(value);
+			index++;
 			continue;
 		}
 		if (argument === "--mode") {
@@ -90,6 +129,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		prompt: promptParts.join(" "),
 		...(sessionPath ? { sessionPath } : {}),
 		...(continueSession ? { continueSession: true as const } : {}),
+		...(noSkills ? { noSkills: true as const } : {}),
+		...(noContextFiles ? { noContextFiles: true as const } : {}),
+		...(skillPaths.length > 0 ? { skillPaths } : {}),
+		...(projectTrust === undefined ? {} : { projectTrust }),
 	};
 }
 
@@ -101,6 +144,11 @@ Options:
   --interactive      Start interactive terminal mode
   --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
+  --skill <path>     Add a SKILL.md file or skill directory (repeatable)
+  --no-skills        Disable all Skill loading
+  --no-context-files Disable AGENTS.md discovery and loading
+  --trust-project    Persist trust for project-local Skill discovery
+  --untrust-project  Persist denial for project-local Skill discovery
   -h, --help         Show help
   -v, --version      Show version
 `;

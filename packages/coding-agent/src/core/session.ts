@@ -11,8 +11,10 @@ import {
 } from "@di-code/agent";
 import type { AssistantMessage, Message, Model, Provider, Usage } from "@di-code/ai";
 import { buildSessionContext } from "./context-builder.ts";
+import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic } from "./session/types.ts";
+import { resolveSkillCommand } from "./skill-command.ts";
 import { createBashTool } from "./tools/bash.ts";
 import { createEditTool } from "./tools/edit.ts";
 import { createReadTool } from "./tools/read.ts";
@@ -41,6 +43,8 @@ export interface AgentSessionOptions {
 	readonly allowedRoot: string;
 	readonly provider: Provider;
 	readonly model: Model;
+	readonly systemPrompt?: string;
+	readonly skills?: readonly SkillResource[];
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
@@ -59,6 +63,7 @@ export class AgentSession {
 	private readonly allowedRootValue: string;
 	private readonly sessionManager?: SessionManager;
 	private readonly provider: Provider;
+	private readonly skills: readonly SkillResource[];
 	private model: Model;
 	private readonly sessionIdValue: string;
 	private readonly now: () => number;
@@ -77,6 +82,7 @@ export class AgentSession {
 		this.allowedRootValue = options.allowedRoot;
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
+		this.skills = structuredClone([...(options.skills ?? [])]);
 		this.model = options.model;
 		this.sessionIdValue = options.sessionManager?.header.id ?? randomUUID();
 		this.now = options.now ?? Date.now;
@@ -106,6 +112,7 @@ export class AgentSession {
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
+			systemPrompt: options.systemPrompt,
 			sessionId: this.sessionIdValue,
 			tools: [
 				createReadTool(options.allowedRoot),
@@ -215,8 +222,9 @@ export class AgentSession {
 
 		this.promptActive = true;
 		try {
-			await this.compactIfNeeded(text, signal);
-			return await this.agent.prompt(text, signal);
+			const prompt = await resolveSkillCommand(text, this.skills, signal);
+			await this.compactIfNeeded(prompt, signal);
+			return await this.agent.prompt(prompt, signal);
 		} finally {
 			this.promptActive = false;
 		}

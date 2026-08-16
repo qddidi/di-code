@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { access, readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
 import { ProcessTerminal, TUI } from "@di-code/tui";
 import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
+import { loadResources } from "./core/resources/loader.ts";
 import { SessionManager } from "./core/session/session-manager.ts";
 import { AgentSession } from "./core/session.ts";
+import { buildSystemPrompt } from "./core/system-prompt.ts";
+import { ProjectTrustManager } from "./extensions/trust.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
@@ -21,6 +25,7 @@ export interface MainOptions extends PrintIo {
 		command: Extract<CliCommand, { kind: "run" }>,
 	) => MainRuntime | undefined | Promise<MainRuntime | undefined>;
 	readonly allowedRoot?: string;
+	readonly agentDir?: string;
 	readonly now?: () => number;
 }
 
@@ -164,12 +169,26 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			const now = options.now ?? Date.now;
 			const runtime = await options.createRuntime(command);
 			if (runtime === undefined) return 0;
+			const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
+			const trustManager = new ProjectTrustManager(join(agentDir, "trust.json"));
+			if (command.projectTrust !== undefined) await trustManager.set(allowedRoot, command.projectTrust);
+			const resources = await loadResources({
+				cwd: allowedRoot,
+				agentDir,
+				projectTrusted: (await trustManager.get(allowedRoot)) === true,
+				noSkills: command.noSkills,
+				noContextFiles: command.noContextFiles,
+				skillPaths: command.skillPaths,
+			});
+			const systemPrompt = buildSystemPrompt({ cwd: allowedRoot, ...resources });
 			const manager = await selectStartupSession(command, allowedRoot, now);
 			const sessionFile = manager.filePath;
 			const session = new AgentSession({
 				allowedRoot,
 				provider: runtime.provider,
 				model: runtime.model,
+				systemPrompt,
+				skills: resources.skills,
 				now: options.now,
 				sessionManager: manager,
 			});
@@ -199,6 +218,8 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 									allowedRoot,
 									provider: runtime.provider,
 									model: runtime.model,
+									systemPrompt,
+									skills: resources.skills,
 									now: options.now,
 									sessionManager: nextManager,
 								});
@@ -210,6 +231,8 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								allowedRoot,
 								provider: runtime.provider,
 								model: runtime.model,
+								systemPrompt,
+								skills: resources.skills,
 								now: options.now,
 								sessionManager: nextManager,
 							});

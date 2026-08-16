@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
@@ -98,6 +98,111 @@ describe("runMain", () => {
 			content: [{ type: "text", text: "json file content" }],
 		});
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
+	});
+
+	it("loads resource instructions through the CLI startup path", async () => {
+		const agentDir = join(root, "agent");
+		await writeFile(join(root, "AGENTS.md"), "Use project instructions.", "utf8");
+		await mkdir(join(agentDir, "skills", "review"), { recursive: true });
+		const skillPath = join(agentDir, "skills", "review", "SKILL.md");
+		await writeFile(skillPath, "---\nname: review\ndescription: Review code.\n---\nSkill body", "utf8");
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		let systemPrompt: string | undefined;
+		const provider = {
+			...faux.provider,
+			stream(
+				model: typeof faux.model,
+				context: import("@di-code/ai").Context,
+				options?: Parameters<typeof faux.provider.stream>[2],
+			) {
+				systemPrompt = context.systemPrompt;
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const io = createIo();
+
+		const exitCode = await runMain(["--print", "hello"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime: () => ({ provider, model: faux.model }),
+		});
+
+		expect(exitCode).toBe(0);
+		expect(systemPrompt).toContain("Use project instructions.");
+		expect(systemPrompt).toContain(skillPath);
+	});
+
+	it("loads an explicitly selected skill body before sending the user request", async () => {
+		const agentDir = join(root, "agent");
+		await mkdir(join(agentDir, "skills", "review"), { recursive: true });
+		await writeFile(
+			join(agentDir, "skills", "review", "SKILL.md"),
+			"---\nname: review\ndescription: Review code.\n---\nInspect tests before suggesting a change.",
+			"utf8",
+		);
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		let userText: string | undefined;
+		const provider = {
+			...faux.provider,
+			stream(
+				model: typeof faux.model,
+				context: import("@di-code/ai").Context,
+				options?: Parameters<typeof faux.provider.stream>[2],
+			) {
+				userText = context.messages
+					.filter((message) => message.role === "user")
+					.flatMap((message) => message.content)
+					.filter((content): content is { type: "text"; text: string } => content.type === "text")
+					.map((content) => content.text)
+					.join("\n");
+				return faux.provider.stream(model, context, options);
+			},
+		};
+
+		await runMain(["--print", "/skill:review inspect the login flow"], {
+			...createIo(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime: () => ({ provider, model: faux.model }),
+		});
+
+		expect(userText).toContain("Inspect tests before suggesting a change.");
+		expect(userText).toContain("inspect the login flow");
+	});
+
+	it("rejects an unknown explicitly selected skill before calling the provider", async () => {
+		const agentDir = join(root, "agent");
+		const createRuntimeMock = vi.fn(createRuntime([{ type: "success", content: [{ type: "text", text: "answer" }] }]));
+		const io = createIo();
+
+		const exitCode = await runMain(["--print", "/skill:missing"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime: createRuntimeMock,
+		});
+
+		expect(exitCode).toBe(1);
+		expect(io.stderr).toHaveBeenCalledWith('Unknown skill "missing". No skills are loaded.\n');
+	});
+
+	it("reports malformed skill commands without invoking a skill", async () => {
+		const io = createIo();
+
+		const exitCode = await runMain(["--print", "/skill review"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir: join(root, "agent"),
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "answer" }] }]),
+		});
+
+		expect(exitCode).toBe(1);
+		expect(io.stderr).toHaveBeenCalledWith("Skill command must use /skill:<name> [request].\n");
 	});
 
 	it("labels saved sessions with the first user question and its timestamp", async () => {
