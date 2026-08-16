@@ -221,6 +221,21 @@ describe("InteractiveProjection", () => {
 		assert.equal(projection.state.busy, true);
 	});
 
+	it("keeps the loading spinner visible while streaming before agent_end", () => {
+		const projection = new InteractiveProjection();
+		const readState = (): InteractiveViewState => ({ ...projection.state, model: "faux-model", theme: "dark" });
+		const chat = new InteractiveChat(readState);
+
+		projection.apply({ type: "agent_start" });
+		projection.apply({ type: "message_update", event: { type: "text_delta", contentIndex: 0, delta: "partial" } });
+
+		assert.equal(projection.state.busy, true);
+		assert.equal(chat.render(80).join("\n").includes("Thinking"), true);
+		const firstFrame = projection.state.spinnerFrame;
+		assert.equal(projection.advanceSpinner(), true);
+		assert.notEqual(projection.state.spinnerFrame, firstFrame);
+	});
+
 	it("projects tool execution start and end", () => {
 		const projection = new InteractiveProjection();
 		projection.apply({

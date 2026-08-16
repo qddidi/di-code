@@ -118,7 +118,7 @@ export class InteractiveProjection {
 	}
 
 	advanceSpinner(): boolean {
-		if (!this.busy || !this.processItems.some((item) => item.type === "thinking")) return false;
+		if (!this.busy) return false;
 		this.spinnerFrame = (this.spinnerFrame + 1) % 4;
 		return true;
 	}

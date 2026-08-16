@@ -131,6 +131,10 @@ export class InteractiveChat implements Component {
 			const color = item.status === "error" ? colors.error : item.status === "done" ? colors.success : colors.warning;
 			lines.push(...renderLine(`    ${paint(color, marker)} ${paint(colors.dim, command)}`, width));
 		}
+		if (state.busy && !state.processItems.some((item) => item.type === "thinking")) {
+			const frame = SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length] ?? SPINNER_FRAMES[0];
+			lines.push(...renderLine(`    ${paint(colors.accent, `${frame} Thinking`)}`, width));
+		}
 		if (state.streamingText) {
 			if (lines.length > 0) lines.push(" ");
 			lines.push(...renderLine(`  ${paint(colors.assistant, "Assistant", true)}`, width));
