@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -60,9 +60,10 @@ describe("CLI process entry", () => {
 
 	it("prints the package version", async () => {
 		const result = await runCli(["--version"]);
+		const metadata = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as { version: string };
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe("0.1.0\n");
+		expect(result.stdout).toBe(`${metadata.version}\n`);
 		expect(result.stderr).toBe("");
 	});
 

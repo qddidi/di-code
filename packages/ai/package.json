@@ -1,7 +1,16 @@
 {
 	"name": "@di-code/ai",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Provider-neutral AI contracts and adapters for di-code",
+	"keywords": [
+		"ai",
+		"llm",
+		"provider",
+		"openai",
+		"deepseek",
+		"streaming",
+		"typescript"
+	],
 	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
@@ -16,6 +25,15 @@
 		"dist"
 	],
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/qddidi/di-code.git",
+		"directory": "packages/ai"
+	},
+	"bugs": {
+		"url": "https://github.com/qddidi/di-code/issues"
+	},
+	"homepage": "https://github.com/qddidi/di-code#readme",
 	"publishConfig": {
 		"access": "public"
 	},

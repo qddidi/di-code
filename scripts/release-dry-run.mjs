@@ -70,9 +70,17 @@ function parsePackOutput(stdout, workspace) {
 	}
 	for (const file of entry.files) {
 		if (!file || typeof file.path !== "string") throw new Error(`npm pack returned an invalid file for ${workspace}`);
-		if (file.path !== "package.json" && file.path !== "LICENSE" && !file.path.startsWith("dist/")) {
+		if (
+			file.path !== "package.json" &&
+			file.path !== "LICENSE" &&
+			file.path !== "README.md" &&
+			!file.path.startsWith("dist/")
+		) {
 			throw new Error(`${workspace} tarball contains unexpected file: ${file.path}`);
 		}
+	}
+	if (!entry.files.some((file) => file.path === "README.md")) {
+		throw new Error(`${workspace} tarball does not contain README.md`);
 	}
 	return entry;
 }
@@ -117,11 +125,14 @@ async function main() {
 		const binName = process.platform === "win32" ? "di-code.cmd" : "di-code";
 		const binPath = join(installDirectory, "node_modules", ".bin", binName);
 		await access(binPath);
+		const installedMetadata = JSON.parse(await readFile(join(codingAgentPackage, "package.json"), "utf8"));
 
 		const help = await runNpm(["exec", "--offline", "--", "di-code", "--help"], { cwd: installDirectory });
 		if (!help.stdout.startsWith("Usage: di-code")) throw new Error("Outside-install help smoke returned unexpected output.");
 		const version = await runNpm(["exec", "--offline", "--", "di-code", "--version"], { cwd: installDirectory });
-		if (version.stdout.trim() !== "0.1.0") throw new Error(`Outside-install version mismatch: ${version.stdout.trim()}`);
+		if (version.stdout.trim() !== installedMetadata.version) {
+			throw new Error(`Outside-install version mismatch: ${version.stdout.trim()}`);
+		}
 		const conversation = await runNpm(["exec", "--offline", "--", "di-code", "--print", "release smoke"], {
 			cwd: installDirectory,
 			env: { ...process.env, DI_CODE_PROVIDER: "faux" },
@@ -148,7 +159,6 @@ await supervisor.stop();
 		);
 		await run(process.execPath, [orchestratorSmoke], { cwd: installDirectory });
 
-		const installedMetadata = JSON.parse(await readFile(join(codingAgentPackage, "package.json"), "utf8"));
 		process.stdout.write(
 			`release dry-run passed: ${workspaces.length} packages, version ${installedMetadata.version}, outside install and RPC smoke passed\n`,
 		);

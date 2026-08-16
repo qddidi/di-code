@@ -1,7 +1,15 @@
 {
 	"name": "@di-code/tui",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Reusable terminal UI library for di-code",
+	"keywords": [
+		"terminal-ui",
+		"tui",
+		"ansi",
+		"cli",
+		"typescript",
+		"renderer"
+	],
 	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
@@ -16,6 +24,15 @@
 		"dist"
 	],
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/qddidi/di-code.git",
+		"directory": "packages/tui"
+	},
+	"bugs": {
+		"url": "https://github.com/qddidi/di-code/issues"
+	},
+	"homepage": "https://github.com/qddidi/di-code#readme",
 	"publishConfig": {
 		"access": "public"
 	},

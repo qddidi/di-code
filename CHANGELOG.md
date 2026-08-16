@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.1] - 2026-08-16
+
+### Added
+
+- npm package README files for all public workspaces, with installation, usage, configuration, and GitHub support links.
+- npm repository, homepage, and issue-tracker metadata for all public workspaces.
+
+### Changed
+
+- Release dry-run now requires every package tarball to include its README and derives the installed CLI version from package metadata.
+
 ## [0.1.0] - 2026-08-16
 
 ### Added

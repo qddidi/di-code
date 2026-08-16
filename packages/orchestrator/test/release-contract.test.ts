@@ -25,13 +25,16 @@ async function readPackage(path: string): Promise<PackageMetadata> {
 describe("release package contract", () => {
 	it("keeps the root private and publishes all workspaces at one version", async () => {
 		const root = await readPackage(join(repositoryRoot, "package.json"));
-		expect(root).toMatchObject({ version: "0.1.0", private: true });
+		expect(root.private).toBe(true);
+		expect(root.version).toMatch(/^\d+\.\d+\.\d+$/);
 
 		for (const directory of workspaceDirectories) {
 			const metadata = await readPackage(join(repositoryRoot, "packages", directory, "package.json"));
-			expect(metadata).toMatchObject({ version: "0.1.0", private: false, license: "MIT", files: ["dist"] });
-			for (const version of Object.values(metadata.dependencies ?? {})) {
-				if (version.startsWith("0.")) expect(version).toBe("0.1.0");
+			expect(metadata).toMatchObject({ version: root.version, private: false, license: "MIT", files: ["dist"] });
+			const readme = await readFile(join(repositoryRoot, "packages", directory, "README.md"), "utf8");
+			expect(readme).toContain("https://github.com/qddidi/di-code");
+			for (const [name, version] of Object.entries(metadata.dependencies ?? {})) {
+				if (name.startsWith("@di-code/")) expect(version).toBe(root.version);
 			}
 		}
 	});

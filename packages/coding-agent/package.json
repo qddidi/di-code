@@ -1,7 +1,17 @@
 {
 	"name": "@di-code/coding-agent",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Coding agent product layer for di-code",
+	"keywords": [
+		"ai-coding-agent",
+		"coding-agent",
+		"cli",
+		"developer-tools",
+		"openai",
+		"deepseek",
+		"jsonl",
+		"rpc"
+	],
 	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
@@ -24,6 +34,15 @@
 		"dist"
 	],
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/qddidi/di-code.git",
+		"directory": "packages/coding-agent"
+	},
+	"bugs": {
+		"url": "https://github.com/qddidi/di-code/issues"
+	},
+	"homepage": "https://github.com/qddidi/di-code#readme",
 	"publishConfig": {
 		"access": "public"
 	},
@@ -33,9 +52,9 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.1.0",
-		"@di-code/ai": "0.1.0",
-		"@di-code/tui": "0.1.0"
+		"@di-code/agent": "0.1.1",
+		"@di-code/ai": "0.1.1",
+		"@di-code/tui": "0.1.1"
 	},
 	"engines": {
 		"node": ">=22.19.0"
