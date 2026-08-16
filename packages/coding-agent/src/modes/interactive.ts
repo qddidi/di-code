@@ -8,6 +8,7 @@ import {
 	type TUI,
 } from "@di-code/tui";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
+import type { ExtensionHost } from "../extensions/runtime.ts";
 import {
 	AutocompleteMenu,
 	InteractiveChat,
@@ -28,6 +29,7 @@ export interface InteractiveModeOptions {
 	readonly tui: TUI;
 	readonly onExit?: () => void;
 	readonly sessions?: readonly InteractiveSessionChoice[];
+	readonly extensionHost?: ExtensionHost;
 }
 
 export interface InteractiveSessionChoice {
@@ -44,6 +46,7 @@ export class InteractiveMode {
 	private session: AgentSession;
 	private readonly tui: TUI;
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
+	private readonly extensionHost?: ExtensionHost;
 	private unsubscribeSession?: () => void;
 	private sessionSwitching = false;
 	private promptInFlight = false;
@@ -57,12 +60,14 @@ export class InteractiveMode {
 	private overlay?: OverlayHandle;
 	private autocompleteOverlay?: OverlayHandle;
 	private spinnerTimer?: ReturnType<typeof setInterval>;
+	private shutdownEmitted = false;
 
 	constructor(options: InteractiveModeOptions) {
 		this.session = options.session;
 		this.tui = options.tui;
 		this.onExit = options.onExit;
 		this.sessionChoices = [...(options.sessions ?? [])];
+		this.extensionHost = options.extensionHost;
 		const commands = [
 			{ name: "help", description: "Show interactive commands" },
 			{ name: "clear", description: "Clear visible messages" },
@@ -74,14 +79,15 @@ export class InteractiveMode {
 			{ name: "usage", description: "Show token and cost usage" },
 			{ name: "retry", description: "Retry the last failed prompt" },
 		] as const;
+		const allCommands = [...commands, ...(this.extensionHost?.listCommands() ?? [])];
 		const autocomplete: AutocompleteProvider = {
 			getSuggestions: (context, autocompleteOptions) =>
-				new CombinedAutocompleteProvider(commands, this.session.allowedRoot).getSuggestions(
+				new CombinedAutocompleteProvider(allCommands, this.session.allowedRoot).getSuggestions(
 					context,
 					autocompleteOptions,
 				),
 			applyCompletion: (context, item, prefix) =>
-				new CombinedAutocompleteProvider(commands, this.session.allowedRoot).applyCompletion(context, item, prefix),
+				new CombinedAutocompleteProvider(allCommands, this.session.allowedRoot).applyCompletion(context, item, prefix),
 		};
 		this.editor = new Editor({
 			maxHeight: 3,
@@ -111,6 +117,8 @@ export class InteractiveMode {
 	start(initialPrompt?: string): void {
 		if (this.started) throw new Error("Interactive mode is already started");
 		this.started = true;
+		this.shutdownEmitted = false;
+		void this.extensionHost?.emit({ type: "session_start", cwd: this.session.allowedRoot });
 		this.projection.replaceTranscript(this.session.transcript);
 		this.projection.setUsage(this.session.usage);
 		this.subscribeToSession();
@@ -138,6 +146,10 @@ export class InteractiveMode {
 		this.unsubscribeSession?.();
 		this.unsubscribeSession = undefined;
 		this.tui.stop({ finalLines: this.root.renderTranscript(this.tui.columns) });
+		if (!this.shutdownEmitted) {
+			this.shutdownEmitted = true;
+			void this.extensionHost?.emit({ type: "session_shutdown", reason: "user" });
+		}
 	}
 
 	private exit(): void {
@@ -412,7 +424,10 @@ export class InteractiveMode {
 	}
 
 	private handleSlashCommand(input: string): void {
-		const command = input.slice(1).trim().split(/\s+/, 1)[0]?.toLowerCase();
+		const trimmed = input.slice(1).trim();
+		const [rawCommand = "", ...argParts] = trimmed.split(/\s+/);
+		const command = rawCommand.toLowerCase();
+		const args = argParts.join(" ");
 		switch (command) {
 			case "help":
 				this.projection.setStatus("commands: /clear /model /session /theme /settings /compact /usage /retry");
@@ -443,8 +458,16 @@ export class InteractiveMode {
 				if (this.lastFailedPrompt && !this.promptInFlight) void this.submit(this.lastFailedPrompt, true);
 				else this.projection.setStatus("nothing to retry");
 				break;
-			default:
-				this.projection.setError(`Unknown command: /${command ?? ""}`);
+			default: {
+				if (this.extensionHost?.listCommands().some((entry) => entry.name === command)) {
+					void this.extensionHost.runCommand(command, args).catch((cause) => {
+						this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+						this.refresh();
+					});
+					break;
+				}
+				this.projection.setError(`Unknown command: /${command}`);
+			}
 		}
 		this.refresh();
 	}

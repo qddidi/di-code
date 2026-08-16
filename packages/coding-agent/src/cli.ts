@@ -3,6 +3,7 @@ export type OutputMode = "print" | "json" | "interactive";
 export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
+	| { kind: "plugin"; action: "install" | "list" | "enable" | "disable" | "update" | "remove"; argument?: string }
 	| {
 			kind: "run";
 			mode: OutputMode;
@@ -23,6 +24,26 @@ export class CliUsageError extends Error {
 }
 
 export function parseCliArgs(args: readonly string[]): CliCommand {
+	if (args[0] === "plugin") {
+		const action = args[1];
+		if (
+			action !== "install" &&
+			action !== "list" &&
+			action !== "enable" &&
+			action !== "disable" &&
+			action !== "update" &&
+			action !== "remove"
+		)
+			throw new CliUsageError("Plugin command must be install, list, enable, disable, update, or remove.");
+		const argument = args[2];
+		if (
+			args.length > 3 ||
+			(action !== "list" && (argument === undefined || argument.trim() === "")) ||
+			(action === "list" && argument !== undefined)
+		)
+			throw new CliUsageError("Plugin command has invalid arguments.");
+		return { kind: "plugin", action, ...(argument ? { argument } : {}) };
+	}
 	const staticOption = args.find((argument) => ["-h", "--help", "-v", "--version"].includes(argument));
 	if (staticOption !== undefined) {
 		const kind = staticOption === "-h" || staticOption === "--help" ? "help" : "version";
@@ -149,6 +170,7 @@ Options:
   --no-context-files Disable AGENTS.md discovery and loading
   --trust-project    Persist trust for project-local Skill discovery
   --untrust-project  Persist denial for project-local Skill discovery
+  plugin <action>    Install, list, enable, disable, update, or remove a plugin
   -h, --help         Show help
   -v, --version      Show version
 `;
@@ -157,6 +179,7 @@ export interface CliDependencies {
 	stdout(text: string): void;
 	stderr(text: string): void;
 	run(command: Extract<CliCommand, { kind: "run" }>): Promise<number>;
+	plugin?(command: Extract<CliCommand, { kind: "plugin" }>): Promise<number>;
 	readonly version: string;
 }
 
@@ -176,6 +199,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
 		case "help":
 			dependencies.stdout(HELP_TEXT);
 			return 0;
+		case "plugin":
+			if (!dependencies.plugin) throw new Error("Plugin command handler is unavailable.");
+			return dependencies.plugin(command);
 		case "version":
 			dependencies.stdout(`${dependencies.version}\n`);
 			return 0;

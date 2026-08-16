@@ -13,6 +13,8 @@ import { ProjectTrustManager } from "./extensions/trust.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
+import { loadPlugins } from "./plugins/loader.ts";
+import { PluginManager } from "./plugins/manager.ts";
 
 export interface MainRuntime {
 	readonly provider: Provider;
@@ -164,6 +166,38 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		stdout: options.stdout,
 		stderr: options.stderr,
 		version: options.version,
+		plugin: async (command) => {
+			const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
+			const manager = new PluginManager({ agentDir });
+			try {
+				switch (command.action) {
+					case "list":
+						for (const plugin of await manager.list())
+							options.stdout(`${plugin.id}\t${plugin.enabled ? "enabled" : "disabled"}\t${plugin.manifest.version}\n`);
+						return 0;
+					case "install": {
+						const plugin = await manager.install(command.argument as string);
+						options.stdout(`Installed ${plugin.id}\n`);
+						return 0;
+					}
+					case "enable":
+						await manager.enable(command.argument as string);
+						return 0;
+					case "disable":
+						await manager.disable(command.argument as string);
+						return 0;
+					case "update":
+						await manager.update(command.argument as string);
+						return 0;
+					case "remove":
+						await manager.remove(command.argument as string);
+						return 0;
+				}
+			} catch (cause) {
+				options.stderr(`${cause instanceof Error ? cause.message : String(cause)}\n`);
+				return 1;
+			}
+		},
 		run: async (command) => {
 			const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 			const now = options.now ?? Date.now;
@@ -180,6 +214,17 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				noContextFiles: command.noContextFiles,
 				skillPaths: command.skillPaths,
 			});
+			const extensions = await loadPlugins({
+				cwd: allowedRoot,
+				agentDir,
+				trustManager,
+				mode: command.mode,
+			});
+			for (const diagnostic of extensions.diagnostics) {
+				options.stderr(
+					`${JSON.stringify({ type: "plugin_diagnostic", pluginId: diagnostic.pluginId, stage: diagnostic.stage, sourcePath: diagnostic.sourcePath, severity: diagnostic.severity, message: diagnostic.message })}\n`,
+				);
+			}
 			const systemPrompt = buildSystemPrompt({ cwd: allowedRoot, ...resources });
 			const manager = await selectStartupSession(command, allowedRoot, now);
 			const sessionFile = manager.filePath;
@@ -191,9 +236,15 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				skills: resources.skills,
 				now: options.now,
 				sessionManager: manager,
+				extensionHost: extensions.host,
 			});
 			if (command.mode === "json") {
-				return runJsonMode(command.prompt, session, options);
+				await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+				try {
+					return await runJsonMode(command.prompt, session, options);
+				} finally {
+					await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+				}
 			}
 			if (command.mode === "interactive") {
 				const terminal = new ProcessTerminal();
@@ -201,6 +252,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				const mode = new InteractiveMode({
 					session,
 					tui,
+					extensionHost: extensions.host,
 					sessions: [
 						{
 							id: "new-session",
@@ -222,6 +274,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 									skills: resources.skills,
 									now: options.now,
 									sessionManager: nextManager,
+									extensionHost: extensions.host,
 								});
 							},
 						},
@@ -235,6 +288,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								skills: resources.skills,
 								now: options.now,
 								sessionManager: nextManager,
+								extensionHost: extensions.host,
 							});
 						})),
 					],
@@ -242,7 +296,12 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				mode.start(command.prompt);
 				return 0;
 			}
-			return runPrintMode(command.prompt, session, options);
+			await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+			try {
+				return await runPrintMode(command.prompt, session, options);
+			} finally {
+				await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+			}
 		},
 	};
 

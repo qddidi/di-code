@@ -100,6 +100,33 @@ describe("runMain", () => {
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
 	});
 
+	it("loads trusted project extension tools into the CLI AgentSession", async () => {
+		const extensionDirectory = join(root, ".di-code", "extensions");
+		await mkdir(extensionDirectory, { recursive: true });
+		await writeFile(
+			join(extensionDirectory, "status.mjs"),
+			'export default (api) => api.registerTool({ name: "project-status", description: "Return project status", parameters: { type: "object", properties: {}, additionalProperties: false }, execute: async () => [{ type: "text", text: "extension ready" }] });',
+		);
+		const io = createIo();
+		const exitCode = await runMain(["--trust-project", "--print", "check status"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir: join(root, "agent"),
+			createRuntime: createRuntime([
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "project-status-call", name: "project-status", arguments: {} }],
+				},
+				{ type: "success", content: [{ type: "text", text: "Project extension completed." }] },
+			]),
+		});
+
+		expect(exitCode).toBe(0);
+		expect(io.stdout).toHaveBeenCalledWith("Project extension completed.\n");
+		expect(io.stderr).not.toHaveBeenCalled();
+	});
+
 	it("loads resource instructions through the CLI startup path", async () => {
 		const agentDir = join(root, "agent");
 		await writeFile(join(root, "AGENTS.md"), "Use project instructions.", "utf8");

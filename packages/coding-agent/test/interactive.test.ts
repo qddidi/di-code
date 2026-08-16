@@ -8,6 +8,7 @@ import { CURSOR_MARKER, TUI } from "@di-code/tui";
 import { describe, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
+import { ExtensionHost } from "../src/extensions/runtime.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
 
@@ -444,6 +445,36 @@ describe("InteractiveChat streaming layout", () => {
 });
 
 describe("InteractiveMode", () => {
+	it("runs extension slash commands and emits session lifecycle exactly once", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const host = new ExtensionHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
+		const events: string[] = [];
+		await host.registerExtension("test", (api) => {
+			api.registerCommand({
+				name: "hello",
+				description: "hello",
+				handler: async (ctx) => {
+					events.push(`command:${ctx.args}`);
+				},
+			});
+			api.on("session_start", () => {
+				events.push("start");
+			});
+			api.on("session_shutdown", () => {
+				events.push("shutdown");
+			});
+		});
+		const terminal = new TestTerminal();
+		const mode = new InteractiveMode({ session, tui: new TUI(terminal), extensionHost: host });
+		mode.start();
+		terminal.sendInput("/hello world");
+		terminal.sendInput("\r");
+		await flush();
+		mode.stop();
+		mode.stop();
+		assert.deepEqual(events, ["start", "command:world", "shutdown"]);
+	});
 	it("rolls back terminal state when startup fails", () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });

@@ -10,6 +10,7 @@ import {
 	shouldCompact,
 } from "@di-code/agent";
 import type { AssistantMessage, Message, Model, Provider, Usage } from "@di-code/ai";
+import type { ExtensionHost } from "../extensions/runtime.ts";
 import { buildSessionContext } from "./context-builder.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
@@ -48,6 +49,7 @@ export interface AgentSessionOptions {
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
+	readonly extensionHost?: ExtensionHost;
 }
 
 export type AgentSessionEvent =
@@ -64,6 +66,7 @@ export class AgentSession {
 	private readonly sessionManager?: SessionManager;
 	private readonly provider: Provider;
 	private readonly skills: readonly SkillResource[];
+	private readonly extensionHost?: ExtensionHost;
 	private model: Model;
 	private readonly sessionIdValue: string;
 	private readonly now: () => number;
@@ -83,6 +86,7 @@ export class AgentSession {
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
 		this.skills = structuredClone([...(options.skills ?? [])]);
+		this.extensionHost = options.extensionHost;
 		this.model = options.model;
 		this.sessionIdValue = options.sessionManager?.header.id ?? randomUUID();
 		this.now = options.now ?? Date.now;
@@ -119,6 +123,16 @@ export class AgentSession {
 				createWriteTool(options.allowedRoot),
 				createEditTool(options.allowedRoot),
 				createBashTool(options.allowedRoot),
+				...(this.extensionHost?.listTools().map((tool) => ({
+					name: tool.name,
+					description: tool.description,
+					parameters: tool.parameters,
+					execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
+						const result = await this.extensionHost?.runTool(tool.name, toolCallId, parameters, signal);
+						if (result === undefined) throw new Error(`Extension tool "${tool.name}" is unavailable.`);
+						return [...result];
+					},
+				})) ?? []),
 			],
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
@@ -140,7 +154,8 @@ export class AgentSession {
 			this.addUsage(event.message.usage);
 			await this.emitSession({ type: "usage_update", usage: this.usage });
 		});
-		this.agent.subscribe(async (event) => {
+		this.agent.subscribe(async (event, signal) => {
+			if (this.extensionHost) await this.extensionHost.emit(event, signal);
 			await this.emitSession(event);
 		});
 	}

@@ -7,3 +7,4 @@ export * from "./core/session/types.ts";
 export * from "./core/session.ts";
 export * from "./core/system-prompt.ts";
 export * from "./extensions/index.ts";
+export * from "./plugins/index.ts";

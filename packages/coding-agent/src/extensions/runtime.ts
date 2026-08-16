@@ -26,7 +26,7 @@ export interface LoadedExtension {
 	readonly path: string;
 }
 
-export type ExtensionDiagnosticStage = "discover" | "import" | "factory" | "register";
+export type ExtensionDiagnosticStage = "discover" | "import" | "factory" | "register" | "handler";
 
 export interface ExtensionDiagnostic {
 	readonly path: string;
@@ -52,23 +52,29 @@ function isExtensionPath(path: string): boolean {
 	return extname(path) === ".js" || extname(path) === ".mjs" || extname(path) === ".ts";
 }
 
-function createContext(options: ExtensionHostOptions): ExtensionContext {
+function createContext(options: ExtensionHostOptions, signal?: AbortSignal): ExtensionContext {
 	return {
 		cwd: options.cwd,
 		mode: options.mode,
-		signal: undefined,
+		signal,
 		isProjectTrusted: () => options.projectTrusted,
 		abort: options.abort ?? (() => {}),
 	};
 }
 
 export class ExtensionHost {
+	private readonly options: ExtensionHostOptions;
 	private readonly context: ExtensionContext;
 	private readonly commands = new Map<string, ExtensionCommand>();
 	private readonly tools = new Map<string, ExtensionReadOnlyTool>();
-	private readonly handlers = new Map<keyof ExtensionEventMap, ExtensionEventHandler<keyof ExtensionEventMap>[]>();
+	private readonly handlers = new Map<
+		keyof ExtensionEventMap,
+		readonly { path: string; handler: ExtensionEventHandler<keyof ExtensionEventMap> }[]
+	>();
+	private readonly runtimeDiagnostics: ExtensionDiagnostic[] = [];
 
 	constructor(options: ExtensionHostOptions) {
+		this.options = options;
 		this.context = createContext(options);
 	}
 
@@ -84,7 +90,11 @@ export class ExtensionHost {
 		return [...this.tools.values()];
 	}
 
-	async registerExtension(_path: string, factory: ExtensionFactory): Promise<void> {
+	listRuntimeDiagnostics(): readonly ExtensionDiagnostic[] {
+		return [...this.runtimeDiagnostics];
+	}
+
+	async registerExtension(_path: string, factory: ExtensionFactory, pluginId?: string): Promise<void> {
 		const commands: ExtensionCommand[] = [];
 		const tools: ExtensionReadOnlyTool[] = [];
 		const handlers = new Map<keyof ExtensionEventMap, ExtensionEventHandler<keyof ExtensionEventMap>[]>();
@@ -100,23 +110,37 @@ export class ExtensionHost {
 		await factory(api);
 
 		for (const command of commands) {
+			if (RESERVED_INTERACTIVE_COMMANDS.has(command.name))
+				throw new Error(`Extension command conflicts with built-in command: ${command.name}`);
 			if (this.commands.has(command.name)) throw new Error(`Extension command conflict: "${command.name}"`);
 		}
 		for (const tool of tools) {
+			if (pluginId !== undefined && !tool.name.startsWith(`${pluginId}__`))
+				throw new Error(`Plugin tool namespace conflict: ${tool.name}`);
 			if (this.tools.has(tool.name)) throw new Error(`Extension tool conflict: "${tool.name}"`);
 		}
 		for (const command of commands) this.commands.set(command.name, command);
 		for (const tool of tools) this.tools.set(tool.name, tool);
 		for (const [event, list] of handlers) {
 			const existing = this.handlers.get(event) ?? [];
-			existing.push(...list);
-			this.handlers.set(event, existing);
+			this.handlers.set(event, [...existing, ...list.map((handler) => ({ path: _path, handler }))]);
 		}
 	}
 
-	async emit<E extends keyof ExtensionEventMap>(event: ExtensionEventMap[E]): Promise<void> {
+	async emit<E extends keyof ExtensionEventMap>(event: ExtensionEventMap[E], signal?: AbortSignal): Promise<void> {
 		const list = this.handlers.get(event.type) ?? [];
-		for (const handler of list) await handler(event as ExtensionEvent, this.context);
+		const context = createContext(this.options, signal);
+		for (const { path, handler } of list) {
+			try {
+				await handler(event as ExtensionEvent, context);
+			} catch (cause) {
+				this.runtimeDiagnostics.push({
+					path,
+					stage: "handler",
+					message: `Extension event handler failed: ${safeDiagnosticMessage(cause)}`,
+				});
+			}
+		}
 	}
 
 	async runCommand(name: string, args: string): Promise<void> {
@@ -130,6 +154,7 @@ export class ExtensionHost {
 		name: string,
 		toolCallId: string,
 		input: unknown,
+		signal?: AbortSignal,
 	): Promise<readonly import("@di-code/ai").ToolResultContent[]> {
 		const tool = this.tools.get(name);
 		if (!tool) throw new Error(`Unknown extension tool: "${name}"`);
@@ -140,8 +165,25 @@ export class ExtensionHost {
 			const message = cause instanceof Error ? cause.message : String(cause);
 			throw new Error(`Tool arguments invalid: ${message}`, { cause });
 		}
-		return tool.execute(toolCallId, parameters as never, this.context.signal, this.context);
+		return tool.execute(toolCallId, parameters as never, signal, createContext(this.options, signal));
 	}
+}
+
+const RESERVED_INTERACTIVE_COMMANDS = new Set([
+	"help",
+	"clear",
+	"model",
+	"session",
+	"theme",
+	"settings",
+	"compact",
+	"usage",
+	"retry",
+]);
+
+function safeDiagnosticMessage(cause: unknown): string {
+	const message = cause instanceof Error ? cause.message : String(cause);
+	return message.replace(/(api[_-]?key|token|secret|authorization)=[^\\s]+/gi, "$1=[redacted]").slice(0, 500);
 }
 
 async function discoverProjectPaths(cwd: string): Promise<string[]> {
