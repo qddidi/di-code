@@ -1,8 +1,8 @@
 {
 	"name": "@di-code/ai",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Provider-neutral AI contracts and adapters for di-code",
-	"private": true,
+	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -11,6 +11,13 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",

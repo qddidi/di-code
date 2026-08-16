@@ -14,6 +14,8 @@
 - `print`、`json`、`interactive` 三种 CLI 模式。
 - 可选 JSONL 会话持久化、并发追加保护和上下文压缩能力。
 - 扩展 API，可注册命令、只读工具及 Agent 生命周期事件处理器。
+- 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
+- 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
 ## 架构
 
@@ -22,6 +24,7 @@ packages/
   ai/             Provider 无关的 AI 类型、事件流和 OpenAI 适配器
   agent/          Agent 状态管理与工具调用循环
   coding-agent/   CLI、编码工具、会话、交互模式和扩展运行时
+  orchestrator/   通过公开 RPC SDK 管理 Coding Agent 子进程生命周期
   tui/            自研 ANSI 终端 UI 组件库
 ```
 
@@ -48,6 +51,7 @@ Provider.stream() <----> Responses API Provider
 | `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、DeepSeek Responses API 与 Faux 测试 Provider。 |
 | `@di-code/agent` | 管理完整对话历史和模型上下文，执行模型-工具循环，并向订阅者按序发布事件。 |
 | `@di-code/coding-agent` | 可执行产品层，提供 CLI、文件与命令工具、会话存储、上下文压缩、交互界面和扩展契约。 |
+| `@di-code/orchestrator` | 监督 `di-code-rpc` 子进程，传播取消和崩溃，并保留有上限的 stderr 诊断。 |
 | `@di-code/tui` | ANSI 终端渲染、增量重绘、光标、焦点、Overlay、编辑器、Markdown、补全等基础组件。 |
 
 ## 环境要求
@@ -352,6 +356,31 @@ npm run build
 node --env-file-if-exists=.env packages/coding-agent/dist/entry.js --help
 ```
 
+### RPC 模式
+
+构建后，`di-code-rpc` 使用 stdin 接收一行一个 JSON 请求，并在 stdout 输出一行一个版本化响应或事件。stderr 只用于进程诊断。下面的 PowerShell 示例查询当前 Session 状态：
+
+```powershell
+$request = '{"version":1,"kind":"request","id":"state-1","method":"get_state","params":{}}'
+$request | node packages/coding-agent/dist/rpc-entry.js
+```
+
+所有协议记录都包含 `version: 1`。请求 `id` 关联最终响应，prompt 期间的事件使用 `requestId` 关联原请求。当前公开方法为：
+
+| 方法 | 参数 | 结果 |
+| --- | --- | --- |
+| `get_state` | `{}` | Session ID、模型、是否正在生成、消息数。 |
+| `prompt` | `{ "message": "..." }` | 最终 `AssistantMessage`；中间事件另行输出。 |
+| `cancel` | `{ "requestId": "..." }` | 是否找到并中止对应 prompt。 |
+
+SDK 从公开子路径导入：
+
+```ts
+import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
+```
+
+`@di-code/orchestrator` 的 `RpcSupervisor` 接收 RPC 可执行命令、参数、cwd 和环境变量。它只通过上述公开 SDK 通信；非预期子进程退出会把状态设为 `crashed`，并拒绝所有尚未完成的请求。实现不会自动重启，因为工具调用目前没有跨进程幂等键，自动重放可能重复写文件或执行命令。
+
 ## 交互模式
 
 交互模式提供流式对话、工具执行状态、文件路径和斜杠命令补全。常用命令包括：
@@ -403,6 +432,14 @@ npm run check   # Biome 检查与 TypeScript 类型检查
 npm test        # 运行全部 workspace 测试
 npm run dev     # 从源码运行 coding-agent
 ```
+
+发布候选必须先执行本地 dry-run：
+
+```powershell
+npm run release:dry-run
+```
+
+该命令构建五个 workspace，检查并生成 npm tarball，在系统临时目录创建仓库外项目，以 `npm install --ignore-scripts` 安装所有 tarball，然后验证 help、version、Faux 对话和 orchestrator RPC 链路。成功或失败后都会清理临时目录；它不会运行 `npm publish`、创建 Git tag 或调用真实 Provider。
 
 每个包也可单独执行构建或测试：
 

@@ -1,7 +1,7 @@
 {
-	"name": "@di-code/tui",
+	"name": "@di-code/orchestrator",
 	"version": "0.1.0",
-	"description": "Reusable terminal UI library for di-code",
+	"description": "Process supervisor for di-code RPC agents",
 	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
@@ -24,12 +24,9 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"get-east-asian-width": "1.6.0"
+		"@di-code/coding-agent": "0.1.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"
-	},
-	"devDependencies": {
-		"@xterm/headless": "5.5.0"
 	}
 }

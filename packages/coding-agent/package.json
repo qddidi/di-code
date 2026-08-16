@@ -1,19 +1,31 @@
 {
 	"name": "@di-code/coding-agent",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Coding agent product layer for di-code",
-	"private": true,
+	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"bin": {
-		"di-code": "./dist/entry.js"
+		"di-code": "./dist/entry.js",
+		"di-code-rpc": "./dist/rpc-entry.js"
 	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./rpc": {
+			"types": "./dist/rpc/index.d.ts",
+			"import": "./dist/rpc/index.js"
 		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
@@ -21,9 +33,9 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.0.0",
-		"@di-code/ai": "0.0.0",
-		"@di-code/tui": "0.0.0"
+		"@di-code/agent": "0.1.0",
+		"@di-code/ai": "0.1.0",
+		"@di-code/tui": "0.1.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"

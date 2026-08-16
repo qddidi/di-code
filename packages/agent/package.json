@@ -1,8 +1,8 @@
 {
 	"name": "@di-code/agent",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Core agent state and loop for di-code",
-	"private": true,
+	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -12,12 +12,19 @@
 			"import": "./dist/index.js"
 		}
 	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/ai": "0.0.0"
+		"@di-code/ai": "0.1.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"

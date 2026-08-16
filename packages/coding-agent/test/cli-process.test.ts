@@ -62,7 +62,7 @@ describe("CLI process entry", () => {
 		const result = await runCli(["--version"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe("0.0.0\n");
+		expect(result.stdout).toBe("0.1.0\n");
 		expect(result.stderr).toBe("");
 	});
 
