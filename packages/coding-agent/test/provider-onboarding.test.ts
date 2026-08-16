@@ -131,6 +131,24 @@ describe("runProviderOnboarding", () => {
 		expect(runtime?.model.id).toBe("faux-model");
 	});
 
+	it("selects Zhipu and keeps the entered API key out of terminal output", async () => {
+		const terminal = new TestTerminal();
+		const result = runProviderOnboarding({ configuration: configuration(), terminal });
+
+		terminal.send("\x1b[B");
+		terminal.send("\x1b[B");
+		terminal.send("\x1b[B");
+		terminal.send("\r");
+		terminal.send("\r");
+		terminal.send("test-zhipu-secret");
+		terminal.send("\r");
+
+		const runtime = await result;
+		expect(runtime?.provider.id).toBe("zhipu");
+		expect(runtime?.model.id).toBe("glm-5.3");
+		expect(terminal.output).not.toContain("test-zhipu-secret");
+	});
+
 	it("rejects an empty key and lets Ctrl-C cancel without creating a runtime", async () => {
 		const terminal = new TestTerminal();
 		const result = runProviderOnboarding({

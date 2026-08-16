@@ -4,6 +4,7 @@ import {
 	createDeepSeekProvider,
 	createFauxProvider,
 	createOpenAIProvider,
+	createZhipuProvider,
 	type FauxResponse,
 	type Model,
 	type Provider,
@@ -181,7 +182,14 @@ function createFauxRuntime(): StartupRuntime {
 }
 
 function selectProviderModel(provider: Provider, providerId: string, env: Environment): Model {
-	const modelId = env.DI_CODE_MODEL?.trim() || provider.models[0]?.id;
+	const modelId =
+		env.DI_CODE_MODEL?.trim() ||
+		(providerId === "openai"
+			? provider.models.find((candidate) => candidate.id === "gpt-4o")?.id
+			: providerId === "zhipu"
+				? provider.models.find((candidate) => candidate.id === "glm-5.3")?.id
+				: undefined) ||
+		provider.models[0]?.id;
 	if (!modelId) throw new Error("DI_CODE_MODEL is required when the selected provider has no models");
 	const model = provider.models.find((candidate) => candidate.id === modelId);
 	if (!model) {
@@ -200,16 +208,29 @@ function createBuiltInRuntime(env: Environment, providerId: string): StartupRunt
 		const provider = createDeepSeekProvider({ env });
 		return { provider, model: selectProviderModel(provider, providerId, env) };
 	}
+	if (providerId === "zhipu") {
+		const provider = createZhipuProvider({ env });
+		return { provider, model: selectProviderModel(provider, providerId, env) };
+	}
 	return undefined;
 }
 
 function createConfiguredRuntime(env: Environment, configuration: StartupProviderConfiguration): StartupRuntime {
-	if (configuration.api !== "openai-responses" && configuration.api !== "deepseek-responses") {
+	if (
+		configuration.api !== "openai-responses" &&
+		configuration.api !== "deepseek-responses" &&
+		configuration.api !== "zhipu-chat-completions"
+	) {
 		throw new Error(
-			`Unsupported API "${configuration.api ?? "missing"}" for provider "${configuration.id}". Expected openai-responses or deepseek-responses.`,
+			`Unsupported API "${configuration.api ?? "missing"}" for provider "${configuration.id}". Expected openai-responses or deepseek-responses. zhipu-chat-completions is also supported.`,
 		);
 	}
-	if (configuration.id !== "openai" && configuration.id !== "deepseek" && !configuration.models) {
+	if (
+		configuration.id !== "openai" &&
+		configuration.id !== "deepseek" &&
+		configuration.id !== "zhipu" &&
+		!configuration.models
+	) {
 		throw new Error(`${SETTINGS_PATH}: providers.${configuration.id}.models is required for a custom provider`);
 	}
 	const provider =
@@ -220,19 +241,26 @@ function createConfiguredRuntime(env: Environment, configuration: StartupProvide
 					apiKey: resolveConfigValue(configuration.apiKey, env),
 					baseUrl: configuration.models ? undefined : configuration.baseUrl,
 				})
-			: createOpenAIProvider({
-					env:
-						configuration.id === "openai"
-							? env
-							: Object.fromEntries(
-									Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
-								),
-					models: configuration.models,
-					apiKey: resolveConfigValue(configuration.apiKey, env),
-					baseUrl: configuration.models ? undefined : configuration.baseUrl,
-					providerId: configuration.id,
-					name: configuration.name,
-				});
+			: configuration.id === "zhipu"
+				? createZhipuProvider({
+						env,
+						models: configuration.models,
+						apiKey: resolveConfigValue(configuration.apiKey, env),
+						baseUrl: configuration.models ? undefined : configuration.baseUrl,
+					})
+				: createOpenAIProvider({
+						env:
+							configuration.id === "openai"
+								? env
+								: Object.fromEntries(
+										Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
+									),
+						models: configuration.models,
+						apiKey: resolveConfigValue(configuration.apiKey, env),
+						baseUrl: configuration.models ? undefined : configuration.baseUrl,
+						providerId: configuration.id,
+						name: configuration.name,
+					});
 	const model = selectProviderModel(provider, configuration.id, env);
 	return { provider, model };
 }

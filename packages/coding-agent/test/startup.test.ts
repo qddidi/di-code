@@ -246,6 +246,17 @@ describe("resolveStartupRuntime", () => {
 		});
 	});
 
+	it("uses the built-in Zhipu provider from environment configuration", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "zhipu", ZAI_API_KEY: "test-key" }, []);
+
+		expect(runtime.provider).toMatchObject({ id: "zhipu", name: "Zhipu AI" });
+		expect(runtime.model).toMatchObject({
+			id: "glm-5.3",
+			provider: "zhipu",
+			api: "zhipu-chat-completions",
+		});
+	});
+
 	it("selects an explicit built-in DeepSeek model", () => {
 		const runtime = resolveStartupRuntime(
 			{
@@ -266,5 +277,14 @@ describe("resolveStartupRuntime", () => {
 
 		expect(runtime.provider.id).toBe("deepseek");
 		expect(runtime.model).toMatchObject({ id: "deepseek-v4-flash", api: "deepseek-responses" });
+	});
+
+	it("allows a configured Zhipu provider to use the generated Coding Plan models", () => {
+		const runtime = resolveStartupRuntime({ ZAI_API_KEY: "test-key" }, [
+			{ id: "zhipu", api: "zhipu-chat-completions" },
+		]);
+
+		expect(runtime.provider.id).toBe("zhipu");
+		expect(runtime.model).toMatchObject({ id: "glm-5.3", api: "zhipu-chat-completions" });
 	});
 });

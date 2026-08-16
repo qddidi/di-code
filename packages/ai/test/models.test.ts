@@ -45,6 +45,31 @@ describe("model catalog", () => {
 		}
 	});
 
+	it("advertises Zhipu GLM coding models through the Chat Completions adapter", () => {
+		const zhipuModels = MODEL_SOURCE.filter((model) => model.provider === "zhipu");
+
+		expect(zhipuModels.map((model) => model.id)).toEqual(["glm-5.3", "glm-5-turbo", "glm-4.7"]);
+		expect(
+			zhipuModels.map((model) => ({
+				id: model.id,
+				contextWindow: model.contextWindow,
+				maxOutputTokens: model.maxOutputTokens,
+			})),
+		).toEqual([
+			{ id: "glm-5.3", contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+			{ id: "glm-5-turbo", contextWindow: 200_000, maxOutputTokens: 128_000 },
+			{ id: "glm-4.7", contextWindow: 200_000, maxOutputTokens: 128_000 },
+		]);
+		for (const model of zhipuModels) {
+			expect(model).toMatchObject({
+				api: "zhipu-chat-completions",
+				baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+				input: ["text"],
+				reasoning: true,
+			});
+		}
+	});
+
 	it("sorts entries by provider then model id", () => {
 		const openAiModel = openAiSourceModel();
 

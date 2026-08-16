@@ -2,11 +2,11 @@
 
 `di-code` 是一个以终端为主要界面的 TypeScript AI 编码代理。它将模型 Provider、Agent 工具循环、编码工具、会话管理和 ANSI 终端 UI 拆分为可独立构建与测试的 npm workspace 包。
 
-当前接入 OpenAI Responses API 与 DeepSeek Responses API，支持流式文本、推理、工具调用，以及面向脚本与交互使用的多种 CLI 输出模式。
+当前接入 OpenAI Responses API、DeepSeek Responses API 和智谱 GLM Chat Completions API，支持流式文本、推理、工具调用，以及面向脚本与交互使用的多种 CLI 输出模式。
 
 ## 功能
 
-- OpenAI / DeepSeek Responses API 流式适配，包含文本、推理、工具调用和用量信息。
+- OpenAI / DeepSeek Responses API 与智谱 GLM Chat Completions API 流式适配，包含文本、推理、工具调用和用量信息。
 - Provider 无关的消息、模型、工具与事件协议。
 - Agent 工具循环：模型请求工具后，执行工具并将结果回传给模型，直至任务结束。
 - 内置 `read`、`write`、`edit`、`bash` 编码工具。
@@ -21,7 +21,7 @@
 
 ```text
 packages/
-  ai/             Provider 无关的 AI 类型、事件流和 OpenAI 适配器
+  ai/             Provider 无关的 AI 类型、事件流和 OpenAI/Chat Completions 适配器
   agent/          Agent 状态管理与工具调用循环
   coding-agent/   CLI、编码工具、会话、交互模式和扩展运行时
   orchestrator/   通过公开 RPC SDK 管理 Coding Agent 子进程生命周期
@@ -37,7 +37,7 @@ CLI / Interactive UI
         |
       Agent
         |
-Provider.stream() <----> Responses API Provider
+Provider.stream() <----> Responses / Chat Completions Provider
         |
   tool_use 时依次执行 read / write / edit / bash
         |
@@ -48,7 +48,7 @@ Provider.stream() <----> Responses API Provider
 
 | 包 | 说明 |
 | --- | --- |
-| `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、DeepSeek Responses API 与 Faux 测试 Provider。 |
+| `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、DeepSeek、智谱 GLM 与 Faux 测试 Provider。 |
 | `@di-code/agent` | 管理完整对话历史和模型上下文，执行模型-工具循环，并向订阅者按序发布事件。 |
 | `@di-code/coding-agent` | 可执行产品层，提供 CLI、文件与命令工具、会话存储、上下文压缩、交互界面和扩展契约。 |
 | `@di-code/orchestrator` | 监督 `di-code-rpc` 子进程，传播取消和崩溃，并保留有上限的 stderr 诊断。 |
@@ -58,7 +58,7 @@ Provider.stream() <----> Responses API Provider
 
 - Node.js `>= 22.19.0`
 - npm
-- OpenAI 或 DeepSeek API Key，或使用 `faux` Provider 做确定性本地验证
+- OpenAI、DeepSeek 或智谱 API Key，或使用 `faux` Provider 做确定性本地验证
 
 安装依赖：
 
@@ -91,7 +91,7 @@ npm run dev
 - 没有设置 `DI_CODE_PROVIDER`；
 - `.di-code/settings.json` 中没有 Provider。
 
-向导依次选择 Provider 和模型。选择 OpenAI 或 DeepSeek 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。向导输入的 key 只保存在本次进程内存中，退出后不会写入 `.env`、`settings.json`、Session 或日志，因此下次未配置环境变量时会再次询问。
+向导依次选择 Provider 和模型。选择 OpenAI、DeepSeek 或 Zhipu AI 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。向导输入的 key 只保存在本次进程内存中，退出后不会写入 `.env`、`settings.json`、Session 或日志，因此下次未配置环境变量时会再次询问。
 
 `.di-code/settings.json` 不存在、文件为空或只有空白字符时，都按“没有 settings 配置”处理。非空文件必须是合法 JSON。
 
@@ -105,12 +105,14 @@ npm run dev
 
 | 变量 | 作用 | 是否必需 |
 | --- | --- | --- |
-| `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`deepseek`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
-| `DI_CODE_MODEL` | 选择所选 Provider 的模型 ID | 可选；省略时使用该 Provider 的第一个模型 |
+| `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`deepseek`、`zhipu`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
+| `DI_CODE_MODEL` | 选择所选 Provider 的模型 ID | 可选；OpenAI/Zhipu 使用内建默认模型，其他 Provider 使用模型列表首项 |
 | `OPENAI_API_KEY` | OpenAI 凭据 | 使用 OpenAI 时必需，向导临时输入除外 |
 | `OPENAI_BASE_URL` | 覆盖内建 OpenAI endpoint | 可选，默认 `https://api.openai.com/v1` |
 | `DEEPSEEK_API_KEY` | DeepSeek 凭据 | 使用 DeepSeek 时必需，向导临时输入除外 |
 | `DEEPSEEK_BASE_URL` | 覆盖内建 DeepSeek endpoint | 可选，默认 `https://api.deepseek.com` |
+| `ZAI_API_KEY` | 智谱 API 凭据 | 使用 `zhipu` 时必需，向导临时输入除外 |
+| `ZHIPU_BASE_URL` | 覆盖内建智谱 Coding Plan endpoint | 可选，默认 `https://open.bigmodel.cn/api/coding/paas/v4` |
 
 DeepSeek 的 `.env` 示例：
 
@@ -136,11 +138,22 @@ OPENAI_API_KEY=<your-openai-api-key>
 DI_CODE_PROVIDER=faux
 ```
 
+智谱 GLM：
+
+```dotenv
+DI_CODE_PROVIDER=zhipu
+DI_CODE_MODEL=glm-5.3
+ZAI_API_KEY=<your-zhipu-api-key>
+# ZHIPU_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4
+```
+
 不要在 `.env` 中给值添加示例尖括号后直接使用；`<your-...>` 必须替换为真实的本地凭据。不要提交包含凭据的 `.env`。
 
 ### 内建 Provider 和模型
 
 内建 Provider 不需要 `settings.json`，模型来自生成目录。当前模型如下：
+
+智谱 GLM Coding Plan 的模型和 endpoint 以[官方套餐概览](https://docs.bigmodel.cn/cn/coding-plan/overview)及[模型切换说明](https://docs.bigmodel.cn/cn/coding-plan/latest-model)为准。
 
 | Provider | 模型 ID | 默认模型 | 输入能力 |
 | --- | --- | --- | --- |
@@ -149,9 +162,12 @@ DI_CODE_PROVIDER=faux
 | `openai` | `o3-mini` | 否 | 文本 |
 | `deepseek` | `deepseek-v4-flash` | 是 | 文本 |
 | `deepseek` | `deepseek-v4-pro` | 否 | 文本 |
+| `zhipu` | `glm-5.3` | 是 | 文本，1M 上下文 |
+| `zhipu` | `glm-5-turbo` | 否 | 文本 |
+| `zhipu` | `glm-4.7` | 否 | 文本 |
 | `faux` | `faux-model` | 是 | 本地测试，不访问网络 |
 
-`DI_CODE_MODEL` 省略时使用表中的默认模型。模型 ID 必须属于当前 Provider，否则启动会列出可用模型并报错。
+`DI_CODE_MODEL` 省略时使用 Provider 的默认模型：OpenAI 为 `gpt-4o`，Zhipu 为 `glm-5.3`，其他内建 Provider 使用其模型列表首项。模型 ID 必须属于当前 Provider，否则启动会列出可用模型并报错。
 
 ### 使用 `.di-code/settings.json`
 
@@ -203,10 +219,10 @@ Provider 字段：
 | --- | --- | --- |
 | providers 对象的 key | string | Provider ID，必须非空，例如 `company-gateway` |
 | `name` | string | 可选显示名称；省略时使用 Provider ID |
-| `api` | string | 自定义 Provider 使用 `openai-responses`；内建 `deepseek` 使用 `deepseek-responses` |
+| `api` | string | 自定义 Provider 使用 `openai-responses`；内建 `deepseek` 使用 `deepseek-responses`，内建 `zhipu` 使用 `zhipu-chat-completions` |
 | `baseUrl` | string | Provider endpoint；模型没有单独配置时会继承它 |
 | `apiKey` | string | 推荐写 `$ENV_VAR` 或 `${ENV_VAR}`；命令形式和 `!command` 不支持 |
-| `models` | array | 自定义 Provider 必需；内建 `openai`、`deepseek` 可省略并使用生成目录 |
+| `models` | array | 自定义 Provider 必需；内建 `openai`、`deepseek`、`zhipu` 可省略并使用生成目录 |
 
 模型字段：
 
@@ -241,6 +257,10 @@ Provider 字段：
     "deepseek": {
       "api": "deepseek-responses",
       "apiKey": "$DEEPSEEK_API_KEY"
+    },
+    "zhipu": {
+      "api": "zhipu-chat-completions",
+      "apiKey": "$ZAI_API_KEY"
     }
   }
 }
@@ -253,6 +273,7 @@ DI_CODE_PROVIDER=deepseek
 DI_CODE_MODEL=deepseek-v4-flash
 OPENAI_API_KEY=<your-openai-api-key>
 DEEPSEEK_API_KEY=<your-deepseek-api-key>
+ZAI_API_KEY=<your-zhipu-api-key>
 ```
 
 选择规则：
@@ -263,16 +284,16 @@ DEEPSEEK_API_KEY=<your-deepseek-api-key>
 4. settings 中没有 Provider、没有 `DI_CODE_PROVIDER` 且处于交互 TTY 时，启动选择向导。
 5. 非交互模式没有明确 Provider 时立即报错，不会等待输入。
 
-模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则选择 Provider 模型列表中的第一个模型。
+模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。
 
 ### 凭据和 endpoint 规则
 
-- 内建 OpenAI 默认读取 `OPENAI_API_KEY`，内建 DeepSeek 默认读取 `DEEPSEEK_API_KEY`。
+- 内建 OpenAI 默认读取 `OPENAI_API_KEY`，内建 DeepSeek 默认读取 `DEEPSEEK_API_KEY`，内建 Zhipu 默认读取 `ZAI_API_KEY`。
 - settings 中的 `apiKey` 可以引用任意环境变量，例如 `$COMPANY_GATEWAY_API_KEY` 或 `${COMPANY_GATEWAY_API_KEY}`。
 - settings 中配置了 `apiKey` 引用但对应环境变量为空或不存在时，启动会明确报出变量名，但不会打印变量值。
 - 虽然 `apiKey` 支持直接写字符串，但不要把真实 key 写进 JSON；优先使用环境变量引用。
 - 自定义 Provider 不会自动继承 `OPENAI_API_KEY`，必须通过自己的 `apiKey` 字段明确引用凭据。
-- `OPENAI_BASE_URL` 和 `DEEPSEEK_BASE_URL` 只用于覆盖对应内建 Provider endpoint。自定义 Provider 应在 settings 中配置 `baseUrl`。
+- `OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL` 和 `ZHIPU_BASE_URL` 只用于覆盖对应内建 Provider endpoint。自定义 Provider 应在 settings 中配置 `baseUrl`。
 - API key 不会写入 Session。首次向导输入的 key 也不会持久化。
 
 ### 配置错误排查

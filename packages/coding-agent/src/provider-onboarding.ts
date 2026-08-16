@@ -24,7 +24,7 @@ export function shouldStartProviderOnboarding(
 }
 
 interface OnboardingChoice extends SelectItem {
-	readonly providerId: "openai" | "deepseek" | "faux";
+	readonly providerId: "openai" | "deepseek" | "zhipu" | "faux";
 }
 
 class OnboardingScreen {
@@ -71,17 +71,28 @@ function providerChoices(): OnboardingChoice[] {
 		{ value: "openai", providerId: "openai", label: "OpenAI", description: "OpenAI Responses API" },
 		{ value: "deepseek", providerId: "deepseek", label: "DeepSeek", description: "DeepSeek Responses API" },
 		{ value: "faux", providerId: "faux", label: "Faux (offline)", description: "Deterministic local provider" },
+		{ value: "zhipu", providerId: "zhipu", label: "Zhipu AI", description: "GLM Chat Completions API" },
 	];
 }
 
 function modelsFor(providerId: OnboardingChoice["providerId"]): readonly Model[] {
 	if (providerId === "faux") return [createFauxProvider({ responses: [] }).model];
-	return MODELS.filter((model) => model.provider === providerId);
+	const models = MODELS.filter((model) => model.provider === providerId);
+	if (providerId === "openai") {
+		const preferred = models.find((model) => model.id === "gpt-4o");
+		return preferred ? [preferred, ...models.filter((model) => model !== preferred)] : models;
+	}
+	if (providerId === "zhipu") {
+		const preferred = models.find((model) => model.id === "glm-5.3");
+		return preferred ? [preferred, ...models.filter((model) => model !== preferred)] : models;
+	}
+	return models;
 }
 
 function apiKeyEnvironmentVariable(providerId: OnboardingChoice["providerId"]): string | undefined {
 	if (providerId === "openai") return "OPENAI_API_KEY";
 	if (providerId === "deepseek") return "DEEPSEEK_API_KEY";
+	if (providerId === "zhipu") return "ZAI_API_KEY";
 	return undefined;
 }
 

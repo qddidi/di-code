@@ -1,6 +1,13 @@
 export type { Static, TSchema } from "typebox";
 export { Type } from "typebox";
 export type {
+	ChatCompletionsRequest,
+	ChatFunctionTool,
+	OpenAIChatCompletionsDependencies,
+	OpenAIChatCompletionsStreamOptions,
+} from "./api/openai-chat-completions.ts";
+export { buildOpenAIChatCompletionsRequest, streamOpenAIChatCompletions } from "./api/openai-chat-completions.ts";
+export type {
 	OpenAIProviderErrorKind,
 	OpenAIProviderErrorOptions,
 	OpenAIResponsesDependencies,
@@ -22,6 +29,8 @@ export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./pr
 export { createFauxProvider } from "./providers/faux.ts";
 export type { OpenAIProviderOptions } from "./providers/openai.ts";
 export { createOpenAIProvider } from "./providers/openai.ts";
+export type { ZhipuProviderOptions } from "./providers/zhipu.ts";
+export { createZhipuProvider } from "./providers/zhipu.ts";
 export type {
 	Api,
 	AssistantContent,
