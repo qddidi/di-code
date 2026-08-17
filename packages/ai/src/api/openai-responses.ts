@@ -1403,12 +1403,19 @@ async function produceOpenAIResponse(
 	const request = buildOpenAIResponsesRequest(model, context, options);
 	const fetchImpl = dependencies.fetch ?? globalThis.fetch;
 	const baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+	const sessionId = options.sessionId?.trim();
 	const response = await fetchImpl(`${baseUrl}/responses`, {
 		method: "POST",
 		headers: {
 			accept: "text/event-stream",
 			authorization: `Bearer ${options.apiKey}`,
 			"content-type": "application/json",
+			...(sessionId
+				? {
+						session_id: sessionId,
+						"x-client-request-id": sessionId,
+					}
+				: {}),
 		},
 		body: JSON.stringify(request),
 		signal: options.signal,

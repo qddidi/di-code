@@ -1046,6 +1046,24 @@ describe("streamOpenAIResponses", () => {
 		});
 	});
 
+	it("sends stable session-affinity headers when a session id is supplied", async () => {
+		const deps = dependencies(
+			sse({
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(model, context, { ...options, sessionId: "session-affinity-123" }, deps);
+		await collect(stream);
+
+		const [, init] = deps.fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect(init.headers).toMatchObject({
+			session_id: "session-affinity-123",
+			"x-client-request-id": "session-affinity-123",
+		});
+	});
+
 	it("maps function argument deltas and preserves the call id", async () => {
 		const response = sse(
 			{ type: "response.created", response: { id: "resp_tool" } },
