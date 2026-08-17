@@ -1272,7 +1272,7 @@ function handleOpenAIEvent(
 			throw new OpenAIResponseError(code ? `${code}: ${message}` : message);
 		}
 		default:
-			throw new InvalidOpenAIStreamError(`unsupported event type "${eventType}"`);
+			return;
 	}
 }
 

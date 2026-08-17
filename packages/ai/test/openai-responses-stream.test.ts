@@ -109,8 +109,9 @@ describe("streamOpenAIResponses", () => {
 		expect(await stream.result()).toMatchObject({ content: [], stopReason: "stop" });
 	});
 
-	it("still rejects unsupported non-Codex event types", async () => {
+	it("ignores unsupported event types and continues the response stream", async () => {
 		const response = sse(
+			{ type: "keepalive" },
 			{ type: "provider.unrecognized_event" },
 			{ type: "response.completed", response: { status: "completed" } },
 		);
@@ -118,10 +119,7 @@ describe("streamOpenAIResponses", () => {
 
 		await collect(stream);
 
-		expect(await stream.result()).toMatchObject({
-			stopReason: "error",
-			errorMessage: 'Invalid OpenAI Responses stream: unsupported event type "provider.unrecognized_event"',
-		});
+		expect(await stream.result()).toMatchObject({ stopReason: "stop", content: [] });
 	});
 
 	it("preserves encrypted reasoning and paired function calls for stateless replay", async () => {
