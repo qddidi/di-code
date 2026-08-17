@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/coding-agent",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Coding agent product layer for di-code",
 	"keywords": [
 		"ai-coding-agent",
@@ -52,9 +52,9 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.1.1",
-		"@di-code/ai": "0.1.1",
-		"@di-code/tui": "0.1.1",
+		"@di-code/agent": "0.1.2",
+		"@di-code/ai": "0.1.2",
+		"@di-code/tui": "0.1.2",
 		"jiti": "^2.5.1"
 	},
 	"engines": {

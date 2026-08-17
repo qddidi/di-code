@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 interface PackageMetadata {
@@ -17,6 +19,7 @@ interface PackageMetadata {
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDirectories = ["ai", "agent", "tui", "coding-agent", "orchestrator"] as const;
+const execFileAsync = promisify(execFile);
 
 async function readPackage(path: string): Promise<PackageMetadata> {
 	return JSON.parse(await readFile(path, "utf8")) as PackageMetadata;
@@ -52,5 +55,30 @@ describe("release package contract", () => {
 		const root = await readPackage(join(repositoryRoot, "package.json"));
 		expect(root.scripts?.build).toContain("@di-code/orchestrator");
 		expect(root.scripts?.["release:dry-run"]).toBe("node scripts/release-dry-run.mjs");
+	});
+
+	it("provides guarded version preparation and publishing commands", async () => {
+		const root = await readPackage(join(repositoryRoot, "package.json"));
+		expect(root.scripts?.["version:prepare"]).toBe("node scripts/version-packages.mjs");
+		expect(root.scripts?.["release:publish"]).toBe("node scripts/release-publish.mjs");
+
+		const [major, minor, patch] = root.version.split(".").map(Number);
+		const targetVersion = `${major}.${minor}.${patch + 1}`;
+		const result = await execFileAsync(process.execPath, [
+			join(repositoryRoot, "scripts", "version-packages.mjs"),
+			"--dry-run",
+			targetVersion,
+		]);
+		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 5 packages`);
+		await expect(
+			execFileAsync(process.execPath, [
+				join(repositoryRoot, "scripts", "version-packages.mjs"),
+				"--dry-run",
+				root.version,
+			]),
+		).rejects.toThrow(`Target version ${root.version} must be greater than current version ${root.version}.`);
+		await expect(
+			execFileAsync(process.execPath, [join(repositoryRoot, "scripts", "release-publish.mjs")]),
+		).rejects.toThrow("Usage: npm run release:publish -- --confirm");
 	});
 });

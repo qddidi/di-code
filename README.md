@@ -462,6 +462,31 @@ npm run release:dry-run
 
 该命令构建五个 workspace，检查并生成 npm tarball，在系统临时目录创建仓库外项目，以 `npm install --ignore-scripts` 安装所有 tarball，然后验证 help、version、Faux 对话和 orchestrator RPC 链路。成功或失败后都会清理临时目录；它不会运行 `npm publish`、创建 Git tag 或调用真实 Provider。
 
+准备新版本时，不要逐个修改 package manifest。传入一个高于当前版本的稳定语义版本号（`major.minor.patch`）：
+
+```powershell
+npm run version:prepare -- 0.1.2
+```
+
+该命令同步根包和五个 public workspace 的 `version`、所有 `@di-code/*` 内部依赖版本，并用 `npm install --package-lock-only --ignore-scripts` 更新 lockfile。可先用 `--dry-run` 只检查目标版本，不写入文件：
+
+```powershell
+npm run version:prepare -- 0.1.2 --dry-run
+```
+
+实际发布应先补齐对应的 `CHANGELOG.md` 条目，审查版本改动、执行质量门禁并提交版本候选。发布命令只接受明确确认，并从已提交的根 `package.json` 读取版本：
+
+```powershell
+npm run check
+npm test
+npm run release:dry-run
+git diff --check
+git commit -am "chore: release 0.1.2"
+npm run release:publish -- --confirm
+```
+
+`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖、以及缺少 `## [0.1.2]` CHANGELOG 标题的候选；随后重跑 release dry-run，再按 ai、agent、tui、coding-agent、orchestrator 的顺序调用 `npm publish --ignore-scripts`。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
+
 每个包也可单独执行构建或测试：
 
 ```powershell

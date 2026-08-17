@@ -1,6 +1,6 @@
 {
 	"name": "di-code",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"private": true,
 	"type": "module",
 	"workspaces": [
@@ -10,7 +10,9 @@
 		"build": "npm run build --workspace @di-code/tui && npm run build --workspace @di-code/ai && npm run build --workspace @di-code/agent && npm run build --workspace @di-code/coding-agent && npm run build --workspace @di-code/orchestrator",
 		"check": "biome check . && tsc --noEmit -p tsconfig.json",
 		"dev": "node --env-file-if-exists=.env --experimental-strip-types packages/coding-agent/src/entry.ts",
+		"version:prepare": "node scripts/version-packages.mjs",
 		"release:dry-run": "node scripts/release-dry-run.mjs",
+		"release:publish": "node scripts/release-publish.mjs",
 		"test": "npm run test --workspaces --if-present"
 	},
 	"devDependencies": {
