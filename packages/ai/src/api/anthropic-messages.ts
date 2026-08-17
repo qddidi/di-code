@@ -272,9 +272,17 @@ export function streamAnthropicMessages(
 	let reason: SuccessfulStopReason | undefined;
 	let terminalSeen = false;
 	const now = dependencies.now ?? Date.now;
+	const partialContent = (): AssistantContent[] => {
+		const active = blocks.values().next().value;
+		if (!active || active.kind === "tool") return [...content];
+		return [
+			...content,
+			active.kind === "text" ? { type: "text", text: active.value } : { type: "thinking", thinking: active.value },
+		];
+	};
 	const fail = (stopReason: "error" | "aborted", message: string) => ({
 		role: "assistant" as const,
-		content: [...content],
+		content: partialContent(),
 		provider: model.provider,
 		model: model.id,
 		usage,
@@ -346,6 +354,13 @@ export function streamAnthropicMessages(
 							const active = blocks.get(event.index);
 							if (!active) throw new InvalidAnthropicStreamError("content delta without a started block");
 							const delta = record(event.delta, "content_block_delta.delta");
+							if (delta.type === "signature_delta") {
+								if (typeof delta.signature !== "string")
+									throw new InvalidAnthropicStreamError("thinking signature delta must be a string");
+								if (active.kind !== "thinking")
+									throw new InvalidAnthropicStreamError("thinking signature delta must target a thinking block");
+								break;
+							}
 							const value =
 								delta.type === "text_delta"
 									? delta.text

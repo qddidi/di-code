@@ -122,6 +122,45 @@ describe("createAnthropicProvider", () => {
 		});
 	});
 
+	it("preserves active text as safe partial content when Anthropic emits a stream error", async () => {
+		const fetch = vi.fn(async () =>
+			sse([
+				{ type: "message_start", message: { usage: { input_tokens: 3 } } },
+				{ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+				{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } },
+				{ type: "error", error: { type: "overloaded_error", message: "overloaded" } },
+			]),
+		);
+		const provider = createAnthropicProvider(options({ fetch }));
+		const stream = provider.stream(model, context);
+
+		await expect(stream.result()).resolves.toMatchObject({
+			stopReason: "error",
+			content: [{ type: "text", text: "partial" }],
+			errorMessage: "Anthropic request failed: overloaded",
+		});
+	});
+
+	it("ignores thinking signature deltas that are outside the common stream contract", async () => {
+		const fetch = vi.fn(async () =>
+			sse([
+				{ type: "message_start", message: { usage: { input_tokens: 3 } } },
+				{ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+				{ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "consider" } },
+				{ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } },
+				{ type: "content_block_stop", index: 0 },
+				{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } },
+				{ type: "message_stop" },
+			]),
+		);
+		const provider = createAnthropicProvider(options({ fetch }));
+
+		await expect(provider.stream(model, context).result()).resolves.toMatchObject({
+			stopReason: "stop",
+			content: [{ type: "thinking", thinking: "consider" }],
+		});
+	});
+
 	it("replays a tool result as Anthropic user content and retries transient responses", async () => {
 		const fetch = vi
 			.fn()
