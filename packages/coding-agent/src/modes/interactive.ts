@@ -1,12 +1,24 @@
+import { statSync } from "node:fs";
+import { extname, resolve } from "node:path";
 import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
 	Editor,
+	Key,
+	matchesKey,
 	type OverlayHandle,
 	SelectList,
 	SettingsList,
 	type TUI,
 } from "@di-code/tui";
+import {
+	cleanupStaleClipboardImages,
+	clipboardImageDirectory,
+	isClipboardImagePath,
+	readClipboardImagePath,
+	removeClipboardImage,
+} from "../core/clipboard-image.ts";
+import { extractImageAttachments } from "../core/image-input.ts";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
 import type { ExtensionHost } from "../extensions/runtime.ts";
 import {
@@ -24,12 +36,40 @@ export type { AgentSessionEvent };
 export type { InteractiveMessage, InteractiveProcessItem, InteractiveState } from "./interactive-state.ts";
 export { InteractiveProjection } from "./interactive-state.ts";
 
+const IMAGE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"]);
+const PASTE_IMAGE_KEY = process.platform === "win32" ? Key.alt("v") : Key.ctrl("v");
+const PASTE_IMAGE_SHORTCUT = process.platform === "win32" ? "Alt+V" : "Ctrl+V";
+
+function asImageAttachmentReference(pasted: string, cwd: string): string {
+	if (pasted.includes("\n")) return pasted;
+	const candidate = pasted.trim().replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
+	if (!candidate || !IMAGE_EXTENSIONS.has(extname(candidate).toLowerCase())) return pasted;
+	try {
+		if (!statSync(resolve(cwd, candidate)).isFile()) return pasted;
+	} catch {
+		return pasted;
+	}
+	return `@"${candidate.replaceAll('"', '\\"')}" `;
+}
+
+function normalizeDroppedImagePrompt(prompt: string, cwd: string): string {
+	const normalized = asImageAttachmentReference(prompt, cwd);
+	if (normalized !== prompt) return normalized;
+	const prefix = /^((?:(?:[A-Za-z]:[\\/])|(?:\.\.?[\\/])|\/)[\s\S]*?\.(?:gif|jpe?g|png|webp))([\s\S]*)$/i.exec(prompt);
+	if (!prefix) return prompt;
+	const imageReference = asImageAttachmentReference(prefix[1] ?? "", cwd);
+	return imageReference === prefix[1]
+		? prompt
+		: `${imageReference}${normalizeDroppedImagePrompt(prefix[2] ?? "", cwd)}`;
+}
+
 export interface InteractiveModeOptions {
 	readonly session: AgentSession;
 	readonly tui: TUI;
 	readonly onExit?: () => void;
 	readonly sessions?: readonly InteractiveSessionChoice[];
 	readonly extensionHost?: ExtensionHost;
+	readonly readClipboardImagePath?: (directory?: string) => Promise<string | null>;
 }
 
 export interface InteractiveSessionChoice {
@@ -47,6 +87,9 @@ export class InteractiveMode {
 	private readonly tui: TUI;
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
 	private readonly extensionHost?: ExtensionHost;
+	private readonly readClipboardImagePath: (directory?: string) => Promise<string | null>;
+	private clipboardDirectory: string;
+	private readonly clipboardFiles = new Set<string>();
 	private unsubscribeSession?: () => void;
 	private sessionSwitching = false;
 	private promptInFlight = false;
@@ -61,6 +104,7 @@ export class InteractiveMode {
 	private autocompleteOverlay?: OverlayHandle;
 	private spinnerTimer?: ReturnType<typeof setInterval>;
 	private shutdownEmitted = false;
+	private preserveClipboardFiles = false;
 
 	constructor(options: InteractiveModeOptions) {
 		this.session = options.session;
@@ -68,6 +112,8 @@ export class InteractiveMode {
 		this.onExit = options.onExit;
 		this.sessionChoices = [...(options.sessions ?? [])];
 		this.extensionHost = options.extensionHost;
+		this.readClipboardImagePath = options.readClipboardImagePath ?? readClipboardImagePath;
+		this.clipboardDirectory = clipboardImageDirectory(this.session.allowedRoot);
 		const commands = [
 			{ name: "help", description: "Show interactive commands" },
 			{ name: "clear", description: "Clear visible messages" },
@@ -97,11 +143,20 @@ export class InteractiveMode {
 		this.editor.onEscape = () => this.activeAbort?.abort();
 		this.editor.onCommand = (data) => this.handleCommand(data);
 		this.editor.onInterrupt = () => this.exit();
+		this.editor.onChange = () => {
+			if (!this.preserveClipboardFiles) {
+				void this.cleanupUnreferencedClipboardFiles().catch((cause) => {
+					this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+					this.refresh();
+				});
+			}
+		};
 		this.editor.onAutocompleteChange = () => this.updateAutocompleteOverlay();
 		const readViewState = (): InteractiveViewState => ({
 			...this.projection.state,
 			model: this.session.modelId,
 			theme: this.theme,
+			pasteImageShortcut: PASTE_IMAGE_SHORTCUT,
 		});
 		this.root = new InteractiveLayout({
 			header: new InteractiveHeader(readViewState),
@@ -122,6 +177,10 @@ export class InteractiveMode {
 		this.projection.replaceTranscript(this.session.transcript);
 		this.projection.setUsage(this.session.usage);
 		this.subscribeToSession();
+		void cleanupStaleClipboardImages(this.session.allowedRoot).catch((cause) => {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+			this.refresh();
+		});
 		try {
 			this.tui.start();
 		} catch (cause) {
@@ -145,6 +204,7 @@ export class InteractiveMode {
 		this.closeAutocompleteOverlay();
 		this.unsubscribeSession?.();
 		this.unsubscribeSession = undefined;
+		void this.cleanupClipboardFiles();
 		this.tui.stop({ finalLines: this.root.renderTranscript(this.tui.columns) });
 		if (!this.shutdownEmitted) {
 			this.shutdownEmitted = true;
@@ -178,7 +238,26 @@ export class InteractiveMode {
 			void this.submit(this.lastFailedPrompt, true);
 			return true;
 		}
+		if (matchesKey(data, PASTE_IMAGE_KEY)) {
+			void this.attachClipboardImage();
+			return true;
+		}
 		return false;
+	}
+
+	private async attachClipboardImage(): Promise<void> {
+		try {
+			const path = await this.readClipboardImagePath(this.clipboardDirectory);
+			if (!path) {
+				this.projection.setStatus("Clipboard has no supported image.");
+			} else {
+				this.editor.insertTextAtCursor(path);
+				if (isClipboardImagePath(path, this.clipboardDirectory)) this.clipboardFiles.add(path);
+			}
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+		}
+		this.refresh();
 	}
 
 	private openThemeSelector(): void {
@@ -361,6 +440,8 @@ export class InteractiveMode {
 			if (!this.started) return;
 			this.unsubscribeSession?.();
 			this.session = next;
+			this.clipboardDirectory = clipboardImageDirectory(next.allowedRoot);
+			void cleanupStaleClipboardImages(next.allowedRoot);
 			this.queuedPrompts = [];
 			this.projection.setQueue([]);
 			this.projection.replaceTranscript(next.transcript);
@@ -403,15 +484,24 @@ export class InteractiveMode {
 		this.promptInFlight = true;
 		this.activeAbort = new AbortController();
 		this.projection.setRetrying(retry);
-		this.editor.setValue("");
 		try {
-			const result = await this.session.prompt(prompt, this.activeAbort.signal);
+			const input = await extractImageAttachments(
+				normalizeDroppedImagePrompt(prompt, this.session.allowedRoot),
+				this.session.allowedRoot,
+			);
+			this.preserveClipboardFiles = true;
+			this.editor.setValue("");
+			const result = await this.session.promptWithImages(input.text, input.images, this.activeAbort.signal);
 			if (result.stopReason === "error" || result.stopReason === "aborted") this.lastFailedPrompt = prompt;
-			else this.lastFailedPrompt = undefined;
+			else {
+				this.lastFailedPrompt = undefined;
+				await this.cleanupClipboardFiles();
+			}
 		} catch (cause) {
 			this.lastFailedPrompt = prompt;
 			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
+			this.preserveClipboardFiles = false;
 			this.promptInFlight = false;
 			this.activeAbort = undefined;
 			this.projection.setRetrying(false);
@@ -421,6 +511,19 @@ export class InteractiveMode {
 			this.tui.requestRender();
 			if (next && this.started) void this.submit(next);
 		}
+	}
+
+	private async cleanupUnreferencedClipboardFiles(): Promise<void> {
+		const text = this.editor.getValue();
+		const files = [...this.clipboardFiles].filter((path) => !text.includes(path));
+		await Promise.all(files.map((path) => removeClipboardImage(path, this.clipboardDirectory)));
+		for (const path of files) this.clipboardFiles.delete(path);
+	}
+
+	private async cleanupClipboardFiles(): Promise<void> {
+		const files = [...this.clipboardFiles];
+		await Promise.all(files.map((path) => removeClipboardImage(path, this.clipboardDirectory)));
+		for (const path of files) this.clipboardFiles.delete(path);
 	}
 
 	private handleSlashCommand(input: string): void {

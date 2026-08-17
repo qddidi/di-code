@@ -10,6 +10,7 @@ export type CliCommand =
 			prompt: string;
 			sessionPath?: string;
 			continueSession?: true;
+			imagePaths?: readonly string[];
 			noSkills?: true;
 			noContextFiles?: true;
 			skillPaths?: readonly string[];
@@ -61,6 +62,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	let noContextFiles = false;
 	let projectTrust: boolean | undefined;
 	const skillPaths: string[] = [];
+	const imagePaths: string[] = [];
 	const promptParts: string[] = [];
 
 	for (let index = 0; index < args.length; index++) {
@@ -102,6 +104,15 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			index++;
 			continue;
 		}
+		if (argument === "--image") {
+			const value = args[index + 1];
+			if (value === undefined || value.trim().length === 0) {
+				throw new CliUsageError("Option --image requires a non-empty value.");
+			}
+			imagePaths.push(value);
+			index++;
+			continue;
+		}
 		if (argument === "--mode") {
 			const value = args[index + 1];
 			if (value === undefined) {
@@ -140,6 +151,9 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	if (continueSession && sessionPath !== undefined) {
 		throw new CliUsageError("Cannot combine --continue with --session.");
 	}
+	if (mode === "interactive" && imagePaths.length > 0) {
+		throw new CliUsageError("--image is not available in interactive mode.");
+	}
 	if (promptParts.length === 0 && mode !== "interactive") {
 		throw new CliUsageError("A prompt is required.");
 	}
@@ -153,6 +167,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		...(noSkills ? { noSkills: true as const } : {}),
 		...(noContextFiles ? { noContextFiles: true as const } : {}),
 		...(skillPaths.length > 0 ? { skillPaths } : {}),
+		...(imagePaths.length > 0 ? { imagePaths } : {}),
 		...(projectTrust === undefined ? {} : { projectTrust }),
 	};
 }
@@ -165,6 +180,7 @@ Options:
   --interactive      Start interactive terminal mode
   --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
+  --image <path>     Attach a local PNG, JPEG, WebP, or GIF image (repeatable)
   --skill <path>     Add a SKILL.md file or skill directory (repeatable)
   --no-skills        Disable all Skill loading
   --no-context-files Disable AGENTS.md discovery and loading

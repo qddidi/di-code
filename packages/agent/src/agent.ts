@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, Model, Provider } from "@di-code/ai";
+import type { AssistantMessage, Message, Model, Provider, UserContent } from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentContext, AgentEvent, AgentTool } from "./types.ts";
 
@@ -26,10 +26,10 @@ function toError(cause: unknown): Error {
 	return cause instanceof Error ? cause : new Error(String(cause));
 }
 
-function createUserMessage(text: string, now: () => number): Extract<Message, { role: "user" }> {
+function createUserMessage(content: readonly UserContent[], now: () => number): Extract<Message, { role: "user" }> {
 	return {
 		role: "user",
-		content: [{ type: "text", text }],
+		content: structuredClone([...content]),
 		timestamp: now(),
 	};
 }
@@ -100,13 +100,19 @@ export class Agent {
 	 * 串行执行一次用户提示。模型失败与取消会返回对应的助手消息；监听器失败则拒绝此 Promise。
 	 */
 	async prompt(text: string, signal?: AbortSignal): Promise<AssistantMessage> {
+		return this.promptWithContent([{ type: "text", text }], signal);
+	}
+
+	/** Submits one user message with provider-neutral text and image content blocks. */
+	async promptWithContent(content: readonly UserContent[], signal?: AbortSignal): Promise<AssistantMessage> {
 		// 当前实现只有一份可提交历史，因此禁止两个轮次并发写入，避免提交顺序不确定。
 		if (this.streaming) {
 			throw new Error("Agent is already processing a prompt.");
 		}
+		if (content.length === 0) throw new Error("Agent prompt content must not be empty.");
 
 		this.streaming = true;
-		const prompt = createUserMessage(text, this.now);
+		const prompt = createUserMessage(content, this.now);
 		const contextLength = this.contextMessageState.length;
 		const context: AgentContext = {
 			systemPrompt: this.systemPrompt,

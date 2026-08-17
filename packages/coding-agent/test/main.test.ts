@@ -100,6 +100,41 @@ describe("runMain", () => {
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
 	});
 
+	it("sends a CLI image attachment to the provider with its text prompt", async () => {
+		await writeFile(join(root, "diagram.png"), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "diagram described" }] }],
+		});
+		let requestedContent: import("@di-code/ai").UserContent[] | undefined;
+		const provider = {
+			...faux.provider,
+			stream(
+				model: typeof faux.model,
+				context: import("@di-code/ai").Context,
+				options?: Parameters<typeof faux.provider.stream>[2],
+			) {
+				const user = context.messages.find((message) => message.role === "user");
+				requestedContent = user?.role === "user" ? [...user.content] : undefined;
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const io = createIo();
+
+		const exitCode = await runMain(["--image", "diagram.png", "--print", "describe this diagram"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			createRuntime: () => ({ provider, model: faux.model }),
+		});
+
+		expect(exitCode).toBe(0);
+		expect(requestedContent).toEqual([
+			{ type: "text", text: "describe this diagram" },
+			{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+		]);
+		expect(io.stdout).toHaveBeenCalledWith("diagram described\n");
+	});
+
 	it("loads trusted project extension tools into the CLI AgentSession", async () => {
 		const extensionDirectory = join(root, ".di-code", "extensions");
 		await mkdir(extensionDirectory, { recursive: true });

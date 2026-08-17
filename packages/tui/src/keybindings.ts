@@ -9,6 +9,7 @@ export interface Keybindings {
 	"tui.editor.cursorLineEnd": true;
 	"tui.editor.deleteCharBackward": true;
 	"tui.editor.deleteCharForward": true;
+	"tui.editor.deleteToLineStart": true;
 	"tui.input.submit": true;
 	"tui.input.newLine": true;
 	"tui.input.cancel": true;
@@ -45,6 +46,7 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: [Key.delete, Key.ctrl("d")],
 		description: "Delete forward",
 	},
+	"tui.editor.deleteToLineStart": { defaultKeys: Key.ctrl("u"), description: "Delete to line start" },
 	"tui.input.submit": { defaultKeys: Key.enter, description: "Submit input" },
 	"tui.input.newLine": { defaultKeys: Key.shift("enter"), description: "Insert newline" },
 	"tui.input.cancel": { defaultKeys: Key.escape, description: "Cancel input" },

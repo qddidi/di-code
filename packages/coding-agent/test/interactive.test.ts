@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider, type Provider } from "@di-code/ai";
@@ -11,6 +11,8 @@ import { AgentSession } from "../src/core/session.ts";
 import { ExtensionHost } from "../src/extensions/runtime.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
+
+const PASTE_IMAGE_INPUT = process.platform === "win32" ? "\x1bv" : "\x16";
 
 class TestTerminal implements Terminal {
 	private input?: (data: string) => void;
@@ -607,6 +609,229 @@ describe("InteractiveMode", () => {
 		assert.equal(terminal.output.includes("hello from model"), true);
 		assert.equal(terminal.output.includes(CURSOR_MARKER), false);
 		mode.stop();
+	});
+
+	it("attaches a dropped image path to the next interactive prompt", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-image-"));
+		try {
+			const imagePath = join(root, "diagram.png");
+			writeFileSync(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "image answer" }] }],
+			});
+			let content: import("@di-code/ai").UserContent[] | undefined;
+			const provider: Provider = {
+				...faux.provider,
+				stream(model, context, options) {
+					const user = context.messages.find((message) => message.role === "user");
+					content = user?.role === "user" ? [...user.content] : undefined;
+					return faux.provider.stream(model, context, options);
+				},
+			};
+			const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+			const terminal = new TestTerminal();
+			const mode = new InteractiveMode({ session, tui: new TUI(terminal) });
+
+			mode.start();
+			terminal.sendInput(`\x1b[200~${imagePath}\x1b[201~`);
+			terminal.sendInput("describe this image");
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+
+			assert.deepEqual(content, [
+				{ type: "text", text: "[Attached image: diagram.png]\ndescribe this image" },
+				{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+			]);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("recognizes a dropped image path when the terminal sends it as plain text", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-plain-image-"));
+		try {
+			const imagePath = join(root, "plain-drop.jpg");
+			writeFileSync(imagePath, Buffer.from([255, 216, 255]));
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "image answer" }] }],
+			});
+			let content: import("@di-code/ai").UserContent[] | undefined;
+			const provider: Provider = {
+				...faux.provider,
+				stream(model, context, options) {
+					const user = context.messages.find((message) => message.role === "user");
+					content = user?.role === "user" ? [...user.content] : undefined;
+					return faux.provider.stream(model, context, options);
+				},
+			};
+			const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+			const terminal = new TestTerminal();
+			const mode = new InteractiveMode({ session, tui: new TUI(terminal) });
+
+			mode.start();
+			terminal.sendInput(`${imagePath}这是什么图片`);
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+
+			assert.deepEqual(content, [
+				{ type: "text", text: "[Attached image: plain-drop.jpg]\n这是什么图片" },
+				{ type: "image", data: "/9j/", mimeType: "image/jpeg" },
+			]);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("inserts a clipboard image path at the cursor and attaches it on the platform paste shortcut", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-clipboard-"));
+		try {
+			const clipboardDirectory = join(root, ".di-code", "clipboard");
+			mkdirSync(clipboardDirectory, { recursive: true });
+			const imagePath = join(clipboardDirectory, "di-code-clipboard-00000000-0000-0000-0000-000000000000.png");
+			writeFileSync(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "image answer" }] }],
+			});
+			let content: import("@di-code/ai").UserContent[] | undefined;
+			const provider: Provider = {
+				...faux.provider,
+				stream(model, context, options) {
+					const user = context.messages.find((message) => message.role === "user");
+					content = user?.role === "user" ? [...user.content] : undefined;
+					return faux.provider.stream(model, context, options);
+				},
+			};
+			const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+			const terminal = new TestTerminal();
+			let clipboardReads = 0;
+			const mode = new InteractiveMode({
+				session,
+				tui: new TUI(terminal),
+				readClipboardImagePath: async () => {
+					clipboardReads += 1;
+					return imagePath;
+				},
+			});
+
+			mode.start();
+			terminal.sendInput(PASTE_IMAGE_INPUT);
+			await waitFor(() => clipboardReads === 1);
+			await flush();
+			terminal.sendInput(" describe this image");
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+
+			assert.deepEqual(content, [
+				{
+					type: "text",
+					text: "[Attached image: di-code-clipboard-00000000-0000-0000-0000-000000000000.png]\ndescribe this image",
+				},
+				{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+			]);
+			await waitFor(() => !existsSync(imagePath));
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("attaches multiple clipboard paths inserted by repeated paste shortcuts", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-clipboard-many-"));
+		try {
+			const firstPath = join(root, "first.png");
+			const secondPath = join(root, "second.jpg");
+			writeFileSync(firstPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+			writeFileSync(secondPath, Buffer.from([255, 216, 255]));
+			const paths = [firstPath, secondPath];
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "image answer" }] }],
+			});
+			let content: import("@di-code/ai").UserContent[] | undefined;
+			const provider: Provider = {
+				...faux.provider,
+				stream(model, context, options) {
+					const user = context.messages.find((message) => message.role === "user");
+					content = user?.role === "user" ? [...user.content] : undefined;
+					return faux.provider.stream(model, context, options);
+				},
+			};
+			const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+			const terminal = new TestTerminal();
+			let clipboardReads = 0;
+			const mode = new InteractiveMode({
+				session,
+				tui: new TUI(terminal),
+				readClipboardImagePath: async () => {
+					clipboardReads += 1;
+					return paths.shift() ?? null;
+				},
+			});
+
+			mode.start();
+			terminal.sendInput(PASTE_IMAGE_INPUT);
+			await waitFor(() => clipboardReads === 1);
+			await flush();
+			terminal.sendInput(PASTE_IMAGE_INPUT);
+			await waitFor(() => clipboardReads === 2);
+			await flush();
+			terminal.sendInput(" compare them");
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+
+			assert.deepEqual(content, [
+				{ type: "text", text: "[Attached image: first.png]\n[Attached image: second.jpg]\ncompare them" },
+				{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+				{ type: "image", data: "/9j/", mimeType: "image/jpeg" },
+			]);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("removes an inserted clipboard path with Ctrl+U before sending", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-clipboard-delete-"));
+		try {
+			const clipboardDirectory = join(root, ".di-code", "clipboard");
+			mkdirSync(clipboardDirectory, { recursive: true });
+			const imagePath = join(clipboardDirectory, "di-code-clipboard-00000000-0000-0000-0000-000000000001.png");
+			writeFileSync(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "text answer" }] }],
+			});
+			let content: import("@di-code/ai").UserContent[] | undefined;
+			const provider: Provider = {
+				...faux.provider,
+				stream(model, context, options) {
+					const user = context.messages.find((message) => message.role === "user");
+					content = user?.role === "user" ? [...user.content] : undefined;
+					return faux.provider.stream(model, context, options);
+				},
+			};
+			const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+			const terminal = new TestTerminal();
+			const mode = new InteractiveMode({
+				session,
+				tui: new TUI(terminal),
+				readClipboardImagePath: async () => imagePath,
+			});
+
+			mode.start();
+			terminal.sendInput(PASTE_IMAGE_INPUT);
+			await waitFor(() => terminal.output.includes("di-code-clipboard-00000000-0000-0000-0000-000000000001.png"));
+			terminal.sendInput("\x15");
+			await waitFor(() => !existsSync(imagePath));
+			terminal.sendInput("text only");
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+
+			assert.deepEqual(content, [{ type: "text", text: "text only" }]);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("renders assistant responses with the Markdown component", async () => {

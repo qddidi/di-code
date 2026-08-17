@@ -56,6 +56,14 @@ describe("Editor editing", () => {
 		assert.equal(editor.getValue(), "A");
 	});
 
+	it("deletes from the cursor to the start of the line with Ctrl+U", () => {
+		const editor = new Editor();
+		editor.setValue("keep\nremove this");
+		editor.handleInput("\x15");
+
+		assert.equal(editor.getValue(), "keep\n");
+	});
+
 	it("submits on Enter when enabled and cancels on Escape", () => {
 		const editor = new Editor();
 		const submitted: string[] = [];
@@ -83,6 +91,24 @@ describe("Editor editing", () => {
 		editor.handleInput("world\x00\x1b[201~");
 
 		assert.equal(editor.getValue(), "hello\nworld");
+	});
+
+	it("lets the owner transform bracketed paste before insertion", () => {
+		const editor = new Editor();
+		editor.onPaste = (text) => (text === "C:\\work\\diagram.png" ? '@"C:\\work\\diagram.png" ' : text);
+
+		editor.handleInput("\x1b[200~C:\\work\\diagram.png\x1b[201~");
+
+		assert.equal(editor.getValue(), '@"C:\\work\\diagram.png" ');
+	});
+
+	it("inserts programmatic text at the current cursor position", () => {
+		const editor = new Editor();
+		editor.setValue("ask now");
+		editor.handleInput("\x1b[D");
+		editor.insertTextAtCursor("C:\\Temp\\image.png ");
+
+		assert.equal(editor.getValue(), "ask noC:\\Temp\\image.png w");
 	});
 
 	it("preserves a preferred visible column across Unicode lines", () => {

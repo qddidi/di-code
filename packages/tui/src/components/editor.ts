@@ -61,6 +61,7 @@ export class Editor implements Component, Focusable {
 	onCommand?: (data: string) => boolean;
 	onInterrupt?: () => void;
 	onChange?: (value: string) => void;
+	onPaste?: (value: string) => string;
 
 	private value = "";
 	private cursor = 0;
@@ -158,6 +159,11 @@ export class Editor implements Component, Focusable {
 		this.onChange?.(this.value);
 	}
 
+	/** Inserts external text at the current cursor without moving focus. */
+	insertTextAtCursor(value: string): void {
+		this.insert(normalizeEditorText(value));
+	}
+
 	getCursorPosition(): CursorPosition {
 		const lineStart = this.lineStart(this.cursor);
 		return { line: this.lineIndex(this.cursor), column: visibleWidth(this.value.slice(lineStart, this.cursor)) };
@@ -244,6 +250,10 @@ export class Editor implements Component, Focusable {
 			this.deleteForward();
 			return;
 		}
+		if (this.keybindings.matches(data, "tui.editor.deleteToLineStart")) {
+			this.deleteToLineStart();
+			return;
+		}
 
 		if (
 			[...data].some((character) => {
@@ -303,7 +313,7 @@ export class Editor implements Component, Focusable {
 		this.pasteBuffer = "";
 		this.isPasting = false;
 		this.cancelAutocomplete();
-		this.insert(normalizePastedText(pasted));
+		this.insert(this.onPaste?.(normalizePastedText(pasted)) ?? normalizePastedText(pasted));
 		if (remainder) this.handleInput(remainder);
 		return true;
 	}
@@ -383,6 +393,17 @@ export class Editor implements Component, Focusable {
 		this.clearAutocompleteForEdit();
 		const next = nextBoundary(this.value, this.cursor);
 		this.value = this.value.slice(0, this.cursor) + this.value.slice(next);
+		this.invalidate();
+		this.onChange?.(this.value);
+	}
+
+	private deleteToLineStart(): void {
+		const start = this.lineStart(this.cursor);
+		if (start === this.cursor) return;
+		this.clearAutocompleteForEdit();
+		this.value = this.value.slice(0, start) + this.value.slice(this.cursor);
+		this.cursor = start;
+		this.preferredColumn = undefined;
 		this.invalidate();
 		this.onChange?.(this.value);
 	}

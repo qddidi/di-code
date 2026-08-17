@@ -354,6 +354,7 @@ Options:
   --interactive      Start interactive terminal mode
   --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
+  --image <path>     Attach a local PNG, JPEG, WebP, or GIF image (repeatable)
   -h, --help         Show help
   -v, --version      Show version
 ```
@@ -369,6 +370,16 @@ npm run dev -- --print "列出这个仓库的主要模块"
 ```powershell
 npm run dev -- --mode json "检查测试状态"
 ```
+
+向支持图片输入的模型附加本地图片：
+
+```powershell
+npm run dev -- --image .\diagram.png "说明这张架构图"
+```
+
+`--image` 可重复使用，但只支持 print 和 JSON 模式；每条 prompt 最多 4 张图片、每张不超过 5 MiB。相对路径按工作根目录解析，绝对路径也可使用。
+
+交互模式也支持图片：输入 `@diagram.png` 或 `@"architecture diagram.png"` 后发送；在终端中直接拖入图片文件会自动转换为附件。Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V` 读取剪贴板图片，并将临时图片路径插入输入框；可像普通文本一样编辑或删除。Windows 终端通常会拦截 `Ctrl+V`，因此使用 `Alt+V`。临时图片保存在工作根目录的 `.di-code/clipboard/`，发送成功、删除路径或退出后会清理，启动时还会清理超过 24 小时的遗留文件。当前模型必须在配置的 `input` 字段中声明 `image`，否则会拒绝发送。
 
 显式启动交互模式：
 
@@ -420,7 +431,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 ## 交互模式
 
-交互模式提供流式对话、工具执行状态、文件路径和斜杠命令补全。常用命令包括：
+交互模式提供流式对话、工具执行状态、图片附件、文件路径和斜杠命令补全。常用命令包括：
 
 | 命令 | 作用 |
 | --- | --- |

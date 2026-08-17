@@ -29,9 +29,10 @@ Options:
   -p, --print        只输出最终 assistant 文本（默认）
   --mode <mode>      输出模式：print、json 或 interactive
   --interactive      启动交互式终端模式
-  --continue, -c     继续最近修改的会话
-  --session <path>   创建或恢复 JSONL 会话，路径相对于工作根目录
-  -h, --help         显示帮助
+	--continue, -c     继续最近修改的会话
+	--session <path>   创建或恢复 JSONL 会话，路径相对于工作根目录
+	--image <path>     附加一张本地 PNG、JPEG、WebP 或 GIF 图片，可重复传入
+	-h, --help         显示帮助
   -v, --version      显示版本
 ```
 
@@ -49,6 +50,10 @@ di-code --print "找出项目中可能的 bug"
 # JSON 模式：每行一个版本化事件，适合 PowerShell 或其他脚本消费
 di-code --mode json "列出所有 TypeScript 文件"
 
+# 让支持图片输入的模型识别一张或多张本地图片
+di-code --image .\diagram.png "说明这张架构图"
+di-code --image .\before.png --image .\after.webp "比较这两张图片"
+
 # 交互模式：持续输入多个 prompt
 di-code --interactive
 
@@ -60,13 +65,23 @@ di-code --session .di-code\sessions\review.jsonl "检查测试覆盖率"
 di-code --continue "继续上一次工作"
 ```
 
-`--help` 和 `--version` 必须单独使用。非交互模式必须提供 prompt；`--continue` 不能和 `--session` 同时使用；`--print` 不能和 `--mode json` 或 `--interactive` 同时使用。
+`--help` 和 `--version` 必须单独使用。非交互模式必须提供 prompt；`--continue` 不能和 `--session` 同时使用；`--print` 不能和 `--mode json` 或 `--interactive` 同时使用。`--image` 用于 print 和 JSON 模式；交互模式可使用 `@图片路径`、终端拖拽或剪贴板快捷键附加图片。
+
+每条 prompt 最多可附加 4 张图片，每张不超过 5 MiB。CLI 根据文件签名识别 PNG、JPEG、WebP 和 GIF，而不是信任扩展名。相对路径以当前工作根目录解析；也可传入绝对路径。选择图片后，图片内容会随该条会话消息保存，因此不要附加不应写入会话历史的敏感图片。
 
 脚本中可以根据退出码判断结果：`0` 表示命令成功，`1` 表示参数错误、Provider 未配置或运行失败。错误文本写入 stderr，不会混入 `print` 模式的最终回答。
 
 ## 交互模式操作
 
 运行 `di-code` 或 `di-code --interactive` 后，底部编辑器就是 prompt 输入框。输入内容后按 Enter 发送；模型生成期间再次输入的 prompt 会进入队列，按顺序执行。
+
+图片附件有三种方式：
+
+- 在 prompt 中输入 `@diagram.png`，带空格的路径使用 `@"architecture diagram.png"`。
+- 将图片文件拖入终端，文件路径会自动变成图片附件。
+- Windows 按 `Alt+V`，macOS/Linux 按 `Ctrl+V`，读取剪贴板中的 PNG、JPEG、WebP 或 GIF；成功后会把临时图片路径插入当前光标位置。Windows 终端通常会拦截 `Ctrl+V`，因此使用 `Alt+V`。
+
+粘贴路径和 Pi 一样是普通编辑器文本：`Backspace` 逐字删除，`Ctrl+U` 删除当前行光标前的整段内容。图片临时文件位于工作根目录的 `.di-code/clipboard/`，发送成功、删除路径或退出交互模式后会清理；启动时也会清理超过 24 小时的遗留文件。附加图片后按 Enter 发送，模型会收到图片内容。每条 prompt 最多 4 张图片、每张不超过 5 MiB；模型也必须声明支持 `image` 输入。剪贴板读取依赖可选的 `@mariozechner/clipboard` 原生包，平台不支持或剪贴板不是图片时会保留编辑器内容并显示状态。
 
 ### 斜杠命令
 

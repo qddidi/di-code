@@ -9,7 +9,7 @@ import {
 	resolveContextBudget,
 	shouldCompact,
 } from "@di-code/agent";
-import type { AssistantMessage, Message, Model, Provider, Usage } from "@di-code/ai";
+import type { AssistantMessage, ImageContent, Message, Model, Provider, Usage, UserContent } from "@di-code/ai";
 import type { ExtensionHost } from "../extensions/runtime.ts";
 import { buildSessionContext } from "./context-builder.ts";
 import type { SkillResource } from "./resources/types.ts";
@@ -228,6 +228,15 @@ export class AgentSession {
 	}
 
 	async prompt(text: string, signal?: AbortSignal): Promise<AssistantMessage> {
+		return this.promptWithImages(text, [], signal);
+	}
+
+	/** Sends one text prompt with explicitly supplied image attachments. */
+	async promptWithImages(
+		text: string,
+		images: readonly ImageContent[],
+		signal?: AbortSignal,
+	): Promise<AssistantMessage> {
 		if (this.persistenceError !== undefined) {
 			throw this.persistenceError;
 		}
@@ -237,9 +246,13 @@ export class AgentSession {
 
 		this.promptActive = true;
 		try {
+			if (images.length > 0 && !this.model.input.includes("image")) {
+				throw new Error(`Model "${this.model.id}" does not support image input.`);
+			}
 			const prompt = await resolveSkillCommand(text, this.skills, signal);
-			await this.compactIfNeeded(prompt, signal);
-			return await this.agent.prompt(prompt, signal);
+			const content: UserContent[] = [{ type: "text", text: prompt }, ...structuredClone([...images])];
+			await this.compactIfNeeded(content, signal);
+			return await this.agent.promptWithContent(content, signal);
 		} finally {
 			this.promptActive = false;
 		}
@@ -287,13 +300,13 @@ export class AgentSession {
 		};
 	}
 
-	private async compactIfNeeded(text: string, signal?: AbortSignal): Promise<void> {
+	private async compactIfNeeded(content: readonly UserContent[], signal?: AbortSignal): Promise<void> {
 		if (!this.compactionEnabledValue || !this.sessionManager) return;
 
 		const context = buildSessionContext(this.sessionManager.entries);
 		const pendingUser: Message = {
 			role: "user",
-			content: [{ type: "text", text }],
+			content: structuredClone([...content]),
 			timestamp: 0,
 		};
 		const estimatedTokens = estimateContextTokens([...context.messages, pendingUser]);

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
-import { type Context, createFauxProvider, type Message, type Provider } from "@di-code/ai";
+import { type Context, createFauxProvider, type Message, type Model, type Provider } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
@@ -57,6 +57,25 @@ describe("AgentSession read integration", () => {
 
 		expect(session.sessionId).toBeTruthy();
 		expect(requestedSessionIds).toEqual([session.sessionId, session.sessionId]);
+	});
+
+	it("rejects image attachments before calling a text-only model", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "unused" }] }] });
+		const textOnlyModel: Model = { ...faux.model, input: ["text"] };
+		let providerCalled = false;
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				providerCalled = true;
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const session = new AgentSession({ allowedRoot: root, provider, model: textOnlyModel });
+
+		await expect(
+			session.promptWithImages("describe this", [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]),
+		).rejects.toThrow('Model "faux-model" does not support image input.');
+		expect(providerCalled).toBe(false);
 	});
 
 	afterEach(async () => {

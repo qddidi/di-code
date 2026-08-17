@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
 import { ProcessTerminal, TUI } from "@di-code/tui";
 import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
+import { loadImageInputs } from "./core/image-input.ts";
 import { loadResources } from "./core/resources/loader.ts";
 import { SessionManager } from "./core/session/session-manager.ts";
 import { AgentSession } from "./core/session.ts";
@@ -238,10 +239,15 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				sessionManager: manager,
 				extensionHost: extensions.host,
 			});
+			const imagePaths = command.imagePaths ?? [];
+			const promptRunner = {
+				prompt: async (text: string) => session.promptWithImages(text, await loadImageInputs(imagePaths, allowedRoot)),
+				subscribe: session.subscribe.bind(session),
+			};
 			if (command.mode === "json") {
 				await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
 				try {
-					return await runJsonMode(command.prompt, session, options);
+					return await runJsonMode(command.prompt, promptRunner, options);
 				} finally {
 					await extensions.host.emit({ type: "session_shutdown", reason: "user" });
 				}
@@ -298,7 +304,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			}
 			await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
 			try {
-				return await runPrintMode(command.prompt, session, options);
+				return await runPrintMode(command.prompt, promptRunner, options);
 			} finally {
 				await extensions.host.emit({ type: "session_shutdown", reason: "user" });
 			}

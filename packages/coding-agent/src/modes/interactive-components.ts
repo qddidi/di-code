@@ -5,6 +5,7 @@ import type { InteractiveState } from "./interactive-state.ts";
 export interface InteractiveViewState extends InteractiveState {
 	readonly model: string;
 	readonly theme: "dark" | "light";
+	readonly pasteImageShortcut?: string;
 }
 
 interface Palette {
@@ -197,7 +198,11 @@ export class InteractiveFooter implements Component {
 		);
 		const right = paint(colors.dim, `${state.model}  ${state.theme}`);
 		const status = width >= 60 ? alignEnds(`${left}  ${context}`, right, width) : `${left}  ${right}`;
-		const hints = width >= 60 ? "Enter send   Esc cancel   Ctrl+O model   Ctrl+L session" : "Enter send  Ctrl+O model";
+		const pasteImageShortcut = state.pasteImageShortcut ?? (process.platform === "win32" ? "Alt+V" : "Ctrl+V");
+		const hints =
+			width >= 60
+				? `Enter send   ${pasteImageShortcut} paste image   Esc cancel   Ctrl+O model`
+				: `Enter send  ${pasteImageShortcut} image`;
 		return [
 			...renderLine(paint(colors.dim, "-".repeat(Math.max(0, width))), width),
 			...renderLine(status, width),

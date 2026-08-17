@@ -30,6 +30,15 @@ describe("parseCliArgs", () => {
 		});
 	});
 
+	it("parses repeatable image attachment paths", () => {
+		expect(parseCliArgs(["--image", "first.png", "--image", "second.webp", "describe these"])).toEqual({
+			kind: "run",
+			mode: "print",
+			prompt: "describe these",
+			imagePaths: ["first.png", "second.webp"],
+		});
+	});
+
 	it("parses resource flags and a persisted project trust decision", () => {
 		expect(
 			parseCliArgs([
@@ -83,6 +92,11 @@ describe("parseCliArgs", () => {
 		expect(() => parseCliArgs(["--session", "   ", "hello"])).toThrow("Option --session requires a non-empty value.");
 	});
 
+	it("rejects a missing image path", () => {
+		expect(() => parseCliArgs(["--image"])).toThrow("Option --image requires a non-empty value.");
+		expect(() => parseCliArgs(["--image", "   ", "hello"])).toThrow("Option --image requires a non-empty value.");
+	});
+
 	it("rejects conflicting or unknown options", () => {
 		expect(() => parseCliArgs(["--print", "--mode", "json", "hello"])).toThrow(
 			"Cannot combine --print with --mode json.",
@@ -91,6 +105,9 @@ describe("parseCliArgs", () => {
 			"Cannot combine --continue with --session.",
 		);
 		expect(() => parseCliArgs(["--wat", "hello"])).toThrow('Unknown option "--wat".');
+		expect(() => parseCliArgs(["--interactive", "--image", "diagram.png"])).toThrow(
+			"--image is not available in interactive mode.",
+		);
 	});
 
 	it("requires a prompt and keeps static commands exclusive", () => {
@@ -112,6 +129,7 @@ describe("runCli", () => {
 		expect(run).not.toHaveBeenCalled();
 		expect(stdout.mock.calls[0]?.[0]).toContain("Usage: di-code");
 		expect(stdout.mock.calls[0]?.[0]).toContain("--continue, -c");
+		expect(stdout.mock.calls[0]?.[0]).toContain("--image <path>");
 		expect(stdout.mock.calls[1]?.[0]).toBe("0.0.0\n");
 		expect(stderr).not.toHaveBeenCalled();
 	});
