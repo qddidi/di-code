@@ -81,4 +81,14 @@ describe("release package contract", () => {
 			execFileAsync(process.execPath, [join(repositoryRoot, "scripts", "release-publish.mjs")]),
 		).rejects.toThrow("Usage: npm run release:publish -- --confirm");
 	});
+
+	it("warns but does not reject a release that lacks a changelog entry", async () => {
+		const publishScript = await import(fileURLToPath(new URL("../../../scripts/release-publish.mjs", import.meta.url)));
+		const warnings: string[] = [];
+
+		expect(
+			publishScript.warnForMissingChangelog("# Changelog\n", "0.1.2", (warning: string) => warnings.push(warning)),
+		).toBe(true);
+		expect(warnings).toEqual(["Warning: CHANGELOG.md has no ## [0.1.2] entry; continuing with publication.\n"]);
+	});
 });

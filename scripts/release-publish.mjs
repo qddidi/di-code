@@ -52,6 +52,12 @@ function escapeRegExp(value) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export function warnForMissingChangelog(changelog, version, writeWarning) {
+	if (new RegExp(`^## \\[${escapeRegExp(version)}\\]`, "m").test(changelog)) return false;
+	writeWarning(`Warning: CHANGELOG.md has no ## [${version}] entry; continuing with publication.\n`);
+	return true;
+}
+
 async function main() {
 	parseArguments();
 	const worktree = await readCommandOutput("git", ["status", "--porcelain"]);
@@ -78,9 +84,7 @@ async function main() {
 		}
 	}
 	const changelog = await readFile(resolve(repositoryRoot, "CHANGELOG.md"), "utf8");
-	if (!new RegExp(`^## \\[${escapeRegExp(version)}\\]`, "m").test(changelog)) {
-		throw new Error(`CHANGELOG.md must contain a ## [${version}] entry before publishing.`);
-	}
+	warnForMissingChangelog(changelog, version, (warning) => process.stderr.write(warning));
 
 	const dryRun = npmCommand(["run", "release:dry-run"]);
 	await run(dryRun.command, dryRun.args);
@@ -92,4 +96,4 @@ async function main() {
 	process.stdout.write(`Published ${workspaces.length} packages at version ${version}\n`);
 }
 
-await main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

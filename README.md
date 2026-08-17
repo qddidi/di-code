@@ -485,7 +485,7 @@ git commit -am "chore: release 0.1.2"
 npm run release:publish -- --confirm
 ```
 
-`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖、以及缺少 `## [0.1.2]` CHANGELOG 标题的候选；随后重跑 release dry-run，再按 ai、agent、tui、coding-agent、orchestrator 的顺序调用 `npm publish --ignore-scripts`。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
+`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖；缺少 `## [0.1.2]` CHANGELOG 标题时只会输出 warning，仍可继续。随后重跑 release dry-run，再按 ai、agent、tui、coding-agent、orchestrator 的顺序调用 `npm publish --ignore-scripts`。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
 
 每个包也可单独执行构建或测试：
 
