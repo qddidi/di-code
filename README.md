@@ -1,8 +1,35 @@
 # di-code
 
-`di-code` 是一个以终端为主要界面的 TypeScript AI 编码代理。它将模型 Provider、Agent 工具循环、编码工具、会话管理和 ANSI 终端 UI 拆分为可独立构建与测试的 npm workspace 包。
+`di-code` 是一个以终端为主要界面的 TypeScript AI Coding Agent（编码代理）。它把模型适配、Agent 工具循环、编码工具、会话、插件和 ANSI 终端 UI 拆分为可独立构建、测试和发布的 npm workspace 包。
 
-当前接入 OpenAI Responses API、DeepSeek Responses API 和智谱 GLM Chat Completions API，支持流式文本、推理、工具调用，以及面向脚本与交互使用的多种 CLI 输出模式。
+它支持 OpenAI、Anthropic、DeepSeek 和智谱等 Provider，以及流式文本、推理、工具调用、持久化会话、交互终端、JSON 输出和 JSONL RPC。
+
+> **适用范围**：当前项目适合本地开发、学习和受控环境使用。`read`、`write`、`edit`、`bash` 以及受信任插件都能操作本机资源；它们不是操作系统级沙箱。使用真实 Provider 前，请确认工作目录和值得信任的插件来源。
+
+## 快速开始
+
+以下命令从源码启动。首次在真实交互终端运行时，可以在向导中选择 Provider、模型，并临时输入 API Key；密钥不会写入磁盘。
+
+```powershell
+Set-Location D:\pi\di-code
+npm install --ignore-scripts
+npm run dev
+```
+
+如果只想先验证 CLI 链路而不访问网络，可使用内置 Faux Provider：
+
+```powershell
+$env:DI_CODE_PROVIDER = "faux"
+npm run dev -- --print "用一句话介绍这个项目"
+```
+
+要使用真实 Provider，请在项目根目录创建未提交的 `.env`，再运行：
+
+```powershell
+npm run dev -- --print "检查当前项目的主要模块"
+```
+
+详见下方的[配置](#配置)、[使用](#使用)和[内置工具与安全边界](#内置工具与安全边界)。
 
 ## 功能
 
@@ -13,7 +40,7 @@
 - 全屏交互终端 UI：多行编辑、补全、Markdown、工具状态、取消、重试、模型和主题选择。
 - `print`、`json`、`interactive` 三种 CLI 模式。
 - 可选 JSONL 会话持久化、并发追加保护和上下文压缩能力。
-- 扩展 API，可注册命令、只读工具及 Agent 生命周期事件处理器。
+- 插件 API，可注册模型工具、interactive 模式 slash command 及 Agent 生命周期事件处理器。
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
@@ -171,7 +198,7 @@ Anthropic 的请求格式与模型 API 以[官方 Messages API 文档](https://d
 | Provider | 模型 ID | 默认模型 | 输入能力 |
 | --- | --- | --- | --- |
 | `openai` | `gpt-4o` | 是 | 文本、图片 |
-| `openai` | `gpt-5.6-terra` | 否 | 文本 |
+| `openai` | `gpt-5.6-terra` | 否 | 文本、图片 |
 | `openai` | `o3-mini` | 否 | 文本 |
 | `deepseek` | `deepseek-v4-flash` | 是 | 文本 |
 | `deepseek` | `deepseek-v4-pro` | 否 | 文本 |
@@ -458,19 +485,25 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 文件工具会限制路径在 `allowedRoot` 内，并拒绝二进制文件。`bash` 在 Windows 上使用 PowerShell，其他平台使用 `/bin/sh`；它以工作目录作为 `cwd`，但不是操作系统级沙箱。使用真实 Provider 前，应只在信任的项目目录中运行。
 
-## 会话与扩展
+## 会话与插件
 
-会话模块使用带版本和父记录链的 JSONL 格式，支持锁文件保护、损坏诊断、并发修改检测和上下文摘要压缩。`SessionManager` 与 `AgentSession` 可作为 SDK 使用。
+默认 CLI 会为交互会话创建或恢复 `.di-code/sessions/` 下的版本化 JSONL 文件。会话记录采用 append-only（仅追加）格式和父记录链，支持锁文件保护、损坏诊断、并发修改检测与上下文摘要压缩；完整磁盘历史和发送给模型的压缩上下文保持分离。`SessionManager` 与 `AgentSession` 也可作为 SDK 使用。
 
-扩展运行时可发现受信任项目中的以下目录：
+插件可在 CLI 启动时注册三类能力：模型工具、interactive 模式 slash command 和 Agent/会话生命周期事件处理器。项目本地插件位于：
 
 ```text
-.di-code/extensions/
+.di-code/plugins/<plugin-id>/
 ```
 
-扩展默认导出一个 factory 函数，可注册命令、只读工具和事件监听器。扩展加载器会在未授予项目可信状态时跳过项目扩展。
+项目插件只有在使用者明确授予项目可信状态后才会被 import：
 
-默认 CLI 会创建或恢复磁盘会话；上下文压缩依赖持久化会话，并会保留完整 JSONL 历史。扩展运行时已实现并有测试覆盖，但默认 CLI 启动链尚未自动加载项目扩展。
+```powershell
+npm run dev -- --trust-project --interactive
+```
+
+信任决定只控制是否加载项目中的 Node.js 代码，**不是权限沙箱**；manifest 中的 `permissions` 当前用于声明和审计，不会阻止插件自行访问文件、网络或子进程。只加载可信插件，并在插件实现中自行处理路径边界、输入校验、超时、取消和凭据保护。
+
+完整的目录结构、manifest、工具 schema、事件顺序和排查方法见 [插件使用指南](docs/插件使用指南.md)。
 
 ## 开发
 

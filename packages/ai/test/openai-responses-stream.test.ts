@@ -1154,6 +1154,77 @@ describe("streamOpenAIResponses", () => {
 		});
 	});
 
+	it("recovers text when a gateway omits the message output-item start event", async () => {
+		const response = sse(
+			{ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "Hello" },
+			{ type: "response.output_text.done", output_index: 0, content_index: 0, text: "Hello" },
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: {
+					type: "message",
+					id: "msg_recovered",
+					role: "assistant",
+					status: "completed",
+					content: [{ type: "output_text", text: "Hello", annotations: [] }],
+				},
+			},
+			{ type: "response.completed", response: { status: "completed" } },
+		);
+		const stream = streamOpenAIResponses(model, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "text", text: "Hello" }],
+			stopReason: "stop",
+		});
+	});
+
+	it("retries a malformed gateway error before any output is received", async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(sse({ type: "error", message: null }))
+			.mockResolvedValueOnce(
+				sse(
+					{
+						type: "response.output_item.added",
+						output_index: 0,
+						item: {
+							type: "message",
+							id: "msg_retry",
+							role: "assistant",
+							status: "in_progress",
+							content: [],
+						},
+					},
+					{ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "Recovered" },
+					{ type: "response.output_text.done", output_index: 0, content_index: 0, text: "Recovered" },
+					{
+						type: "response.output_item.done",
+						output_index: 0,
+						item: {
+							type: "message",
+							id: "msg_retry",
+							role: "assistant",
+							status: "completed",
+							content: [{ type: "output_text", text: "Recovered", annotations: [] }],
+						},
+					},
+					{ type: "response.completed", response: { status: "completed" } },
+				),
+			);
+		const stream = streamOpenAIResponses(model, context, options, { fetch, now: () => 1234 });
+
+		await collect(stream);
+
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(await stream.result()).toMatchObject({
+			content: [{ type: "text", text: "Recovered" }],
+			stopReason: "stop",
+		});
+	});
+
 	it("normalizes malformed SSE JSON", async () => {
 		const response = new Response("data: {not-json}\n\n", { status: 200 });
 		const stream = streamOpenAIResponses(model, context, options, dependencies(response));

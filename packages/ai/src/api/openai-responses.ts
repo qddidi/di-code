@@ -118,6 +118,11 @@ export interface OpenAIResponsesRequest {
 }
 
 const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
+const OPENAI_STREAM_RECOVERY_ATTEMPTS = 1;
+const RETRYABLE_OPENAI_STREAM_ERRORS = new Set([
+	"Invalid OpenAI Responses stream: text delta requires an active message output",
+	"Invalid OpenAI Responses stream: error.message must be a string",
+]);
 
 export interface OpenAIResponsesStreamOptions extends StreamOptions {
 	readonly apiKey: string;
@@ -1133,15 +1138,28 @@ function handleOpenAIEvent(
 			return;
 		}
 		case "response.output_text.delta": {
-			const active = progress.active;
-			if (!active || active.kind !== "message") {
-				throw new InvalidOpenAIStreamError("text delta requires an active message output");
-			}
-			assertOutputIndex(event, active);
+			const outputIndex = requireNonNegativeInteger(event.output_index, "output_index");
 			const contentIndex = requireNonNegativeInteger(event.content_index, "content_index");
 			if (contentIndex !== 0) {
 				throw new InvalidOpenAIStreamError("only one text content part per message is supported");
 			}
+			let active = progress.active;
+			if (!active) {
+				if (progress.completedOutputIndexes.has(outputIndex)) {
+					throw new InvalidOpenAIStreamError(`output_index ${outputIndex} has already completed`);
+				}
+				active = {
+					kind: "message",
+					outputIndex,
+					contentIndex: progress.nextContentIndex,
+					text: "",
+					started: false,
+				};
+				progress.active = active;
+			} else if (active.kind !== "message") {
+				throw new InvalidOpenAIStreamError("text delta requires an active message output");
+			}
+			assertOutputIndex(event, active);
 			if (!active.started) {
 				stream.push({ type: "text_start", contentIndex: active.contentIndex });
 				active.started = true;
@@ -1343,6 +1361,33 @@ function normalizeProducerFailure(
 	return { reason: "error", message: "OpenAI request failed" };
 }
 
+function createResponseProgress(): ResponseProgress {
+	return {
+		completedContent: [],
+		completedOutputIndexes: new Set<number>(),
+		replayOutputItems: new Map<number, JsonValue>(),
+		nextContentIndex: 0,
+		terminalSeen: false,
+		usage: createZeroUsage(),
+	};
+}
+
+function canRetryInvalidStream(cause: unknown, progress: ResponseProgress): boolean {
+	if (
+		!(cause instanceof InvalidOpenAIStreamError) ||
+		!RETRYABLE_OPENAI_STREAM_ERRORS.has(cause.message) ||
+		progress.completedContent.length > 0
+	) {
+		return false;
+	}
+	const active = progress.active;
+	return (
+		active === undefined ||
+		(active.kind === "message" && !active.started) ||
+		(active.kind === "reasoning" && !active.started)
+	);
+}
+
 async function produceOpenAIResponse(
 	model: Model,
 	context: Context,
@@ -1403,25 +1448,27 @@ export function streamOpenAIResponses(
 	dependencies: OpenAIResponsesDependencies = {},
 ): StreamResult {
 	const stream = createAssistantMessageEventStream();
-	const progress: ResponseProgress = {
-		completedContent: [],
-		completedOutputIndexes: new Set<number>(),
-		replayOutputItems: new Map<number, JsonValue>(),
-		nextContentIndex: 0,
-		terminalSeen: false,
-		usage: createZeroUsage(),
-	};
 	const now = dependencies.now ?? Date.now;
 
 	queueMicrotask(() => {
 		stream.push({ type: "start" });
-		void produceOpenAIResponse(model, context, options, dependencies, stream, progress).catch((cause: unknown) => {
-			if (progress.terminalSeen) return;
-			const failure = normalizeProducerFailure(cause, options.signal);
-			const message = createFailureMessage(model, progress, failure.reason, failure.message, now);
-			stream.push({ type: "error", reason: failure.reason, message });
-			progress.terminalSeen = true;
-		});
+		void (async () => {
+			for (let attempt = 0; attempt <= OPENAI_STREAM_RECOVERY_ATTEMPTS; attempt += 1) {
+				const progress = createResponseProgress();
+				try {
+					await produceOpenAIResponse(model, context, options, dependencies, stream, progress);
+					return;
+				} catch (cause) {
+					if (attempt < OPENAI_STREAM_RECOVERY_ATTEMPTS && canRetryInvalidStream(cause, progress)) continue;
+					if (progress.terminalSeen) return;
+					const failure = normalizeProducerFailure(cause, options.signal);
+					const message = createFailureMessage(model, progress, failure.reason, failure.message, now);
+					stream.push({ type: "error", reason: failure.reason, message });
+					progress.terminalSeen = true;
+					return;
+				}
+			}
+		})();
 	});
 
 	return stream;
