@@ -1,26 +1,207 @@
 # @di-code/coding-agent
 
-`@di-code/coding-agent` 是 [di-code](https://github.com/qddidi/di-code) 的可安装终端 AI 编码代理。它包含 `di-code` CLI、本地 `read` / `write` / `edit` / `bash` 工具、会话管理、上下文压缩、交互式 ANSI UI、扩展系统和 JSONL RPC 服务端。
+`@di-code/coding-agent` 是 [di-code](https://github.com/qddidi/di-code) 的可安装终端 AI 编码代理。安装后提供：
 
-要求 Node.js `>= 22.19.0`。
+- `di-code`：面向人的交互式、单次输出和 JSON 事件 CLI；
+- `di-code-rpc`：供 Node.js 宿主程序管理的 JSONL RPC 子进程入口；
+- 内置的 `read`、`write`、`edit`、`bash` 工具、JSONL 会话、图片输入、上下文压缩；
+- 可复用的 **Skills（技能指令）**、`AGENTS.md` 项目说明，以及插件扩展机制。
 
-## 快速安装启动
+> **运行环境：**Node.js `>= 22.19.0`。真实 Provider 会产生网络请求和费用；首次体验可使用离线的 `faux` Provider。
+
+## 目录
+
+- [快速使用教程](#快速使用教程)
+- [配置模型 Provider](#配置模型-provider)
+- [日常使用](#日常使用)
+- [交互模式](#交互模式)
+- [会话、图片与内置工具](#会话图片与内置工具)
+- [项目说明与 Skills](#项目说明与-skills)
+- [插件](#插件)
+- [自定义 Provider](#自定义-provider)
+- [脚本和 RPC 集成](#脚本和-rpc-集成)
+- [安全边界与故障排查](#安全边界与故障排查)
+
+## 快速使用教程
+
+
+### 方式一：使用首次配置向导
+
+这是第一次使用时最简单的方式。先安装并进入项目目录：
 
 ```powershell
-npm install @di-code/coding-agent -g
+npm install -g @di-code/coding-agent
 ```
+然后执行
 
-在需要 Agent 操作的项目目录启动交互式终端界面：
-
-```powershell
+```
 di-code
 ```
 
-没有 `DI_CODE_PROVIDER` 或 Provider 配置时，真实终端会启动首次配置向导。向导中输入的 API key 只保存在本次进程内存中。
+在向导中依次完成：
 
-## CLI 命令
+1. **选择 Provider**：例如 `OpenAI`、`Anthropic`、`DeepSeek`、`Zhipu AI`；如果只想离线试用，选择 `Faux (offline)`。
+2. **选择模型**：向导会列出当前 Provider 支持的模型，选择你有权限使用的模型。
+3. **填写 API key**：选择真实 Provider 时，在隐藏输入框中粘贴对应的 key；输入内容不会显示在终端中。
+4. **确认并开始对话**：向导完成后进入 interactive 模式，在底部输入框输入问题并按 `Enter`。
 
-完整用法：
+向导输入的 API key 只存在于当前进程内存，不会保存到 `.env`、`.di-code/settings.json`、会话文件或日志。退出后再次启动，如果没有环境变量或 settings 配置，向导会再次出现。
+
+向导完成后可以直接这样使用：
+
+```text
+请先读取项目结构，然后告诉我应该从哪些文件开始修改。
+```
+
+### 方式二：直接用 `settings.json` 配置
+
+如果你已经知道 Provider、`baseUrl`、模型和 API key，可以不使用向导，直接在**当前项目根目录**创建 `.di-code/settings.json`。这是配置私有网关、自定义模型或希望配置可复用时推荐的方式。
+
+下面这个例子使用 OpenAI Responses 兼容接口。将示例中的 `baseUrl`、`apiKey` 和模型字段替换为实际值后即可使用：
+
+
+`.di-code/settings.json`：
+
+```json
+{
+  "providers": {
+    "my-provider": {
+      "name": "My Coding Gateway",
+      "api": "openai-responses",
+      "baseUrl": "https://api.example.com/v1",
+      "apiKey": "your-api-key",
+      "models": [
+        {
+          "id": "my-coding-model",
+          "name": "My Coding Model",
+          "input": ["text", "image"],
+          "reasoning": true,
+          "contextWindow": 128000,
+          "maxTokens": 16384
+        }
+      ]
+    }
+  }
+}
+```
+默认使用第一个模型。可以添加多个模型然后使用`/model`切换
+
+
+`settings.json` 中的 `apiKey` 可以直接填写字符串，**但不建议这样做**，因为它很容易被提交到 Git。更安全的写法是引用环境变量：
+
+```json
+{
+  "providers": {
+    "my-provider": {
+      "api": "openai-responses",
+      "baseUrl": "https://api.example.com/v1",
+      "apiKey": "$MY_CODING_API_KEY",
+      "models": [
+        {
+          "id": "my-coding-model",
+          "input": ["text"]
+        }
+      ]
+    }
+  }
+}
+```
+
+```powershell
+$env:MY_CODING_API_KEY = "your-api-key"
+$env:DI_CODE_PROVIDER = "my-provider"
+di-code "检查当前项目的测试状态"
+```
+
+`settings.json` 中最重要的字段是：
+
+| 字段 | 作用 |
+| --- | --- |
+| `providers` | Provider 配置对象，key 是 Provider ID |
+| `api` | 接口类型：`openai-responses`、`deepseek-responses`、`zhipu-chat-completions` 或 `anthropic-messages` |
+| `baseUrl` | Provider 的接口地址，必须是绝对的 `http` 或 `https` URL |
+| `apiKey` | API key，推荐填写 `$ENV_VAR` 或 `${ENV_VAR}` |
+| `models` | 自定义 Provider 必填的模型列表 |
+| `models[].id` | 模型真实 ID，也就是 `DI_CODE_MODEL` 的值 |
+| `models[].input` | 输入类型，填写 `text`、`image` 或两者 |
+| `models[].reasoning` | 是否支持 reasoning/thinking 内容 |
+| `models[].contextWindow` | 上下文 token 上限 |
+| `models[].maxTokens` | 单次最大输出 token 数 |
+
+`models` 可以配置多个模型，运行时用 `/model` 切换，或者修改 `DI_CODE_MODEL`：
+
+```json
+{
+  "providers": {
+    "my-provider": {
+      "api": "openai-responses",
+      "baseUrl": "https://api.example.com/v1",
+      "apiKey": "$MY_CODING_API_KEY",
+      "models": [
+        { "id": "fast-model", "input": ["text"] },
+        { "id": "strong-model", "input": ["text", "image"], "reasoning": true }
+      ]
+    }
+  }
+}
+```
+
+如果 `settings.json` 中只有一个 Provider，可以省略 `DI_CODE_PROVIDER`；如果有多个 Provider，则必须设置它。`DI_CODE_MODEL` 省略时使用该 Provider 模型列表的第一项。配置完成后，先用 print 模式验证：
+
+```powershell
+di-code --print "用一句话介绍当前项目"
+```
+
+出现 `Unknown model` 时，检查 `DI_CODE_MODEL` 是否与 `models[].id` 完全一致；出现 `Configured apiKey environment variable ... is not set` 时，检查环境变量名称是否拼写正确。
+
+### 方式三：使用环境变量
+
+如果使用内建 Provider，可以只设置环境变量，不创建 `settings.json`：
+
+```powershell
+$env:DI_CODE_PROVIDER = "openai"
+$env:DI_CODE_MODEL = "gpt-4o"
+$env:OPENAI_API_KEY = "your-api-key"
+di-code --print "检查当前项目的目录结构"
+```
+
+确认 print 模式可以正常返回后，再运行 `di-code --interactive` 开始持续对话。
+
+## 配置模型 Provider
+
+日常使用推荐把凭据放在操作系统环境变量或未提交的项目 `.env` 中，**不要**把真实 API key 提交到 Git。全局安装的 `di-code` 读取当前进程环境变量；若使用项目 `.env`，请先通过你的 shell、秘密管理工具或启动脚本加载它。
+
+PowerShell 临时配置 OpenAI：
+
+```powershell
+$env:DI_CODE_PROVIDER = "openai"
+$env:DI_CODE_MODEL = "gpt-4o" # 可省略，使用该 Provider 的默认模型
+$env:OPENAI_API_KEY = "your-api-key"
+di-code "检查这个仓库的目录结构"
+```
+
+内建 Provider：
+
+| Provider ID | 必需 API key 变量 | 可选 endpoint 覆盖变量 |
+| --- | --- | --- |
+| `openai` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_BASE_URL` |
+| `zhipu` | `ZAI_API_KEY` | `ZHIPU_BASE_URL` |
+| `faux` | 无 | 无（离线测试用） |
+
+例如 DeepSeek：
+
+```powershell
+$env:DI_CODE_PROVIDER = "deepseek"
+$env:DI_CODE_MODEL = "deepseek-v4-flash"
+$env:DEEPSEEK_API_KEY = "your-api-key"
+di-code "找出可能需要补测试的模块"
+```
+
+`DI_CODE_MODEL` 必须属于当前 Provider；省略时会使用内建默认模型或该 Provider 列表中的第一个模型。选错模型时，CLI 会列出可用 ID。
+
+## 日常使用
 
 ```text
 Usage: di-code [options] <prompt>
@@ -29,213 +210,361 @@ Options:
   -p, --print        只输出最终 assistant 文本（默认）
   --mode <mode>      输出模式：print、json 或 interactive
   --interactive      启动交互式终端模式
-	--continue, -c     继续最近修改的会话
-	--session <path>   创建或恢复 JSONL 会话，路径相对于工作根目录
-	--image <path>     附加一张本地 PNG、JPEG、WebP 或 GIF 图片，可重复传入
-	-h, --help         显示帮助
+  --continue, -c     继续最近修改的会话
+  --session <path>   创建或恢复 JSONL 会话（相对工作根目录）
+  --image <path>     附加本地图片；可重复传入
+  --skill <path>     加载一个 SKILL.md 文件或技能目录；可重复传入
+  --no-skills        不加载任何 Skill
+  --no-context-files 不发现或加载 AGENTS.md
+  --trust-project    信任当前项目的本地 Skills 和插件
+  --untrust-project  撤销当前项目的本地信任
+  plugin <action>    安装、列出、启用、禁用、更新或移除插件
+  -h, --help         显示帮助
   -v, --version      显示版本
 ```
 
-常用命令：
+### 三种输出模式
+
+| 模式 | 适合场景 | 示例 |
+| --- | --- | --- |
+| `print`（默认） | 单次提问、shell 调用；stdout 只有最终文本 | `di-code "解释 package.json"` |
+| `json` | 脚本或其他程序消费流式事件；每行一个 JSON 记录 | `di-code --mode json "运行测试并总结结果"` |
+| `interactive` | 长时间结对编码、查看流式输出与工具状态 | `di-code --interactive` |
+
+常用示例：
 
 ```powershell
-# 查看帮助和版本，不需要 Provider 或 API key
-di-code --help
-di-code --version
+# 只获得最终回答；错误写入 stderr，成功退出码为 0
+di-code --print "列出主要模块及其职责"
 
-# 单次提问，默认是 print 模式
-di-code "解释当前项目的目录结构"
-di-code --print "找出项目中可能的 bug"
+# JSONL 事件流。不要把这个模式的 stdout 当作普通文本解析
+di-code --mode json "检查 TypeScript 配置"
 
-# JSON 模式：每行一个版本化事件，适合 PowerShell 或其他脚本消费
-di-code --mode json "列出所有 TypeScript 文件"
-
-# 让支持图片输入的模型识别一张或多张本地图片
-di-code --image .\diagram.png "说明这张架构图"
-di-code --image .\before.png --image .\after.webp "比较这两张图片"
-
-# 交互模式：持续输入多个 prompt
+# 显式进入持续对话
 di-code --interactive
 
-# 保存到指定 JSONL 会话，后续可继续使用
-di-code --session .di-code\sessions\review.jsonl "审查这个项目"
-di-code --session .di-code\sessions\review.jsonl "检查测试覆盖率"
+# 使用一个指定、可持续追加的会话
+di-code --session .di-code\sessions\review.jsonl "审查当前改动"
+di-code --session .di-code\sessions\review.jsonl "继续处理最高优先级问题"
 
-# 继续最近修改的会话
+# 恢复最近修改的会话
 di-code --continue "继续上一次工作"
 ```
 
-`--help` 和 `--version` 必须单独使用。非交互模式必须提供 prompt；`--continue` 不能和 `--session` 同时使用；`--print` 不能和 `--mode json` 或 `--interactive` 同时使用。`--image` 用于 print 和 JSON 模式；交互模式可使用 `@图片路径`、终端拖拽或剪贴板快捷键附加图片。
+`--help` 和 `--version` 必须单独使用。非交互模式必须有 prompt；`--continue` 不能和 `--session` 一起使用；`--print` 不能和 `--mode json` 或 interactive 模式组合。
 
-每条 prompt 最多可附加 4 张图片，每张不超过 5 MiB。CLI 根据文件签名识别 PNG、JPEG、WebP 和 GIF，而不是信任扩展名。相对路径以当前工作根目录解析；也可传入绝对路径。选择图片后，图片内容会随该条会话消息保存，因此不要附加不应写入会话历史的敏感图片。
+## 交互模式
 
-脚本中可以根据退出码判断结果：`0` 表示命令成功，`1` 表示参数错误、Provider 未配置或运行失败。错误文本写入 stderr，不会混入 `print` 模式的最终回答。
+运行 `di-code` 或 `di-code --interactive` 后，在底部输入框输入请求并按 `Enter`。生成过程中输入的新请求会排队，按顺序执行。
 
-## 交互模式操作
+### Slash commands 与快捷键
 
-运行 `di-code` 或 `di-code --interactive` 后，底部编辑器就是 prompt 输入框。输入内容后按 Enter 发送；模型生成期间再次输入的 prompt 会进入队列，按顺序执行。
-
-图片附件有三种方式：
-
-- 在 prompt 中输入 `@diagram.png`，带空格的路径使用 `@"architecture diagram.png"`。
-- 将图片文件拖入终端，文件路径会自动变成图片附件。
-- Windows 按 `Alt+V`，macOS/Linux 按 `Ctrl+V`，读取剪贴板中的 PNG、JPEG、WebP 或 GIF；成功后会把临时图片路径插入当前光标位置。Windows 终端通常会拦截 `Ctrl+V`，因此使用 `Alt+V`。
-
-粘贴路径和 Pi 一样是普通编辑器文本：`Backspace` 逐字删除，`Ctrl+U` 删除当前行光标前的整段内容。图片临时文件位于工作根目录的 `.di-code/clipboard/`，发送成功、删除路径或退出交互模式后会清理；启动时也会清理超过 24 小时的遗留文件。附加图片后按 Enter 发送，模型会收到图片内容。每条 prompt 最多 4 张图片、每张不超过 5 MiB；模型也必须声明支持 `image` 输入。剪贴板读取依赖可选的 `@mariozechner/clipboard` 原生包，平台不支持或剪贴板不是图片时会保留编辑器内容并显示状态。
-
-### 斜杠命令
-
-在输入框中输入 `/`，再按 Tab 可以打开命令补全菜单：
+输入 `/` 后按 `Tab` 可补全命令。
 
 | 命令 | 作用 |
 | --- | --- |
-| `/help` | 在状态区显示所有交互命令 |
-| `/clear` | 清除当前屏幕上的可见消息，不删除 JSONL 会话历史 |
-| `/model` | 打开模型选择器，切换当前 Provider 的模型 |
-| `/session` | 打开会话选择器，切换或查看当前会话 |
-| `/theme` | 在 dark 和 light 终端主题之间切换 |
-| `/settings` | 打开设置，目前可切换上下文压缩 `on` / `off` |
-| `/compact` | 立即压缩当前已持久化会话的上下文 |
-| `/usage` | 显示请求数、输入/输出 token、总 token、费用和上下文占用 |
-| `/retry` | 重试最近一次失败的 prompt |
-
-例如：
-
-```text
-/help
-/model
-/usage
-请检查刚才发现的问题
-```
-
-未知的 `/command` 会显示错误，不会发送给模型。`/clear` 只影响当前界面；想恢复之前的完整历史，应使用 `--session <path>` 或 `--continue` 打开会话。
-
-### 快捷键
+| `/help` | 显示可用交互命令 |
+| `/clear` | 仅清除屏幕可见消息，不删除会话文件 |
+| `/model` | 切换当前 Provider 的模型 |
+| `/session` | 选择或切换会话 |
+| `/theme` | 选择 dark 或 light 主题 |
+| `/settings` | 配置上下文压缩开关 |
+| `/compact` | 立即压缩当前持久化会话的旧上下文 |
+| `/usage` | 查看请求数、token、费用和上下文占用 |
+| `/retry` | 重新提交最近失败或取消的 prompt |
 
 | 按键 | 作用 |
 | --- | --- |
 | `Enter` | 发送当前 prompt |
-| `Esc` | 取消正在进行的模型请求；没有请求时取消当前补全或关闭选择器 |
-| `Ctrl+C` | 退出交互模式并恢复终端状态 |
-| `Ctrl+O` | 打开模型选择器，与 `/model` 相同 |
-| `Ctrl+L` | 打开会话选择器，与 `/session` 相同 |
-| `Ctrl+T` | 打开主题选择器，与 `/theme` 相同 |
-| `Ctrl+S` | 打开设置，与 `/settings` 相同 |
-| `Ctrl+R` | 重试最近一次失败的 prompt，与 `/retry` 相同 |
-| `Tab` | 补全斜杠命令；编辑普通文本时继续由编辑器处理 |
+| `Esc` | 取消当前模型请求；没有请求时关闭补全或选择器 |
+| `Ctrl+C` | 退出并恢复终端状态 |
+| `Ctrl+O` / `Ctrl+L` | 打开模型 / 会话选择器 |
+| `Ctrl+T` / `Ctrl+S` | 打开主题 / 设置 |
+| `Ctrl+R` | 重试最近失败的 prompt |
+| `Tab` | 补全 slash command |
 
-模型请求运行时按 `Esc` 会发送取消信号；取消后的 prompt 可以用 `/retry` 或 `Ctrl+R` 再次提交。退出只结束当前 CLI 进程，不会删除已经写入磁盘的会话文件。
+取消只停止当前请求，不会删除已经追加到磁盘的会话记录。之后可使用 `/retry` 再试一次。
 
-## Provider 配置
+## 会话、图片与内置工具
 
-全局安装的 CLI 启动前需要设置环境变量。不要把 API key 写入源代码或提交到 Git。
+### 会话
+
+交互式启动默认会在工作根目录的 `.di-code/sessions/` 创建版本化 JSONL 会话。记录为 append-only（只追加）格式；完整磁盘历史和发送给模型的压缩上下文分开保存。可通过 `/session`、`--session` 或 `--continue` 恢复它们。
+
+会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在项目本地历史中的密钥或敏感材料。
+
+### 图片
+
+非交互模式使用 `--image`，可重复传入：
 
 ```powershell
-$env:DI_CODE_PROVIDER = "openai"
-$env:DI_CODE_MODEL = "gpt-4o" # 可选，不设置时使用默认模型
-$env:OPENAI_API_KEY = "your-openai-api-key"
-di-code --print "总结这个仓库"
+di-code --image .\diagram.png "解释这张架构图"
+di-code --image .\before.png --image .\after.webp "比较两张图"
 ```
 
-DeepSeek 使用 `$env:DI_CODE_PROVIDER = "deepseek"`、`$env:DEEPSEEK_API_KEY`，可选 `$env:DI_CODE_MODEL`。可选 endpoint 覆盖变量是 `OPENAI_BASE_URL` 和 `DEEPSEEK_BASE_URL`。设置 `DI_CODE_PROVIDER=faux` 可使用离线确定性 Provider。
+只支持 PNG、JPEG、WebP、GIF；文件根据内容签名而不是扩展名校验。每条 prompt 最多 4 张、每张最多 5 MiB，并且当前模型必须声明支持图片输入。
 
-Anthropic 使用 `$env:DI_CODE_PROVIDER = "anthropic"`、`$env:ANTHROPIC_API_KEY`，可选 `$env:DI_CODE_MODEL = "claude-sonnet-4-5"` 和 `$env:ANTHROPIC_BASE_URL`。默认 endpoint 是 `https://api.anthropic.com`。
+交互模式中可输入 `@diagram.png`；有空格的路径使用 `@"architecture diagram.png"`。也可将图片拖入终端。读取剪贴板图片时，Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V`。剪贴板临时文件放在 `.di-code/clipboard/`，发送、删除引用或退出后会清理。
 
-## 自定义Provider settings
+### Agent 可调用的内置工具
 
-要使用自定义 OpenAI Responses 兼容网关，请在工作目录创建 `.di-code/settings.json`。凭据保存在环境变量中，文件只引用变量名，或者直接配置到apiKey中：
+模型可按任务需要调用以下工具；请在可信项目中运行，并在 prompt 中明确希望它执行或不执行的动作。
+
+| 工具 | 功能 | 限制 |
+| --- | --- | --- |
+| `read` | 读取工作根目录中的 UTF-8 文本文件 | 最多 2,000 行、50 KiB；支持 `offset`、`limit` |
+| `write` | 创建或完全覆盖 UTF-8 文件 | 自动创建父目录 |
+| `edit` | 对文件做一次唯一的精确文本替换 | 找不到或匹配多处时拒绝写入；保留 BOM 和换行风格 |
+| `bash` | 在工作根目录执行本地命令 | 默认 30 秒、最大 5 分钟；stdout/stderr 各截断至 50 KiB |
+
+文件工具限制目标在工作根目录内并拒绝二进制文件。`bash` 在 Windows 使用 PowerShell，在其他平台使用 `/bin/sh`；它并不是操作系统级沙箱。模型和插件仍可能尝试执行危险操作，因此请审查任务和结果，并避免在包含无关敏感文件的目录运行。
+
+## 项目说明与 Skills
+
+### `AGENTS.md`：给 Agent 的项目规则
+
+启动时，di-code 会在全局 Agent 目录，以及当前工作目录到文件系统根目录的祖先路径中发现 `AGENTS.md`（或 `AGENTS.MD`）。这些文件会作为项目上下文提供给模型，适合记录构建命令、代码风格、测试要求和目录约定。
+
+项目文件是**不可信的上下文**，不能改变 CLI 的真实路径、权限或安全边界。临时忽略所有这类文件：
+
+```powershell
+di-code --no-context-files "只分析当前文件，不遵循项目说明"
+```
+
+### Skills：可按需加载的专业工作流
+
+Skill 是带少量 YAML frontmatter 的 `SKILL.md` 文件。它不是可执行代码，而是一组可复用的 Markdown 指令，例如“如何发布版本”“如何处理数据库迁移”。默认情况下，模型看到 Skill 的名称和描述；任务匹配时，它会先用 `read` 读取完整 Skill，再按其步骤工作。
+
+Skill 的发现位置和优先级如下：
+
+1. `--skill <path>` 显式传入的文件或目录；
+2. 已信任项目的 `.di-code/skills/` 与 `.pi/skills/`；
+3. 用户全局目录 `~/.di-code/skills/`。
+
+目录会递归查找名为 `SKILL.md` 的文件，跳过隐藏目录和 `node_modules`。同名时先发现的 Skill 生效；冲突和格式错误会产生诊断。项目 Skill 不会在项目未信任时加载。
+
+创建项目 Skill：
+
+```text
+my-project/
+  .di-code/
+    skills/
+      release-check/
+        SKILL.md
+```
+
+`.di-code/skills/release-check/SKILL.md`：
+
+```markdown
+---
+name: release-check
+description: Verify the release checklist before publishing a package.
+---
+
+1. Read the unreleased changelog section.
+2. Run the project test command before any release action.
+3. Report failures; never publish unless the user explicitly asks.
+```
+
+规则：
+
+- `name` 必填，最长 64 个字符，只能使用小写字母、数字和单连字符；
+- `description` 必填，最长 1,024 个字符；
+- 文件最大 256 KiB，首行和 frontmatter 结束行必须都是 `---`；
+- 可加 `disable-model-invocation: true` 隐藏该 Skill，使模型不自动选择它，但用户仍可手动调用。
+
+首次使用项目本地 Skill 或插件前，明确授予信任：
+
+```powershell
+Set-Location D:\work\my-project
+di-code --trust-project --interactive
+```
+
+该决定保存在用户全局 Agent 目录中，并按当前项目路径生效。撤销：
+
+```powershell
+di-code --untrust-project --interactive
+```
+
+手动选择一个已加载 Skill 的语法为 `/skill:<name> [你的具体请求]`，可在普通 prompt 或交互输入框中使用：
+
+```powershell
+di-code "/skill:release-check 检查这个仓库是否已经满足发布前置条件"
+```
+
+或临时加载不属于项目目录的 Skill：
+
+```powershell
+di-code --skill D:\team-skills\release-check "按 release-check 流程检查"
+di-code --no-skills "不要加载任何 Skill"
+```
+
+> Skill 是提示词上下文，不是权限机制。只把可信、准确的 Skill 放入全局目录或授予项目信任；Skill 中提及的相对路径以该 Skill 所在目录为基准。
+
+## 插件
+
+插件是与 di-code 运行在**同一 Node.js 进程**中的 JavaScript/TypeScript 代码。它可以注册：
+
+1. 供模型调用的工具；
+2. interactive 模式中的 slash command；
+3. Agent 与会话生命周期事件处理器。
+
+插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。
+
+### 使用项目本地插件
+
+项目插件位置固定：
+
+```text
+<project>/.di-code/plugins/<plugin-id>/
+  plugin.json
+  src/index.ts
+```
+
+最小 `plugin.json`：
 
 ```json
 {
-	"providers": {
-		"company-gateway": {
-			"name": "Company Gateway",
-			"api": "openai-responses",
-			"baseUrl": "https://gateway.example.com/v1",
-			"apiKey": "$COMPANY_GATEWAY_API_KEY",
-			"models": [{
-				"id": "company-coder",//如gpt-5.5
-				"input": ["text"],
-				"reasoning": true,
-				"contextWindow": 200000,//可选，根据实际情况填写
-				"maxTokens": 32000 //可选
-			}]
-		}
-	}
+  "apiVersion": 1,
+  "id": "project-status",
+  "name": "Project Status",
+  "version": "0.1.0",
+  "entry": "./src/index.ts",
+  "permissions": {
+    "filesystem": "none",
+    "network": [],
+    "process": []
+  }
 }
 ```
 
-然后设置 `$env:COMPANY_GATEWAY_API_KEY`、`$env:DI_CODE_PROVIDER = "company-gateway"`，以及可选的 `$env:DI_CODE_MODEL = "company-coder"`。`apiKey` 支持 `$NAME` / `${NAME}` 引用。如果直接写入配置文件则无需设置环境变量。
+入口必须默认导出一个 factory 函数。项目插件仅在运行过 `di-code --trust-project --interactive` 后导入。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
 
-### Provider 和模型字段
+完整的 TypeBox schema、工具、slash command、生命周期事件及安全责任，请阅读仓库文档：[插件使用指南](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)。
 
-`.di-code/settings.json` 的根节点必须是 `providers` 对象。对象的 key 就是 Provider ID，用于 `DI_CODE_PROVIDER`。自定义 Provider 必须配置 `api` 和 `models`；内建 `openai`、`anthropic`、`deepseek`、`zhipu` 可以省略 `models`，使用内置模型目录。
+### 管理全局插件
 
-Provider 字段：
+全局托管插件安装在用户的 `~/.di-code/` 下，只有已启用的插件会在启动时加载：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `name` | string | 可选的显示名称，省略时使用 Provider ID |
-| `api` | string | `openai-responses`、`deepseek-responses`、`zhipu-chat-completions` 或 `anthropic-messages` |
-| `baseUrl` | string | Provider 默认 endpoint，必须是 `http` 或 `https` URL |
-| `apiKey` | string | 推荐写 `$ENV_VAR` 或 `${ENV_VAR}`；也可直接写值，但不应提交到 Git |
-| `models` | array | 自定义 Provider 必填；每项是一个模型对象 |
+```powershell
+# 本地目录、npm 包或 git URL 都可以作为来源
+di-code plugin install D:\work\my-plugin
+di-code plugin install npm:@acme/di-code-project-status@1.0.0
+di-code plugin install git:https://github.com/acme/di-code-project-status.git
 
-模型字段：
+# 查看 ID、启用状态和版本
+di-code plugin list
 
-| 字段 | 类型 | 默认值或规则 |
-| --- | --- | --- |
-| `id` | string | 必填；也是 `DI_CODE_MODEL` 使用的模型 ID |
-| `name` | string | 默认等于 `id` |
-| `api` | string | 默认继承 Provider 的 `api`；模型值优先 |
-| `baseUrl` | string | 默认继承 Provider 的 `baseUrl`；模型值优先 |
-| `input` | array | 默认 `["text"]`；可填 `"text"`、`"image"` 或两者 |
-| `reasoning` | boolean | 默认 `false`，表示模型是否支持思考内容 |
-| `contextWindow` | 正整数 | 默认 `128000`，模型上下文 token 上限 |
-| `maxTokens` | 正整数 | 默认 `16384`，单次最大输出 token；也支持 `maxOutputTokens` |
-| `cost.input` | 非负数 | 默认 `0`，美元/百万输入 token |
-| `cost.output` | 非负数 | 默认 `0`，美元/百万输出 token |
-| `cost.cacheRead` | 非负数 | 默认 `0`，美元/百万缓存读取 token |
-| `cost.cacheWrite` | 非负数 | 默认 `0`，美元/百万缓存写入 token |
+di-code plugin disable project-status
+di-code plugin enable project-status
+di-code plugin update project-status
+di-code plugin remove project-status
+```
 
-完整示例：
+安装过程固定使用 `npm --ignore-scripts`，但这并不使插件本身安全：插件在加载时仍是本机代码。`plugin` 管理命令不需要配置 Provider。
+
+## 自定义 Provider
+
+自定义 OpenAI Responses 兼容网关或私有模型时，在工作根目录创建 `.di-code/settings.json`。凭据推荐使用环境变量引用：
 
 ```json
 {
-	"providers": {
-		"company-gateway": {
-			"name": "公司网关",
-			"api": "openai-responses",
-			"baseUrl": "https://gateway.example.com/v1",
-			"apiKey": "$COMPANY_GATEWAY_API_KEY",
-			"models": [
-				{
-					"id": "company-coder",
-					"name": "Company Coder",
-					"input": ["text", "image"],
-					"reasoning": true,
-					"contextWindow": 200000,
-					"maxTokens": 32000,
-					"cost": {
-						"input": 2.5,
-						"output": 10,
-						"cacheRead": 1.25,
-						"cacheWrite": 0
-					}
-				}
-			]
-		}
-	}
+  "providers": {
+    "company-gateway": {
+      "name": "Company Gateway",
+      "api": "openai-responses",
+      "baseUrl": "https://gateway.example.com/v1",
+      "apiKey": "$COMPANY_GATEWAY_API_KEY",
+      "models": [
+        {
+          "id": "company-coder",
+          "name": "Company Coder",
+          "input": ["text", "image"],
+          "reasoning": true,
+          "contextWindow": 200000,
+          "maxTokens": 32000
+        }
+      ]
+    }
+  }
 }
 ```
 
-模型级 `baseUrl` 和 `api` 可以覆盖 Provider 级字段，模型级 `apiKey` 不存在，凭据始终从 Provider 级 `apiKey` 获取。`DI_CODE_MODEL` 必须匹配所选 Provider 的某个 `models[].id`；省略时使用该 Provider 的第一个模型。自定义模型只属于声明它的 Provider，不会自动出现在其他 Provider 的列表中。
+然后设置 Provider、模型和凭据：
 
-## RPC 集成
+```powershell
+$env:COMPANY_GATEWAY_API_KEY = "your-api-key"
+$env:DI_CODE_PROVIDER = "company-gateway"
+$env:DI_CODE_MODEL = "company-coder"
+di-code "总结当前项目"
+```
 
-该包还安装 `di-code-rpc`，这是供宿主程序使用的 JSONL 子进程入口，不是交互式终端命令。Node.js 宿主程序从 `@di-code/coding-agent/rpc` 导入 RPC API；需要监管子进程时使用 `@di-code/orchestrator`。
+`api` 可为 `openai-responses`、`deepseek-responses`、`zhipu-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。
 
-## 链接
+`apiKey` 支持 `$NAME` 或 `${NAME}` 环境变量引用。虽然可以直接写入字符串，但不要把 key 写到 `settings.json` 或提交到 Git。`baseUrl` 必须是绝对 `http`/`https` URL。
 
-- 源码和完整配置说明：<https://github.com/qddidi/di-code>
-- 提交问题：<https://github.com/qddidi/di-code/issues>
+## 脚本和 RPC 集成
+
+### 处理 CLI 退出码
+
+脚本中可根据退出码处理结果：`0` 表示成功，`1` 表示参数错误、Provider 未配置或运行失败。print 模式的最终回答写 stdout；错误写 stderr，避免混入回答。
+
+```powershell
+di-code --print "生成变更摘要"
+if ($LASTEXITCODE -ne 0) {
+  throw "di-code failed with exit code $LASTEXITCODE"
+}
+```
+
+JSON 模式的 stdout 是逐行版本化事件，适合流式消费：
+
+```powershell
+di-code --mode json "检查测试状态" | ForEach-Object {
+  $event = $_ | ConvertFrom-Json
+  # 根据 $event.type 处理事件
+}
+```
+
+### JSONL RPC
+
+`di-code-rpc` 是供宿主程序启动的子进程入口，不是交互命令。它从 stdin 接收一行一个 JSON 请求，并从 stdout 写一行一个版本化响应或事件；stderr 仅用于诊断。
+
+公开 RPC 方法：
+
+| 方法 | 参数 | 结果 |
+| --- | --- | --- |
+| `get_state` | `{}` | Session ID、模型、是否正在生成、消息数 |
+| `prompt` | `{ "message": "..." }` | 最终 `AssistantMessage`，中间事件另行输出 |
+| `cancel` | `{ "requestId": "..." }` | 是否找到并取消该请求 |
+
+Node.js 宿主从公开入口导入 SDK：
+
+```ts
+import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
+```
+
+需要监督子进程生命周期时，使用 `@di-code/orchestrator`，不要依赖 coding-agent 的内部文件路径。
+
+## 安全边界与故障排查
+
+- 在可信项目根目录运行；`bash` 不是沙箱，插件也没有沙箱。
+- API key 只放环境变量或秘密管理工具。不要放入 prompt、Skill、插件源码、会话、图片或 Git。
+- 项目 Skill 与插件默认不加载，直到执行 `--trust-project`；该开关是“是否导入项目本地代码/指令”的决定，不会赋予额外系统权限。
+- Provider、模型、图片、配置和工具参数都会校验；外部项目内容和模型输出仍应视作不可信输入。
+
+| 问题 | 优先检查 |
+| --- | --- |
+| `Provider is not configured` | 设置 `DI_CODE_PROVIDER` 及对应 API key；或在 TTY 中运行 `di-code` 使用向导；离线测试使用 `faux` |
+| `Unknown model` | 确认 `DI_CODE_MODEL` 属于当前 `DI_CODE_PROVIDER` |
+| 项目 Skill / 插件没有加载 | 目录是否为 `.di-code/skills` 或 `.di-code/plugins`，并运行 `di-code --trust-project --interactive` |
+| `Unknown skill` | Skill 是否有正确 `SKILL.md` frontmatter，名称是否匹配 `/skill:<name>`；检查是否被 `--no-skills` 禁用 |
+| `plugin_diagnostic` | 检查 `plugin.json`、默认导出、入口路径及 stderr 的 JSON 诊断；详见插件指南 |
+| 图片被拒绝 | 确认格式、4 张/5 MiB 限制，以及模型 `input` 包含 `image` |
+| 文件工具无法访问路径 | 从工作根目录启动，且目标未越出根目录；二进制文件不支持 |
+
+## 相关链接
+
+- 项目源码与完整开发文档：<https://github.com/qddidi/di-code>
+- 插件详细指南：[GitHub 上的《插件使用指南》](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)
+- 问题反馈：<https://github.com/qddidi/di-code/issues>
+- 许可证：[MIT](https://github.com/qddidi/di-code/blob/main/LICENSE)
