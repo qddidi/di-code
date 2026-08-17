@@ -45,6 +45,24 @@ describe("model catalog", () => {
 		}
 	});
 
+	it("advertises Anthropic Messages models with image input and token pricing", () => {
+		const anthropicModels = MODEL_SOURCE.filter((model) => model.provider === "anthropic");
+
+		expect(anthropicModels.map((model) => model.id)).toEqual([
+			"claude-sonnet-4-5",
+			"claude-haiku-4-5",
+			"claude-opus-4-5",
+		]);
+		for (const model of anthropicModels) {
+			expect(model).toMatchObject({
+				api: "anthropic-messages",
+				baseUrl: "https://api.anthropic.com",
+				input: ["text", "image"],
+				reasoning: true,
+			});
+		}
+	});
+
 	it("advertises Zhipu GLM coding models through the Chat Completions adapter", () => {
 		const zhipuModels = MODEL_SOURCE.filter((model) => model.provider === "zhipu");
 

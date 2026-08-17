@@ -149,6 +149,25 @@ describe("runProviderOnboarding", () => {
 		expect(terminal.output).not.toContain("test-zhipu-secret");
 	});
 
+	it("selects Anthropic and keeps the entered API key out of terminal output", async () => {
+		const terminal = new TestTerminal();
+		const result = runProviderOnboarding({ configuration: configuration(), terminal });
+
+		terminal.send("\x1b[B");
+		terminal.send("\x1b[B");
+		terminal.send("\x1b[B");
+		terminal.send("\x1b[B");
+		terminal.send("\r");
+		terminal.send("\r");
+		terminal.send("test-anthropic-secret");
+		terminal.send("\r");
+
+		const runtime = await result;
+		expect(runtime?.provider.id).toBe("anthropic");
+		expect(runtime?.model.id).toBe("claude-sonnet-4-5");
+		expect(terminal.output).not.toContain("test-anthropic-secret");
+	});
+
 	it("rejects an empty key and lets Ctrl-C cancel without creating a runtime", async () => {
 		const terminal = new TestTerminal();
 		const result = runProviderOnboarding({

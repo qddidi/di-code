@@ -124,6 +124,8 @@ di-code --print "总结这个仓库"
 
 DeepSeek 使用 `$env:DI_CODE_PROVIDER = "deepseek"`、`$env:DEEPSEEK_API_KEY`，可选 `$env:DI_CODE_MODEL`。可选 endpoint 覆盖变量是 `OPENAI_BASE_URL` 和 `DEEPSEEK_BASE_URL`。设置 `DI_CODE_PROVIDER=faux` 可使用离线确定性 Provider。
 
+Anthropic 使用 `$env:DI_CODE_PROVIDER = "anthropic"`、`$env:ANTHROPIC_API_KEY`，可选 `$env:DI_CODE_MODEL = "claude-sonnet-4-5"` 和 `$env:ANTHROPIC_BASE_URL`。默认 endpoint 是 `https://api.anthropic.com`。
+
 ## 自定义Provider settings
 
 要使用自定义 OpenAI Responses 兼容网关，请在工作目录创建 `.di-code/settings.json`。凭据保存在环境变量中，文件只引用变量名，或者直接配置到apiKey中：
@@ -152,14 +154,14 @@ DeepSeek 使用 `$env:DI_CODE_PROVIDER = "deepseek"`、`$env:DEEPSEEK_API_KEY`�
 
 ### Provider 和模型字段
 
-`.di-code/settings.json` 的根节点必须是 `providers` 对象。对象的 key 就是 Provider ID，用于 `DI_CODE_PROVIDER`。自定义 Provider 必须配置 `api` 和 `models`；内建 `openai`、`deepseek` 可以省略 `models`，使用内置模型目录。
+`.di-code/settings.json` 的根节点必须是 `providers` 对象。对象的 key 就是 Provider ID，用于 `DI_CODE_PROVIDER`。自定义 Provider 必须配置 `api` 和 `models`；内建 `openai`、`anthropic`、`deepseek`、`zhipu` 可以省略 `models`，使用内置模型目录。
 
 Provider 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `name` | string | 可选的显示名称，省略时使用 Provider ID |
-| `api` | string | `openai-responses` 或 `deepseek-responses` |
+| `api` | string | `openai-responses`、`deepseek-responses`、`zhipu-chat-completions` 或 `anthropic-messages` |
 | `baseUrl` | string | Provider 默认 endpoint，必须是 `http` 或 `https` URL |
 | `apiKey` | string | 推荐写 `$ENV_VAR` 或 `${ENV_VAR}`；也可直接写值，但不应提交到 Git |
 | `models` | array | 自定义 Provider 必填；每项是一个模型对象 |

@@ -48,7 +48,7 @@ Provider.stream() <----> Responses / Chat Completions Provider
 
 | 包 | 说明 |
 | --- | --- |
-| `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、DeepSeek、智谱 GLM 与 Faux 测试 Provider。 |
+| `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、Anthropic、DeepSeek、智谱 GLM 与 Faux 测试 Provider。 |
 | `@di-code/agent` | 管理完整对话历史和模型上下文，执行模型-工具循环，并向订阅者按序发布事件。 |
 | `@di-code/coding-agent` | 可执行产品层，提供 CLI、文件与命令工具、会话存储、上下文压缩、交互界面和扩展契约。 |
 | `@di-code/orchestrator` | 监督 `di-code-rpc` 子进程，传播取消和崩溃，并保留有上限的 stderr 诊断。 |
@@ -58,7 +58,7 @@ Provider.stream() <----> Responses / Chat Completions Provider
 
 - Node.js `>= 22.19.0`
 - npm
-- OpenAI、DeepSeek 或智谱 API Key，或使用 `faux` Provider 做确定性本地验证
+- OpenAI、Anthropic、DeepSeek 或智谱 API Key，或使用 `faux` Provider 做确定性本地验证
 
 安装依赖：
 
@@ -91,7 +91,7 @@ npm run dev
 - 没有设置 `DI_CODE_PROVIDER`；
 - `.di-code/settings.json` 中没有 Provider。
 
-向导依次选择 Provider 和模型。选择 OpenAI、DeepSeek 或 Zhipu AI 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。向导输入的 key 只保存在本次进程内存中，退出后不会写入 `.env`、`settings.json`、Session 或日志，因此下次未配置环境变量时会再次询问。
+向导依次选择 Provider 和模型。选择 OpenAI、Anthropic、DeepSeek 或 Zhipu AI 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。向导输入的 key 只保存在本次进程内存中，退出后不会写入 `.env`、`settings.json`、Session 或日志，因此下次未配置环境变量时会再次询问。
 
 `.di-code/settings.json` 不存在、文件为空或只有空白字符时，都按“没有 settings 配置”处理。非空文件必须是合法 JSON。
 
@@ -105,10 +105,12 @@ npm run dev
 
 | 变量 | 作用 | 是否必需 |
 | --- | --- | --- |
-| `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`deepseek`、`zhipu`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
-| `DI_CODE_MODEL` | 选择所选 Provider 的模型 ID | 可选；OpenAI/Zhipu 使用内建默认模型，其他 Provider 使用模型列表首项 |
+| `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`anthropic`、`deepseek`、`zhipu`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
+| `DI_CODE_MODEL` | 选择所选 Provider 的模型 ID | 可选；OpenAI/Anthropic/Zhipu 使用内建默认模型，其他 Provider 使用模型列表首项 |
 | `OPENAI_API_KEY` | OpenAI 凭据 | 使用 OpenAI 时必需，向导临时输入除外 |
 | `OPENAI_BASE_URL` | 覆盖内建 OpenAI endpoint | 可选，默认 `https://api.openai.com/v1` |
+| `ANTHROPIC_API_KEY` | Anthropic 凭据 | 使用 Anthropic 时必需，向导临时输入除外 |
+| `ANTHROPIC_BASE_URL` | 覆盖内建 Anthropic endpoint | 可选，默认 `https://api.anthropic.com` |
 | `DEEPSEEK_API_KEY` | DeepSeek 凭据 | 使用 DeepSeek 时必需，向导临时输入除外 |
 | `DEEPSEEK_BASE_URL` | 覆盖内建 DeepSeek endpoint | 可选，默认 `https://api.deepseek.com` |
 | `ZAI_API_KEY` | 智谱 API 凭据 | 使用 `zhipu` 时必需，向导临时输入除外 |
@@ -130,6 +132,15 @@ DI_CODE_PROVIDER=openai
 DI_CODE_MODEL=gpt-4o
 OPENAI_API_KEY=<your-openai-api-key>
 # OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+Anthropic Claude：
+
+```dotenv
+DI_CODE_PROVIDER=anthropic
+DI_CODE_MODEL=claude-sonnet-4-5
+ANTHROPIC_API_KEY=<your-anthropic-api-key>
+# ANTHROPIC_BASE_URL=https://api.anthropic.com
 ```
 
 离线 Faux Provider：
@@ -155,6 +166,8 @@ ZAI_API_KEY=<your-zhipu-api-key>
 
 智谱 GLM Coding Plan 的模型和 endpoint 以[官方套餐概览](https://docs.bigmodel.cn/cn/coding-plan/overview)及[模型切换说明](https://docs.bigmodel.cn/cn/coding-plan/latest-model)为准。
 
+Anthropic 的请求格式与模型 API 以[官方 Messages API 文档](https://docs.anthropic.com/en/api/messages)为准。
+
 | Provider | 模型 ID | 默认模型 | 输入能力 |
 | --- | --- | --- | --- |
 | `openai` | `gpt-4o` | 是 | 文本、图片 |
@@ -162,12 +175,15 @@ ZAI_API_KEY=<your-zhipu-api-key>
 | `openai` | `o3-mini` | 否 | 文本 |
 | `deepseek` | `deepseek-v4-flash` | 是 | 文本 |
 | `deepseek` | `deepseek-v4-pro` | 否 | 文本 |
+| `anthropic` | `claude-sonnet-4-5` | 是 | 文本、图片 |
+| `anthropic` | `claude-haiku-4-5` | 否 | 文本、图片 |
+| `anthropic` | `claude-opus-4-5` | 否 | 文本、图片 |
 | `zhipu` | `glm-5.3` | 是 | 文本，1M 上下文 |
 | `zhipu` | `glm-5-turbo` | 否 | 文本 |
 | `zhipu` | `glm-4.7` | 否 | 文本 |
 | `faux` | `faux-model` | 是 | 本地测试，不访问网络 |
 
-`DI_CODE_MODEL` 省略时使用 Provider 的默认模型：OpenAI 为 `gpt-4o`，Zhipu 为 `glm-5.3`，其他内建 Provider 使用其模型列表首项。模型 ID 必须属于当前 Provider，否则启动会列出可用模型并报错。
+`DI_CODE_MODEL` 省略时使用 Provider 的默认模型：OpenAI 为 `gpt-4o`，Anthropic 为 `claude-sonnet-4-5`，Zhipu 为 `glm-5.3`，其他内建 Provider 使用其模型列表首项。模型 ID 必须属于当前 Provider，否则启动会列出可用模型并报错。
 
 ### 使用 `.di-code/settings.json`
 

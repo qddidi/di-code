@@ -1,6 +1,16 @@
 export type { Static, TSchema } from "typebox";
 export { Type } from "typebox";
 export type {
+	AnthropicAssistantContent,
+	AnthropicMessage,
+	AnthropicMessagesDependencies,
+	AnthropicMessagesRequest,
+	AnthropicMessagesStreamOptions,
+	AnthropicTool,
+	AnthropicUserContent,
+} from "./api/anthropic-messages.ts";
+export { buildAnthropicMessagesRequest, streamAnthropicMessages } from "./api/anthropic-messages.ts";
+export type {
 	ChatCompletionsRequest,
 	ChatFunctionTool,
 	OpenAIChatCompletionsDependencies,
@@ -23,6 +33,8 @@ export type {
 } from "./api/openai-responses.ts";
 export { buildOpenAIResponsesRequest, OpenAIProviderError, streamOpenAIResponses } from "./api/openai-responses.ts";
 export { MODELS } from "./models.generated.ts";
+export type { AnthropicProviderOptions } from "./providers/anthropic.ts";
+export { createAnthropicProvider } from "./providers/anthropic.ts";
 export type { DeepSeekProviderOptions } from "./providers/deepseek.ts";
 export { createDeepSeekProvider } from "./providers/deepseek.ts";
 export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./providers/faux.ts";

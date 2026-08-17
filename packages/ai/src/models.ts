@@ -6,6 +6,7 @@ import type { Model } from "./types.ts";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutputPath = resolve(packageRoot, "src", "models.generated.ts");
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
+const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 
 interface OpenAiModelOptions {
 	readonly reasoning: boolean;
@@ -31,6 +32,42 @@ function openAiModel(id: string, name: string, options: OpenAiModelOptions): Mod
 
 /** 唯一可手工维护的真实模型源；生成文件由本模块写出。 */
 export const MODEL_SOURCE: readonly Model[] = [
+	{
+		id: "claude-sonnet-4-5",
+		name: "Claude Sonnet 4.5",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0.000003, output: 0.000015, cacheRead: 0.0000003, cacheWrite: 0.00000375 },
+	},
+	{
+		id: "claude-haiku-4-5",
+		name: "Claude Haiku 4.5",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0.000001, output: 0.000005, cacheRead: 0.0000001, cacheWrite: 0.00000125 },
+	},
+	{
+		id: "claude-opus-4-5",
+		name: "Claude Opus 4.5",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0.000005, output: 0.000025, cacheRead: 0.0000005, cacheWrite: 0.00000625 },
+	},
 	{
 		id: "glm-5.3",
 		name: "GLM-5.3",

@@ -198,7 +198,7 @@ describe("resolveStartupRuntime", () => {
 
 	it("rejects unsupported APIs", () => {
 		expect(() => resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [{ ...amux, api: "openai-completions" }])).toThrow(
-			'Unsupported API "openai-completions" for provider "amux". Expected openai-responses or deepseek-responses.',
+			'Unsupported API "openai-completions" for provider "amux". Expected openai-responses, deepseek-responses, zhipu-chat-completions, or anthropic-messages.',
 		);
 	});
 
@@ -233,6 +233,17 @@ describe("resolveStartupRuntime", () => {
 
 		expect(runtime.provider).toMatchObject({ id: "openai", name: "OpenAI" });
 		expect(runtime.model).toMatchObject({ id: "gpt-4o", provider: "openai", api: "openai-responses" });
+	});
+
+	it("uses the built-in Anthropic provider from environment configuration", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "test-key" }, []);
+
+		expect(runtime.provider).toMatchObject({ id: "anthropic", name: "Anthropic" });
+		expect(runtime.model).toMatchObject({
+			id: "claude-sonnet-4-5",
+			provider: "anthropic",
+			api: "anthropic-messages",
+		});
 	});
 
 	it("uses the built-in DeepSeek provider from environment configuration", () => {
