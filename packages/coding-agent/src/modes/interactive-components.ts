@@ -126,7 +126,16 @@ export class InteractiveChat implements Component {
 		const markdownTheme = markdownThemeFor(colors);
 		for (const [index, message] of state.messageItems.entries()) {
 			if (index > 0) lines.push(" ");
-			if (message.role === "user") {
+			if (message.role === "file_change") {
+				lines.push(
+					...renderLine(
+						paint(colors.dim, `${message.kind === "edit" ? "Edited" : "Wrote"} ${message.path}`, true),
+						width,
+					),
+				);
+				for (const line of message.removed) lines.push(...renderLine(paint(colors.error, `- ${line}`), width));
+				for (const line of message.added) lines.push(...renderLine(paint(colors.success, `+ ${line}`), width));
+			} else if (message.role === "user") {
 				lines.push(
 					...new Box(new Text(message.text, 0, 0), { border: "single", padding: 1, title: "You" }).render(width),
 				);

@@ -1,10 +1,18 @@
 import type { Message } from "@di-code/ai";
 import type { AgentSessionEvent, SessionUsage } from "../core/session.ts";
 
-export interface InteractiveMessage {
-	readonly role: "user" | "assistant";
-	readonly text: string;
-}
+export type InteractiveMessage =
+	| { readonly role: "user" | "assistant"; readonly text: string }
+	| {
+			readonly role: "file_change";
+			readonly id: string;
+			readonly path: string;
+			readonly kind: "edit" | "write";
+			readonly removed: readonly string[];
+			readonly added: readonly string[];
+	  };
+
+type FileChangeCandidate = Extract<InteractiveMessage, { role: "file_change" }>;
 
 export type InteractiveProcessItem =
 	| { readonly type: "thinking"; readonly id: "thinking" }
@@ -42,6 +50,7 @@ function textOf(message: Message): string {
 export class InteractiveProjection {
 	private readonly messages: string[] = [];
 	private readonly messageItems: InteractiveMessage[] = [];
+	private readonly pendingFileChanges = new Map<string, FileChangeCandidate>();
 	private readonly processItems: InteractiveProcessItem[] = [];
 	private readonly toolStatus = new Map<string, string>();
 	private spinnerFrame = 0;
@@ -69,7 +78,11 @@ export class InteractiveProjection {
 	get state(): InteractiveState {
 		return {
 			messages: [...this.messages],
-			messageItems: this.messageItems.map((message) => ({ ...message })),
+			messageItems: this.messageItems.map((message) =>
+				message.role === "file_change"
+					? { ...message, removed: [...message.removed], added: [...message.added] }
+					: { ...message },
+			),
 			processItems: this.processItems.map((item) => ({ ...item })),
 			spinnerFrame: this.spinnerFrame,
 			streamingText: this.streamingText,
@@ -91,6 +104,7 @@ export class InteractiveProjection {
 	clearVisibleMessages(): void {
 		this.messages.length = 0;
 		this.messageItems.length = 0;
+		this.pendingFileChanges.clear();
 		this.streamingText = "";
 		this.processItems.length = 0;
 		this.toolStatus.clear();
@@ -132,6 +146,7 @@ export class InteractiveProjection {
 	replaceTranscript(messages: readonly Message[]): void {
 		this.messages.length = 0;
 		this.messageItems.length = 0;
+		this.pendingFileChanges.clear();
 		this.processItems.length = 0;
 		this.toolStatus.clear();
 		this.spinnerFrame = 0;
@@ -180,10 +195,12 @@ export class InteractiveProjection {
 					status: "running",
 				});
 				this.toolStatus.set(event.toolCallId, `${event.toolName}: running`);
+				this.storeFileChange(event.toolCallId, event.toolName, event.arguments);
 				return;
 			case "tool_execution_end":
 				this.updateToolStatus(event.toolCallId, event.result.isError ? "error" : "done");
 				this.toolStatus.set(event.toolCallId, `${event.toolName}: ${event.result.isError ? "error" : "done"}`);
+				this.commitFileChange(event.toolCallId, event.result.isError);
 				return;
 			case "message_end":
 				this.appendCompletedMessage(event.message);
@@ -219,7 +236,10 @@ export class InteractiveProjection {
 	}
 
 	private appendCompletedMessage(message: Message): void {
-		if (message.role === "tool_result") return;
+		if (message.role === "tool_result") {
+			this.commitFileChange(message.toolCallId, message.isError);
+			return;
+		}
 		const text = textOf(message);
 		if (message.role === "user") {
 			if (text.length > 0) {
@@ -232,8 +252,47 @@ export class InteractiveProjection {
 			this.messages.push(text);
 			this.messageItems.push({ role: "assistant", text });
 		}
+		for (const content of message.content) {
+			if (content.type === "tool_call") this.storeFileChange(content.id, content.name, content.arguments);
+		}
 		if (message.stopReason === "error" || message.stopReason === "aborted") this.error = message.errorMessage;
 		this.streamingText = "";
+	}
+
+	private storeFileChange(id: string, toolName: string, argumentsValue: Record<string, unknown>): void {
+		const path = argumentsValue.path;
+		if (typeof path !== "string") return;
+		if (
+			toolName === "edit" &&
+			typeof argumentsValue.oldText === "string" &&
+			typeof argumentsValue.newText === "string"
+		) {
+			this.pendingFileChanges.set(id, {
+				role: "file_change",
+				id,
+				path,
+				kind: "edit",
+				removed: argumentsValue.oldText.replaceAll("\r\n", "\n").split("\n"),
+				added: argumentsValue.newText.replaceAll("\r\n", "\n").split("\n"),
+			});
+		}
+		if (toolName === "write" && typeof argumentsValue.content === "string") {
+			this.pendingFileChanges.set(id, {
+				role: "file_change",
+				id,
+				path,
+				kind: "write",
+				removed: [],
+				added: argumentsValue.content.replaceAll("\r\n", "\n").split("\n"),
+			});
+		}
+	}
+
+	private commitFileChange(id: string, isError: boolean): void {
+		const change = this.pendingFileChanges.get(id);
+		this.pendingFileChanges.delete(id);
+		if (!change || isError) return;
+		this.messageItems.push(change);
 	}
 }
 

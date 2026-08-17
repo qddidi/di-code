@@ -121,6 +121,114 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("InteractiveProjection", () => {
+	it("keeps successful edit changes as colored diff items after the agent turn ends", () => {
+		const projection = new InteractiveProjection();
+		projection.apply({
+			type: "tool_execution_start",
+			toolCallId: "edit-1",
+			toolName: "edit",
+			arguments: { path: "src/app.ts", oldText: "const old = 1;", newText: "const next = 2;" },
+		});
+		projection.apply({
+			type: "tool_execution_end",
+			toolCallId: "edit-1",
+			toolName: "edit",
+			result: {
+				role: "tool_result",
+				toolCallId: "edit-1",
+				toolName: "edit",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 1,
+			},
+		});
+		projection.apply({ type: "agent_end", messages: [] });
+
+		assert.deepEqual(projection.state.messageItems, [
+			{
+				role: "file_change",
+				id: "edit-1",
+				path: "src/app.ts",
+				kind: "edit",
+				removed: ["const old = 1;"],
+				added: ["const next = 2;"],
+			},
+		]);
+	});
+
+	it("does not keep failed file changes in the completed transcript", () => {
+		const projection = new InteractiveProjection();
+		projection.apply({
+			type: "tool_execution_start",
+			toolCallId: "write-1",
+			toolName: "write",
+			arguments: { path: "src/app.ts", content: "const answer = 42;" },
+		});
+		projection.apply({
+			type: "tool_execution_end",
+			toolCallId: "write-1",
+			toolName: "write",
+			result: {
+				role: "tool_result",
+				toolCallId: "write-1",
+				toolName: "write",
+				content: [{ type: "text", text: "permission denied" }],
+				isError: true,
+				timestamp: 1,
+			},
+		});
+
+		assert.deepEqual(projection.state.messageItems, []);
+	});
+
+	it("restores successful edit changes from the persisted transcript", () => {
+		const projection = new InteractiveProjection();
+		projection.replaceTranscript([
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "tool_call",
+						id: "edit-1",
+						name: "edit",
+						arguments: { path: "src/app.ts", oldText: "const old = 1;", newText: "const next = 2;" },
+					},
+				],
+				provider: "faux",
+				model: "faux-model",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				timestamp: 1,
+				stopReason: "tool_use",
+			},
+			{
+				role: "tool_result",
+				toolCallId: "edit-1",
+				toolName: "edit",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 2,
+			},
+		]);
+
+		assert.deepEqual(projection.state.messageItems, [
+			{
+				role: "file_change",
+				id: "edit-1",
+				path: "src/app.ts",
+				kind: "edit",
+				removed: ["const old = 1;"],
+				added: ["const next = 2;"],
+			},
+		]);
+	});
+
 	it("projects transient thinking and tool process items in event order", () => {
 		const projection = new InteractiveProjection();
 		projection.apply({ type: "agent_start" });
@@ -336,6 +444,33 @@ describe("InteractiveProjection", () => {
 });
 
 describe("InteractiveChat streaming layout", () => {
+	it("renders persisted file changes as colored diffs without overflowing", () => {
+		const baseState = new InteractiveProjection().state;
+		const lines = new InteractiveChat(() => ({
+			...baseState,
+			messageItems: [
+				{
+					role: "file_change" as const,
+					id: "edit-1",
+					path: "src/app.ts",
+					kind: "edit" as const,
+					removed: ["const old = 1;"],
+					added: ["const next = 2;"],
+				},
+			],
+			model: "faux-model",
+			theme: "dark" as const,
+		})).render(40);
+		const output = lines.join("\n");
+
+		assert.equal(output.includes("Edited src/app.ts"), true);
+		assert.equal(output.includes("- const old = 1;"), true);
+		assert.equal(output.includes("+ const next = 2;"), true);
+		assert.equal(output.includes("\x1b[38;5;210m- const old = 1;"), true);
+		assert.equal(output.includes("\x1b[38;5;114m+ const next = 2;"), true);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 40));
+	});
+
 	it("uses compact semantic message hierarchy without overflowing 40 columns", () => {
 		const usage = new InteractiveProjection().state.usage;
 		const readState = (): InteractiveViewState => ({
