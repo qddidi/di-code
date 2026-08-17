@@ -731,16 +731,13 @@ function createSuccessMessage(
 	const replayOutputItems = [...progress.replayOutputItems.entries()]
 		.sort(([left], [right]) => left - right)
 		.map(([, item]) => item);
-	const reasoningItems = replayOutputItems.filter(
-		(item): item is { readonly [key: string]: JsonValue } => isRecord(item) && item.type === "reasoning",
-	);
-	const canReplay =
-		reasoningItems.length > 0 &&
-		(model.api === "deepseek-responses"
-			? reasoningItems.every((item) => Array.isArray(item.content))
-			: reasoningItems.every(
-					(item) => typeof item.encrypted_content === "string" && item.encrypted_content.length > 0,
-				));
+	const replayableOutputItems = replayOutputItems.filter((item) => {
+		if (!isRecord(item) || item.type !== "reasoning") return true;
+		return model.api === "deepseek-responses"
+			? Array.isArray(item.content)
+			: typeof item.encrypted_content === "string" && item.encrypted_content.length > 0;
+	});
+	const canReplay = replayableOutputItems.length > 0;
 	return {
 		role: "assistant",
 		content: [...progress.completedContent],
@@ -753,7 +750,7 @@ function createSuccessMessage(
 			? {
 					providerReplay: {
 						api: model.api,
-						data: { outputItems: replayOutputItems },
+						data: { outputItems: replayableOutputItems },
 					},
 				}
 			: {}),
@@ -1407,7 +1404,6 @@ async function produceOpenAIResponse(
 	const fetchImpl = dependencies.fetch ?? globalThis.fetch;
 	const baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
 	const sessionId = options.sessionId?.trim();
-	const sessionHeader = model.sessionAffinity === "codex" ? "session-id" : "session_id";
 	const response = await fetchImpl(`${baseUrl}/responses`, {
 		method: "POST",
 		headers: {
@@ -1416,7 +1412,7 @@ async function produceOpenAIResponse(
 			"content-type": "application/json",
 			...(sessionId
 				? {
-						[sessionHeader]: sessionId,
+						session_id: sessionId,
 						"x-client-request-id": sessionId,
 					}
 				: {}),

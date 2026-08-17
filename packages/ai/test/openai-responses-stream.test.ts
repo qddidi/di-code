@@ -215,6 +215,111 @@ describe("streamOpenAIResponses", () => {
 		});
 	});
 
+	it("preserves a message replay item when an unencrypted reasoning item cannot be replayed", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_unencrypted", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_unencrypted", summary: [], status: "completed" },
+			},
+			{
+				type: "response.output_item.added",
+				output_index: 1,
+				item: { type: "message", id: "msg_preserved", role: "assistant", status: "in_progress", content: [] },
+			},
+			{ type: "response.output_text.delta", output_index: 1, content_index: 0, delta: "Preserve me" },
+			{ type: "response.output_text.done", output_index: 1, content_index: 0, text: "Preserve me" },
+			{
+				type: "response.output_item.done",
+				output_index: 1,
+				item: {
+					type: "message",
+					id: "msg_preserved",
+					role: "assistant",
+					status: "completed",
+					content: [{ type: "output_text", text: "Preserve me", annotations: [] }],
+				},
+			},
+			{ type: "response.completed", response: { status: "completed", usage: { input_tokens: 2, output_tokens: 2 } } },
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect((await stream.result()).providerReplay).toEqual({
+			api: "openai-responses",
+			data: {
+				outputItems: [
+					{
+						type: "message",
+						id: "msg_preserved",
+						role: "assistant",
+						status: "completed",
+						content: [{ type: "output_text", text: "Preserve me", annotations: [] }],
+					},
+				],
+			},
+		});
+	});
+
+	it("preserves a function-call replay item when an unencrypted reasoning item cannot be replayed", async () => {
+		const response = sse(
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_unencrypted", summary: [] },
+			},
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_unencrypted", summary: [], status: "completed" },
+			},
+			{
+				type: "response.output_item.added",
+				output_index: 1,
+				item: { type: "function_call", id: "fc_preserved", call_id: "call_preserved", name: "read", arguments: "" },
+			},
+			{ type: "response.function_call_arguments.done", output_index: 1, arguments: '{"path":"README.md"}' },
+			{
+				type: "response.output_item.done",
+				output_index: 1,
+				item: {
+					type: "function_call",
+					id: "fc_preserved",
+					call_id: "call_preserved",
+					name: "read",
+					arguments: '{"path":"README.md"}',
+					status: "completed",
+				},
+			},
+			{ type: "response.completed", response: { status: "completed", usage: { input_tokens: 2, output_tokens: 2 } } },
+		);
+		const stream = streamOpenAIResponses({ ...model, reasoning: true }, context, options, dependencies(response));
+
+		await collect(stream);
+
+		expect((await stream.result()).providerReplay).toEqual({
+			api: "openai-responses",
+			data: {
+				outputItems: [
+					{
+						type: "function_call",
+						id: "fc_preserved",
+						call_id: "call_preserved",
+						name: "read",
+						arguments: '{"path":"README.md"}',
+						status: "completed",
+					},
+				],
+			},
+		});
+	});
+
 	it("replays a streamed reasoning tool turn in the next stateless request", async () => {
 		const firstResponse = sse(
 			{
@@ -1016,6 +1121,20 @@ describe("streamOpenAIResponses", () => {
 			content: [{ type: "text", text: "Hello" }],
 			provider: "openai",
 			model: "test-openai-model",
+			providerReplay: {
+				api: "openai-responses",
+				data: {
+					outputItems: [
+						{
+							type: "message",
+							id: "msg_1",
+							role: "assistant",
+							status: "completed",
+							content: [{ type: "output_text", text: "Hello", annotations: [] }],
+						},
+					],
+				},
+			},
 			usage: {
 				input: 7,
 				output: 2,
@@ -1064,7 +1183,7 @@ describe("streamOpenAIResponses", () => {
 		});
 	});
 
-	it("uses the Codex session-id header when the model requires Codex affinity", async () => {
+	it("uses the OpenAI session_id header for custom GPT models", async () => {
 		const deps = dependencies(
 			sse({
 				type: "response.completed",
@@ -1073,19 +1192,19 @@ describe("streamOpenAIResponses", () => {
 		);
 
 		const stream = streamOpenAIResponses(
-			{ ...model, sessionAffinity: "codex" },
+			{ ...model, id: "gpt-5.6-terra", baseUrl: "https://gateway.example/v1" },
 			context,
-			{ ...options, sessionId: "session-codex-affinity-123" },
+			{ ...options, sessionId: "session-codex-automatic-123" },
 			deps,
 		);
 		await collect(stream);
 
 		const [, init] = deps.fetch.mock.calls[0] as unknown as [string, RequestInit];
 		expect(init.headers).toMatchObject({
-			"session-id": "session-codex-affinity-123",
-			"x-client-request-id": "session-codex-affinity-123",
+			session_id: "session-codex-automatic-123",
+			"x-client-request-id": "session-codex-automatic-123",
 		});
-		expect(init.headers).not.toHaveProperty("session_id");
+		expect(init.headers).not.toHaveProperty("session-id");
 	});
 
 	it("maps function argument deltas and preserves the call id", async () => {

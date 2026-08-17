@@ -10,7 +10,6 @@
 以下命令从源码启动。首次在真实交互终端运行时，可以在向导中选择 Provider、模型，并临时输入 API Key；密钥不会写入磁盘。
 
 ```powershell
-Set-Location D:\pi\di-code
 npm install --ignore-scripts
 npm run dev
 ```
