@@ -79,6 +79,24 @@ describe("Markdown", () => {
 		assert.equal(incomplete.includes("const value = 2;"), false);
 	});
 
+	it("delegates fenced code with an explicit language to the theme highlighter", () => {
+		const calls: Array<{ code: string; language: string | undefined }> = [];
+		const markdown = new Markdown("```ts\nconst answer = 42;\n```", {
+			theme: {
+				...testTheme,
+				highlightCode: (code, language) => {
+					calls.push({ code, language });
+					return [`<highlight>${code}</highlight>`];
+				},
+			},
+		});
+
+		const output = markdown.render(80).join("\n");
+
+		assert.deepEqual(calls, [{ code: "const answer = 42;", language: "ts" }]);
+		assert.equal(output.includes("<highlight>const answer = 42;</highlight>"), true);
+	});
+
 	it("strips terminal control characters and keeps semantic lines within narrow widths", () => {
 		const markdown = new Markdown("# 标题\n\n\u001b[2Junsafe **世界😀**", { paddingX: 1, theme: testTheme });
 		const lines = markdown.render(12);

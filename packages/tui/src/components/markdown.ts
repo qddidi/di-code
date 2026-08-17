@@ -17,6 +17,7 @@ export interface MarkdownTheme {
 	readonly italic: (text: string) => string;
 	readonly strikethrough: (text: string) => string;
 	readonly underline: (text: string) => string;
+	readonly highlightCode?: (code: string, language?: string) => string[];
 }
 
 export interface MarkdownOptions {
@@ -139,7 +140,9 @@ function renderBlocks(tokens: readonly Token[], theme: MarkdownTheme): string[] 
 			case "code": {
 				const language = token.lang ? ` ${sanitizeMarkdown(token.lang)}` : "";
 				lines.push(theme.codeBlockBorder(`\`\`\`${language}`));
-				for (const line of sanitizeMarkdown(token.text).split("\n")) lines.push(theme.codeBlock(line));
+				const code = sanitizeMarkdown(token.text);
+				const highlighted = theme.highlightCode?.(code, token.lang);
+				lines.push(...(highlighted ?? code.split("\n").map((line) => theme.codeBlock(line))));
 				lines.push(theme.codeBlockBorder("```"));
 				break;
 			}

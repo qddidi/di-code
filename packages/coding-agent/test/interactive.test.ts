@@ -368,6 +368,35 @@ describe("InteractiveChat streaming layout", () => {
 		assert.ok(lines.every((line) => visibleWidth(line) <= 40));
 	});
 
+	it("syntax-highlights fenced TypeScript but falls back for unknown languages", () => {
+		const usage = new InteractiveProjection().state.usage;
+		const readState = (text: string): InteractiveViewState => ({
+			messages: [text],
+			messageItems: [{ role: "assistant", text }],
+			streamingText: "",
+			toolStatus: [],
+			processItems: [],
+			busy: false,
+			queue: [],
+			status: "",
+			error: "",
+			retrying: false,
+			compacting: false,
+			spinnerFrame: 0,
+			usage,
+			model: "faux-model",
+			theme: "dark",
+		});
+
+		const typescript = new InteractiveChat(() => readState("```ts\nconst answer = 42;\n``` ")).render(80).join("\n");
+		const unknown = new InteractiveChat(() => readState("```not-a-language\nconst answer = 42;\n``` "))
+			.render(80)
+			.join("\n");
+
+		assert.equal(typescript.includes("\x1b[36mconst"), true);
+		assert.equal(unknown.includes("\x1b[36mconst"), false);
+	});
+
 	it("commits a long streamed answer without replaying the frame", async () => {
 		const projection = new InteractiveProjection();
 		const userMessage = {

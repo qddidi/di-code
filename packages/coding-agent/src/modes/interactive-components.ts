@@ -1,5 +1,6 @@
 import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
 import { Box, Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
+import { highlightCode } from "../utils/syntax-highlight.ts";
 import type { InteractiveState } from "./interactive-state.ts";
 
 export interface InteractiveViewState extends InteractiveState {
@@ -62,6 +63,9 @@ function markdownThemeFor(colors: Palette): MarkdownTheme {
 		italic: (text) => `\x1b[3m${text}${RESET}`,
 		strikethrough: (text) => `\x1b[9m${text}${RESET}`,
 		underline: (text) => `\x1b[4m${text}${RESET}`,
+		highlightCode: (code, language) =>
+			(language ? highlightCode(code, language) : undefined) ??
+			code.split("\n").map((line) => paint(colors.assistant, line)),
 	};
 }
 

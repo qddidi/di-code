@@ -55,6 +55,7 @@
 		"@di-code/agent": "0.1.2",
 		"@di-code/ai": "0.1.2",
 		"@di-code/tui": "0.1.2",
+		"highlight.js": "^10.7.3",
 		"jiti": "^2.5.1"
 	},
 	"optionalDependencies": {
