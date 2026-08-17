@@ -440,7 +440,7 @@ di-code --no-skills "不要加载任何 Skill"
 
 入口必须默认导出一个 factory 函数。项目插件仅在运行过 `di-code --trust-project --interactive` 后导入。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
 
-完整的 TypeBox schema、工具、slash command、生命周期事件及安全责任，请阅读仓库文档：[插件使用指南](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)。
+完整的 TypeBox schema、工具、slash command、生命周期事件及安全责任，请阅读仓库文档：[插件使用指南](https://github.com/qddidi/di-code/blob/master/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)。
 
 ### 管理全局插件
 
@@ -565,6 +565,6 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 ## 相关链接
 
 - 项目源码与完整开发文档：<https://github.com/qddidi/di-code>
-- 插件详细指南：[GitHub 上的《插件使用指南》](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)
+- 插件详细指南：[GitHub 上的《插件使用指南》](https://github.com/qddidi/di-code/blob/master/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)
 - 问题反馈：<https://github.com/qddidi/di-code/issues>
-- 许可证：[MIT](https://github.com/qddidi/di-code/blob/main/LICENSE)
+- 许可证：[MIT](https://github.com/qddidi/di-code/blob/master/LICENSE)
