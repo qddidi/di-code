@@ -1,4 +1,4 @@
-import type { Component } from "@di-code/tui";
+import { type Component, truncateToWidth, visibleWidth } from "@di-code/tui";
 
 export interface InteractiveLayoutOptions {
 	readonly header: Component;
@@ -39,8 +39,22 @@ export class InteractiveLayout implements Component {
 			...this.header.render(width),
 			...this.chat.render(width),
 			...this.composer.render(width),
-			...this.editor.render(width),
+			...this.renderEditor(width),
 			...this.footer.render(width),
 		];
+	}
+
+	private renderEditor(width: number): string[] {
+		if (width <= 0) return [];
+		if (width < 3) return this.editor.render(width).map((line) => truncateToWidth(line, width, ""));
+		const innerWidth = width - 2;
+		const title = " Compose ";
+		const top = `┌${title}${"─".repeat(Math.max(0, innerWidth - visibleWidth(title)))}┐`;
+		const content = this.editor.render(innerWidth).map((line) => {
+			const clipped = truncateToWidth(line, innerWidth, "", true);
+			return `│${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))}│`;
+		});
+		const bottom = `└${"─".repeat(innerWidth)}┘`;
+		return [top, ...content, bottom];
 	}
 }

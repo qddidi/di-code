@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { Box } from "../src/components/box.ts";
-import { Markdown } from "../src/components/markdown.ts";
+import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
 import { Spacer } from "../src/components/spacer.ts";
 import { TruncatedText } from "../src/components/truncated-text.ts";
 import type { Component } from "../src/tui.ts";
@@ -11,6 +11,23 @@ function stripSgr(text: string): string {
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI assertions intentionally match ESC.
 	return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
+
+const testTheme: MarkdownTheme = {
+	heading: (text) => `<heading>${text}</heading>`,
+	link: (text) => `<link>${text}</link>`,
+	linkUrl: (text) => `<url>${text}</url>`,
+	code: (text) => `<code>${text}</code>`,
+	codeBlock: (text) => `<block>${text}</block>`,
+	codeBlockBorder: (text) => `<border>${text}</border>`,
+	quote: (text) => `<quote>${text}</quote>`,
+	quoteBorder: (text) => `<quote-border>${text}</quote-border>`,
+	hr: (text) => `<hr>${text}</hr>`,
+	listBullet: (text) => `<bullet>${text}</bullet>`,
+	bold: (text) => `<bold>${text}</bold>`,
+	italic: (text) => `<italic>${text}</italic>`,
+	strikethrough: (text) => `<strike>${text}</strike>`,
+	underline: (text) => `<underline>${text}</underline>`,
+};
 
 class FixedComponent implements Component {
 	private readonly content: string[];
@@ -27,6 +44,49 @@ class FixedComponent implements Component {
 }
 
 describe("Markdown", () => {
+	it("renders semantic tokens through an injected theme", () => {
+		const markdown = new Markdown(
+			"# Heading\n\n**bold** *italic* ~~removed~~ and [docs](https://example.test)\n\n> quoted\n\n- parent\n  - child\n- [x] done\n\n| Name | Value |\n| --- | --- |\n| 中文 | emoji 😀 |\n\n```ts\nconst value = 1;\n```",
+			{ theme: testTheme },
+		);
+
+		const output = markdown.render(240).join("\n");
+
+		assert.equal(output.includes("<heading>Heading</heading>"), true);
+		assert.equal(output.includes("<bold>bold</bold>"), true);
+		assert.equal(output.includes("<italic>italic</italic>"), true);
+		assert.equal(output.includes("<strike>removed</strike>"), true);
+		assert.equal(output.includes("<link>docs</link>"), true);
+		assert.equal(output.includes("<url>(https://example.test)</url>"), true);
+		assert.equal(output.includes("<quote-border>│</quote-border>"), true);
+		assert.equal(output.includes("<bullet>•</bullet> parent"), true);
+		assert.equal(output.includes("<bullet>◦</bullet> child"), true);
+		assert.equal(output.includes("[x] done"), true);
+		assert.equal(output.includes("Name"), true);
+		assert.equal(output.includes("<border>``` ts</border>"), true);
+		assert.equal(output.includes("<block>const value = 1;</block>"), true);
+	});
+
+	it("keeps the previous complete fence visible while a streamed closing fence is incomplete", () => {
+		const markdown = new Markdown("```ts\nconst value = 1;\n```", { theme: testTheme });
+		const complete = markdown.render(40).join("\n");
+
+		markdown.setText("```ts\nconst value = 2;\n``");
+		const incomplete = markdown.render(40).join("\n");
+
+		assert.equal(complete.includes("const value = 1;"), true);
+		assert.equal(incomplete.includes("const value = 1;"), true);
+		assert.equal(incomplete.includes("const value = 2;"), false);
+	});
+
+	it("strips terminal control characters and keeps semantic lines within narrow widths", () => {
+		const markdown = new Markdown("# 标题\n\n\u001b[2Junsafe **世界😀**", { paddingX: 1, theme: testTheme });
+		const lines = markdown.render(12);
+
+		assert.ok(lines.every((line) => visibleWidth(line) <= 12));
+		assert.equal(lines.join("").includes("\u001b[2J"), false);
+	});
+
 	it("renders common blocks and inline ANSI styles", () => {
 		const markdown = new Markdown(
 			"# Title\n\n**bold** *italic* `code`\n\n- one\n- two\n\n> quote\n\n```\nconst x = 1;\n```\n\n---",

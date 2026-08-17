@@ -4,7 +4,6 @@
 
 它支持 OpenAI、Anthropic、DeepSeek 和智谱等 Provider，以及流式文本、推理、工具调用、持久化会话、交互终端、JSON 输出和 JSONL RPC。
 
-> **适用范围**：当前项目适合本地开发、学习和受控环境使用。`read`、`write`、`edit`、`bash` 以及受信任插件都能操作本机资源；它们不是操作系统级沙箱。使用真实 Provider 前，请确认工作目录和值得信任的插件来源。
 
 ## 快速开始
 

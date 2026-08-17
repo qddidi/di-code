@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider, type Provider } from "@di-code/ai";
 import type { Component, Terminal } from "@di-code/tui";
-import { CURSOR_MARKER, TUI } from "@di-code/tui";
+import { CURSOR_MARKER, TUI, visibleWidth } from "@di-code/tui";
 import { describe, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
@@ -336,6 +336,38 @@ describe("InteractiveProjection", () => {
 });
 
 describe("InteractiveChat streaming layout", () => {
+	it("uses compact semantic message hierarchy without overflowing 40 columns", () => {
+		const usage = new InteractiveProjection().state.usage;
+		const readState = (): InteractiveViewState => ({
+			messages: ["a focused user question", "assistant response"],
+			messageItems: [
+				{ role: "user", text: "a focused user question" },
+				{ role: "assistant", text: "# Answer\n\nA **clear** response." },
+			],
+			streamingText: "",
+			toolStatus: [],
+			processItems: [],
+			busy: false,
+			queue: [],
+			status: "",
+			error: "",
+			retrying: false,
+			compacting: false,
+			spinnerFrame: 0,
+			usage,
+			model: "faux-model",
+			theme: "dark",
+		});
+
+		const lines = new InteractiveChat(readState).render(40);
+		const output = lines.join("\n");
+
+		assert.equal(output.includes("┌ You"), true);
+		assert.equal(output.includes("Assistant"), true);
+		assert.equal(output.includes("┌ Assistant"), false);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 40));
+	});
+
 	it("commits a long streamed answer without replaying the frame", async () => {
 		const projection = new InteractiveProjection();
 		const userMessage = {
@@ -812,15 +844,20 @@ describe("InteractiveMode", () => {
 			};
 			const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
 			const terminal = new TestTerminal();
+			let clipboardRead = false;
 			const mode = new InteractiveMode({
 				session,
 				tui: new TUI(terminal),
-				readClipboardImagePath: async () => imagePath,
+				readClipboardImagePath: async () => {
+					clipboardRead = true;
+					return imagePath;
+				},
 			});
 
 			mode.start();
 			terminal.sendInput(PASTE_IMAGE_INPUT);
-			await waitFor(() => terminal.output.includes("di-code-clipboard-00000000-0000-0000-0000-000000000001.png"));
+			await waitFor(() => clipboardRead);
+			await flush();
 			terminal.sendInput("\x15");
 			await waitFor(() => !existsSync(imagePath));
 			terminal.sendInput("text only");

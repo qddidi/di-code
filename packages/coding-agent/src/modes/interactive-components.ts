@@ -1,5 +1,5 @@
-import type { AutocompleteItem, Component } from "@di-code/tui";
-import { Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
+import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
+import { Box, Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
 import type { InteractiveState } from "./interactive-state.ts";
 
 export interface InteractiveViewState extends InteractiveState {
@@ -44,6 +44,25 @@ function paletteFor(theme: InteractiveViewState["theme"]): Palette {
 
 function paint(color: string, text: string, bold = false): string {
 	return `${color}${bold ? BOLD : ""}${text}${RESET}`;
+}
+
+function markdownThemeFor(colors: Palette): MarkdownTheme {
+	return {
+		heading: (text) => paint(colors.assistant, text, true),
+		link: (text) => paint(colors.accent, text),
+		linkUrl: (text) => paint(colors.dim, text),
+		code: (text) => paint(colors.warning, text),
+		codeBlock: (text) => paint(colors.assistant, text),
+		codeBlockBorder: (text) => paint(colors.dim, text),
+		quote: (text) => paint(colors.dim, text),
+		quoteBorder: (text) => paint(colors.dim, text),
+		hr: (text) => paint(colors.dim, text),
+		listBullet: (text) => paint(colors.accent, text),
+		bold: (text) => paint(colors.assistant, text, true),
+		italic: (text) => `\x1b[3m${text}${RESET}`,
+		strikethrough: (text) => `\x1b[9m${text}${RESET}`,
+		underline: (text) => `\x1b[4m${text}${RESET}`,
+	};
 }
 
 function renderLine(text: string, width: number): string[] {
@@ -100,14 +119,16 @@ export class InteractiveChat implements Component {
 		const state = this.readState();
 		const lines: string[] = [];
 		const colors = paletteFor(state.theme);
+		const markdownTheme = markdownThemeFor(colors);
 		for (const [index, message] of state.messageItems.entries()) {
 			if (index > 0) lines.push(" ");
 			if (message.role === "user") {
-				lines.push(...renderLine(`  ${paint(colors.accent, "You", true)}`, width));
-				lines.push(...new Text(`    ${message.text}`).render(width));
+				lines.push(
+					...new Box(new Text(message.text, 0, 0), { border: "single", padding: 1, title: "You" }).render(width),
+				);
 			} else {
-				lines.push(...renderLine(`  ${paint(colors.assistant, "Assistant", true)}`, width));
-				lines.push(...new Markdown(message.text, { paddingX: 4 }).render(width));
+				lines.push(...renderLine(paint(colors.assistant, "Assistant", true), width));
+				lines.push(...new Markdown(message.text, { paddingX: 2, theme: markdownTheme }).render(width));
 			}
 		}
 		const toolCount = state.processItems.filter((item) => item.type === "tool").length;
@@ -138,13 +159,13 @@ export class InteractiveChat implements Component {
 		}
 		if (state.streamingText) {
 			if (lines.length > 0) lines.push(" ");
-			lines.push(...renderLine(`  ${paint(colors.assistant, "Assistant", true)}`, width));
-			lines.push(...new Markdown(state.streamingText, { paddingX: 4 }).render(width));
+			lines.push(...renderLine(paint(colors.assistant, "Assistant", true), width));
+			lines.push(...new Markdown(state.streamingText, { paddingX: 2, theme: markdownTheme }).render(width));
 		}
 		const hasActivity = state.status || state.queue.length > 0 || state.error;
 		if (hasActivity) {
 			if (lines.length > 0) lines.push(" ");
-			lines.push(...renderLine(`  ${paint(colors.dim, "ACTIVITY", true)}`, width));
+			lines.push(...renderLine(paint(colors.dim, "Activity", true), width));
 			if (state.status) lines.push(...renderLine(`    ${paint(colors.dim, state.status)}`, width));
 			if (state.queue.length > 0) {
 				lines.push(...renderLine(`    ${paint(colors.dim, `Queue (${state.queue.length})`)}`, width));
@@ -170,11 +191,8 @@ export class InteractiveComposer implements Component {
 	render(width: number): string[] {
 		const state = this.readState();
 		const colors = paletteFor(state.theme);
-		const copy = width >= 56 ? "COMPOSE  / commands  Tab complete" : "COMPOSE  / commands";
-		return [
-			...renderLine(paint(colors.dim, "-".repeat(Math.max(0, width))), width),
-			...renderLine(paint(colors.dim, copy), width),
-		];
+		const copy = width >= 56 ? "/ commands  Tab complete" : "/ commands";
+		return renderLine(paint(colors.dim, copy), width);
 	}
 }
 
@@ -203,11 +221,7 @@ export class InteractiveFooter implements Component {
 			width >= 60
 				? `Enter send   ${pasteImageShortcut} paste image   Esc cancel   Ctrl+O model`
 				: `Enter send  ${pasteImageShortcut} image`;
-		return [
-			...renderLine(paint(colors.dim, "-".repeat(Math.max(0, width))), width),
-			...renderLine(status, width),
-			...renderLine(paint(colors.dim, hints), width),
-		];
+		return [...renderLine(status, width), ...renderLine(paint(colors.dim, hints), width)];
 	}
 }
 

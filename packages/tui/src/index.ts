@@ -9,7 +9,7 @@ export {
 export { Box, type BoxOptions } from "./components/box.ts";
 export { Editor, type EditorOptions } from "./components/editor.ts";
 export { Input } from "./components/input.ts";
-export { Markdown, type MarkdownOptions } from "./components/markdown.ts";
+export { Markdown, type MarkdownOptions, type MarkdownTheme } from "./components/markdown.ts";
 export { type SelectItem, SelectList, type SelectListOptions } from "./components/select-list.ts";
 export { type SettingItem, SettingsList, type SettingsListOptions } from "./components/settings-list.ts";
 export { Spacer } from "./components/spacer.ts";
