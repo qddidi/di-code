@@ -109,6 +109,7 @@ export interface OpenAIResponsesRequest {
 	readonly input: readonly OpenAIResponsesInputItem[];
 	readonly tools?: readonly OpenAIResponsesFunctionTool[];
 	readonly prompt_cache_key?: string;
+	readonly prompt_cache_retention?: "24h";
 	readonly max_output_tokens?: number;
 	readonly temperature?: number;
 	readonly reasoning?: { readonly summary: "auto" };
@@ -494,11 +495,13 @@ export function buildOpenAIResponsesRequest(
 	const sessionId = options.sessionId?.trim();
 	const promptCacheKey =
 		isOpenAI && sessionId ? Array.from(sessionId).slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("") : undefined;
+	const promptCacheRetention = isOpenAI && sessionId && model.cacheRetention === "long" ? "24h" : undefined;
 
 	return {
 		model: model.id,
 		input: projectMessages(model, context),
 		...(promptCacheKey !== undefined ? { prompt_cache_key: promptCacheKey } : {}),
+		...(promptCacheRetention !== undefined ? { prompt_cache_retention: promptCacheRetention } : {}),
 		stream: true,
 		store: false,
 		...(isOpenAI && model.reasoning
@@ -1404,6 +1407,7 @@ async function produceOpenAIResponse(
 	const fetchImpl = dependencies.fetch ?? globalThis.fetch;
 	const baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
 	const sessionId = options.sessionId?.trim();
+	const sessionHeader = model.sessionAffinity === "codex" ? "session-id" : "session_id";
 	const response = await fetchImpl(`${baseUrl}/responses`, {
 		method: "POST",
 		headers: {
@@ -1412,7 +1416,7 @@ async function produceOpenAIResponse(
 			"content-type": "application/json",
 			...(sessionId
 				? {
-						session_id: sessionId,
+						[sessionHeader]: sessionId,
 						"x-client-request-id": sessionId,
 					}
 				: {}),

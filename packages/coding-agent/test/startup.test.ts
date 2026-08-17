@@ -81,6 +81,8 @@ describe("Pi-style startup configuration", () => {
 							id: "gpt-custom",
 							input: ["text", "image"],
 							reasoning: true,
+							cacheRetention: "long",
+							sessionAffinity: "codex",
 							contextWindow: 256000,
 							maxTokens: 32000,
 							cost: { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 0 },
@@ -95,6 +97,8 @@ describe("Pi-style startup configuration", () => {
 		expect(configuration.providers[0]?.models?.[0]).toMatchObject({
 			input: ["text", "image"],
 			reasoning: true,
+			cacheRetention: "long",
+			sessionAffinity: "codex",
 			contextWindow: 256000,
 			maxOutputTokens: 32000,
 			cost: { input: 0.0000025, output: 0.00001, cacheRead: 0.00000125, cacheWrite: 0 },

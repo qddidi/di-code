@@ -193,6 +193,10 @@ export interface Model {
 	api: string;
 	/** 真实模型的默认请求 endpoint；Faux 和临时测试模型可以省略。 */
 	baseUrl?: string;
+	/** 为支持该能力的 Provider 请求更长的提示词缓存保留时间。 */
+	cacheRetention?: "long";
+	/** 使用 Codex 的 session-id 请求头维持缓存路由亲和性。 */
+	sessionAffinity?: "codex";
 	/** 模型支持的输入模态列表。 */
 	input: ModelInput[];
 	/** 模型是否支持生成独立的思考内容。 */

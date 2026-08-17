@@ -187,6 +187,14 @@ describe("buildOpenAIResponsesRequest", () => {
 		expect(Array.from(request.prompt_cache_key ?? "")).toHaveLength(64);
 	});
 
+	it("requests 24-hour prompt cache retention when the model opts in", () => {
+		const request = buildOpenAIResponsesRequest({ ...model, cacheRetention: "long" }, textContext(), {
+			sessionId: "session-long-cache",
+		});
+
+		expect(request.prompt_cache_retention).toBe("24h");
+	});
+
 	it("omits prompt_cache_key when the session id is blank", () => {
 		expect(buildOpenAIResponsesRequest(model, textContext(), { sessionId: "   " })).not.toHaveProperty(
 			"prompt_cache_key",

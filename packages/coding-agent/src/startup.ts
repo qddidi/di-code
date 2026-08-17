@@ -111,6 +111,12 @@ function parseModels(
 		if (model.reasoning !== undefined && typeof model.reasoning !== "boolean") {
 			throw new Error(`${SETTINGS_PATH}: ${modelPath}.reasoning must be a boolean`);
 		}
+		if (model.cacheRetention !== undefined && model.cacheRetention !== "long") {
+			throw new Error(`${SETTINGS_PATH}: ${modelPath}.cacheRetention must be "long" when provided`);
+		}
+		if (model.sessionAffinity !== undefined && model.sessionAffinity !== "codex") {
+			throw new Error(`${SETTINGS_PATH}: ${modelPath}.sessionAffinity must be "codex" when provided`);
+		}
 		const api = optionalString(model.api, `${modelPath}.api`) ?? providerApi;
 		if (!api) throw new Error(`${SETTINGS_PATH}: ${modelPath}.api is required`);
 		const baseUrl = optionalString(model.baseUrl, `${modelPath}.baseUrl`) ?? providerBaseUrl;
@@ -123,6 +129,8 @@ function parseModels(
 			...(baseUrl === undefined ? {} : { baseUrl }),
 			input: [...input],
 			reasoning: model.reasoning ?? false,
+			...(model.cacheRetention === "long" ? { cacheRetention: "long" as const } : {}),
+			...(model.sessionAffinity === "codex" ? { sessionAffinity: "codex" as const } : {}),
 			contextWindow: positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000),
 			maxOutputTokens: positiveInteger(model.maxTokens ?? model.maxOutputTokens, `${modelPath}.maxTokens`, 16_384),
 			cost: {

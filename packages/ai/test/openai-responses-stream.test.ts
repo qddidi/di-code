@@ -1064,6 +1064,30 @@ describe("streamOpenAIResponses", () => {
 		});
 	});
 
+	it("uses the Codex session-id header when the model requires Codex affinity", async () => {
+		const deps = dependencies(
+			sse({
+				type: "response.completed",
+				response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			{ ...model, sessionAffinity: "codex" },
+			context,
+			{ ...options, sessionId: "session-codex-affinity-123" },
+			deps,
+		);
+		await collect(stream);
+
+		const [, init] = deps.fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect(init.headers).toMatchObject({
+			"session-id": "session-codex-affinity-123",
+			"x-client-request-id": "session-codex-affinity-123",
+		});
+		expect(init.headers).not.toHaveProperty("session_id");
+	});
+
 	it("maps function argument deltas and preserves the call id", async () => {
 		const response = sse(
 			{ type: "response.created", response: { id: "resp_tool" } },
