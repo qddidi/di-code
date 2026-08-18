@@ -280,7 +280,9 @@ describe("runMain", () => {
 			timestamp: Date.parse("2026-08-12T13:05:00.000Z"),
 		});
 
-		expect(formatSessionLabel(manager)).toBe("Explain the session flow with a second line (2026-08-12 13:05)");
+		expect(formatSessionLabel(manager, "Asia/Shanghai")).toBe(
+			"Explain the session flow with a second line (2026-08-12 21:05)",
+		);
 	});
 
 	it("preserves help as a no-runtime command", async () => {

@@ -98,17 +98,41 @@ async function selectStartupSession(
 	});
 }
 
-function formatSessionTimestamp(timestamp: number, fallback: string): string {
+function formatSessionTimestamp(timestamp: number, fallback: string, timeZone?: string): string {
 	const date = new Date(timestamp);
-	const isoTimestamp = Number.isNaN(date.getTime()) ? fallback : date.toISOString();
-	return isoTimestamp.slice(0, 16).replace("T", " ");
+	if (Number.isNaN(date.getTime())) return fallback;
+	try {
+		const parts = new Map(
+			new Intl.DateTimeFormat("en-CA", {
+				timeZone: timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+				year: "numeric",
+				month: "2-digit",
+				day: "2-digit",
+				hour: "2-digit",
+				minute: "2-digit",
+				hourCycle: "h23",
+			})
+				.formatToParts(date)
+				.filter((part) => part.type !== "literal")
+				.map((part) => [part.type, part.value]),
+		);
+		const year = parts.get("year");
+		const month = parts.get("month");
+		const day = parts.get("day");
+		const hour = parts.get("hour");
+		const minute = parts.get("minute");
+		if (!year || !month || !day || !hour || !minute) return fallback;
+		return `${year}-${month}-${day} ${hour}:${minute}`;
+	} catch {
+		return fallback;
+	}
 }
 
-export function formatSessionLabel(manager: SessionManager): string {
+export function formatSessionLabel(manager: SessionManager, timeZone?: string): string {
 	const firstUserEntry = manager.entries.find((entry) => entry.type === "message" && entry.message.role === "user");
 	const fileName = basename(manager.filePath, extname(manager.filePath));
 	if (firstUserEntry?.type !== "message" || firstUserEntry.message.role !== "user") {
-		return `${fileName} (${formatSessionTimestamp(Date.parse(manager.header.timestamp), manager.header.timestamp)})`;
+		return `${fileName} (${formatSessionTimestamp(Date.parse(manager.header.timestamp), manager.header.timestamp, timeZone)})`;
 	}
 
 	const question = firstUserEntry.message.content
@@ -121,7 +145,7 @@ export function formatSessionLabel(manager: SessionManager): string {
 		question.length > MAX_SESSION_QUESTION_LENGTH
 			? `${question.slice(0, MAX_SESSION_QUESTION_LENGTH - 3)}...`
 			: question || fileName;
-	const timestamp = formatSessionTimestamp(firstUserEntry.message.timestamp, firstUserEntry.timestamp);
+	const timestamp = formatSessionTimestamp(firstUserEntry.message.timestamp, firstUserEntry.timestamp, timeZone);
 	return `${label} (${timestamp})`;
 }
 
