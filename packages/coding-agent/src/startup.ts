@@ -112,6 +112,24 @@ function parseModels(
 		if (model.reasoning !== undefined && typeof model.reasoning !== "boolean") {
 			throw new Error(`${SETTINGS_PATH}: ${modelPath}.reasoning must be a boolean`);
 		}
+		let reasoningEfforts: Model["reasoningEfforts"];
+		if (model.reasoningEfforts !== undefined) {
+			if (!Array.isArray(model.reasoningEfforts) || model.reasoningEfforts.length === 0) {
+				throw new Error(`${SETTINGS_PATH}: ${modelPath}.reasoningEfforts must be a non-empty array`);
+			}
+			if (
+				model.reasoning !== true ||
+				model.reasoningEfforts.some(
+					(effort) => effort !== "low" && effort !== "medium" && effort !== "high",
+				) ||
+				new Set(model.reasoningEfforts).size !== model.reasoningEfforts.length
+			) {
+				throw new Error(
+					`${SETTINGS_PATH}: ${modelPath}.reasoningEfforts requires reasoning=true and unique low, medium, or high values`,
+				);
+			}
+			reasoningEfforts = [...model.reasoningEfforts] as Model["reasoningEfforts"];
+		}
 		if (model.cacheRetention !== undefined && model.cacheRetention !== "long") {
 			throw new Error(`${SETTINGS_PATH}: ${modelPath}.cacheRetention must be "long" when provided`);
 		}
@@ -130,6 +148,7 @@ function parseModels(
 			...(baseUrl === undefined ? {} : { baseUrl }),
 			input: [...input],
 			reasoning: model.reasoning ?? false,
+			...(reasoningEfforts ? { reasoningEfforts } : {}),
 			...(model.cacheRetention === "long" ? { cacheRetention: "long" as const } : {}),
 			...(model.sessionAffinity === "codex" ? { sessionAffinity: "codex" as const } : {}),
 			contextWindow: positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000),

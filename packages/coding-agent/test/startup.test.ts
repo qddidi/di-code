@@ -81,6 +81,7 @@ describe("Pi-style startup configuration", () => {
 							id: "gpt-custom",
 							input: ["text", "image"],
 							reasoning: true,
+							reasoningEfforts: ["low", "medium", "high"],
 							cacheRetention: "long",
 							sessionAffinity: "codex",
 							contextWindow: 256000,
@@ -94,9 +95,10 @@ describe("Pi-style startup configuration", () => {
 
 		const configuration = await loadStartupConfiguration(root, {});
 
-		expect(configuration.providers[0]?.models?.[0]).toMatchObject({
+			expect(configuration.providers[0]?.models?.[0]).toMatchObject({
 			input: ["text", "image"],
 			reasoning: true,
+			reasoningEfforts: ["low", "medium", "high"],
 			cacheRetention: "long",
 			sessionAffinity: "codex",
 			contextWindow: 256000,
