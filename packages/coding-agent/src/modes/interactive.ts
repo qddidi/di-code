@@ -469,7 +469,7 @@ export class InteractiveMode {
 	private async submit(text: string, retry = false): Promise<void> {
 		const prompt = text.trim();
 		if (prompt.length === 0 || !this.started) return;
-		if (prompt.startsWith("/")) {
+		if (prompt.startsWith("/") && !this.isLoadedSkillCommand(prompt)) {
 			this.editor.setValue("");
 			this.handleSlashCommand(prompt);
 			return;
@@ -590,7 +590,16 @@ export class InteractiveMode {
 	}
 
 	private listSlashCommands(): readonly SlashCommand[] {
-		return [...BUILTIN_SLASH_COMMANDS, ...(this.extensionHost?.listCommands() ?? [])];
+		const skills = this.session.availableSkills.map((skill) => ({
+			name: `skill:${skill.name}`,
+			description: skill.description,
+		}));
+		return [...BUILTIN_SLASH_COMMANDS, ...(this.extensionHost?.listCommands() ?? []), ...skills];
+	}
+
+	private isLoadedSkillCommand(input: string): boolean {
+		const name = /^\/skill:([a-z0-9]+(?:-[a-z0-9]+)*)(?:\s|$)/.exec(input)?.[1];
+		return name !== undefined && this.session.availableSkills.some((skill) => skill.name === name);
 	}
 
 	private formatUsage(): string {

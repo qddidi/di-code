@@ -1383,6 +1383,58 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
+	it("includes loaded skills in slash autocomplete and applies the skill command form", async () => {
+		const skillDirectory = mkdtempSync(join(tmpdir(), "di-code-interactive-skill-"));
+		try {
+			const skillPath = join(skillDirectory, "SKILL.md");
+			writeFileSync(
+				skillPath,
+				"---\nname: review\ndescription: Review code changes\n---\nInspect the selected changes before responding.",
+			);
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "reviewed" }] }],
+			});
+			const session = new AgentSession({
+				allowedRoot: process.cwd(),
+				provider: faux.provider,
+				model: faux.model,
+				skills: [
+					{
+						kind: "skill",
+						name: "review",
+						description: "Review code changes",
+						filePath: skillPath,
+						baseDir: skillDirectory,
+						scope: "global",
+						disableModelInvocation: false,
+					},
+				],
+			});
+			const terminal = new TestTerminal();
+			const tui = new TUI(terminal);
+			const mode = new InteractiveMode({ session, tui });
+			mode.start();
+
+			terminal.sendInput("/skill:r");
+			await waitFor(() => terminal.output.includes("Review code changes"));
+			terminal.sendInput("\t");
+			await waitFor(() => tui.render(terminal.columns).join("\n").includes("/skill:review"));
+			terminal.sendInput("inspect this");
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+
+			const request = session.transcript[0];
+			assert.equal(request?.role, "user");
+			if (request?.role !== "user") throw new Error("Expected the skill command to produce a user message.");
+			const prompt = request.content.find((content) => content.type === "text")?.text;
+			assert.equal(prompt?.includes('<explicit_skill name="review"'), true);
+			assert.equal(prompt?.includes("inspect this"), true);
+			mode.stop();
+		} finally {
+			rmSync(skillDirectory, { recursive: true, force: true });
+		}
+	});
+
 	it("queues prompts in FIFO order and retries the last failure", async () => {
 		const faux = createFauxProvider({
 			chunkSize: 1,

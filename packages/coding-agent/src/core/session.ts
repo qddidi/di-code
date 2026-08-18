@@ -184,6 +184,10 @@ export class AgentSession {
 		return structuredClone(this.provider.models);
 	}
 
+	get availableSkills(): readonly SkillResource[] {
+		return structuredClone(this.skills);
+	}
+
 	setModel(modelId: string): Model {
 		if (this.promptActive) throw new Error("Cannot change model while AgentSession is processing a prompt.");
 		const next = this.provider.models.find((model) => model.id === modelId);
