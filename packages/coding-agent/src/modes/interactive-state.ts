@@ -182,7 +182,7 @@ export class InteractiveProjection {
 				return;
 			case "message_update":
 				if (event.event.type === "text_delta") {
-					this.removeThinking();
+					if (event.event.delta.length > 0) this.removeThinking();
 					this.streamingText += event.event.delta;
 				}
 				return;

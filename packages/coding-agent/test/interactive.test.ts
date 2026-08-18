@@ -332,19 +332,38 @@ describe("InteractiveProjection", () => {
 		assert.equal(projection.state.busy, true);
 	});
 
-	it("keeps the loading spinner visible while streaming before agent_end", () => {
+	it("removes the loading spinner when the first response character arrives", () => {
 		const projection = new InteractiveProjection();
 		const readState = (): InteractiveViewState => ({ ...projection.state, model: "faux-model", theme: "dark" });
 		const chat = new InteractiveChat(readState);
 
 		projection.apply({ type: "agent_start" });
+		projection.apply({ type: "message_update", event: { type: "text_delta", contentIndex: 0, delta: "" } });
+		assert.equal(chat.render(80).join("\n").includes("Thinking"), true);
 		projection.apply({ type: "message_update", event: { type: "text_delta", contentIndex: 0, delta: "partial" } });
 
 		assert.equal(projection.state.busy, true);
-		assert.equal(chat.render(80).join("\n").includes("Thinking"), true);
+		assert.equal(chat.render(80).join("\n").includes("Thinking"), false);
 		const firstFrame = projection.state.spinnerFrame;
 		assert.equal(projection.advanceSpinner(), true);
 		assert.notEqual(projection.state.spinnerFrame, firstFrame);
+	});
+
+	it("adds one blank line before and after thinking process feedback", () => {
+		const baseState = new InteractiveProjection().state;
+		const lines = new InteractiveChat(() => ({
+			...baseState,
+			messageItems: [{ role: "user" as const, text: "question" }],
+			processItems: [{ type: "thinking" as const, id: "thinking" }],
+			busy: true,
+			model: "faux-model",
+			theme: "dark" as const,
+		})).render(40);
+		const thinkingIndex = lines.findIndex((line) => line.includes("Thinking"));
+
+		assert.ok(thinkingIndex > 0);
+		assert.equal(lines[thinkingIndex - 1]?.trim(), "");
+		assert.equal(lines[thinkingIndex + 1]?.trim(), "");
 	});
 
 	it("projects tool execution start and end", () => {
@@ -497,9 +516,12 @@ describe("InteractiveChat streaming layout", () => {
 		const lines = new InteractiveChat(readState).render(40);
 		const output = lines.join("\n");
 
-		assert.equal(output.includes("┌ You"), true);
-		assert.equal(output.includes("Assistant"), true);
-		assert.equal(output.includes("┌ Assistant"), false);
+		assert.equal(output.includes("You"), false);
+		assert.equal(output.includes("Assistant"), false);
+		assert.equal(output.includes("\x1b[48;2;31;39;50m"), true);
+		assert.equal(output.includes("┌"), false);
+		assert.equal(output.includes("\x1b[48;2;31;39;50m  a focused user question"), true);
+		assert.equal(lines.filter((line) => line === `\x1b[48;2;31;39;50m${" ".repeat(40)}\x1b[0m`).length, 2);
 		assert.ok(lines.every((line) => visibleWidth(line) <= 40));
 	});
 
@@ -1048,7 +1070,7 @@ describe("InteractiveMode", () => {
 		await waitFor(() => session.transcript.length === 2);
 		await waitFor(() => terminal.output.includes("bold answer"));
 
-		assert.equal(terminal.output.includes("Assistant"), true);
+		assert.equal(terminal.output.includes("Assistant"), false);
 		assert.equal(terminal.output.includes("bold answer"), true);
 		assert.equal(terminal.output.includes("\x1b[1m"), true);
 		mode.stop();
@@ -1067,8 +1089,9 @@ describe("InteractiveMode", () => {
 		await waitFor(() => session.transcript.length === 2);
 		await waitFor(() => terminal.output.includes("A focused answer"));
 
-		assert.equal(terminal.output.includes("You"), true);
-		assert.equal(terminal.output.includes("Assistant"), true);
+		assert.equal(terminal.output.includes("You"), false);
+		assert.equal(terminal.output.includes("Assistant"), false);
+		assert.equal(terminal.output.includes("\x1b[48;2;31;39;50m"), true);
 		assert.equal(terminal.output.includes("A focused question"), true);
 		assert.equal(terminal.output.includes("A focused answer"), true);
 		mode.stop();

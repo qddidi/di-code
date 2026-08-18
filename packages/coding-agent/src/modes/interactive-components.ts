@@ -1,5 +1,5 @@
 import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
-import { Box, Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
+import { Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
 import { highlightCode } from "../utils/syntax-highlight.ts";
 import type { InteractiveState } from "./interactive-state.ts";
 
@@ -15,6 +15,7 @@ interface Palette {
 	readonly dim: string;
 	readonly error: string;
 	readonly success: string;
+	readonly userBackground: string;
 	readonly warning: string;
 }
 
@@ -31,6 +32,7 @@ function paletteFor(theme: InteractiveViewState["theme"]): Palette {
 				dim: "\x1b[38;5;242m",
 				error: "\x1b[38;5;160m",
 				success: "\x1b[38;5;28m",
+				userBackground: "\x1b[48;2;239;246;255m",
 				warning: "\x1b[38;5;130m",
 			}
 		: {
@@ -39,12 +41,17 @@ function paletteFor(theme: InteractiveViewState["theme"]): Palette {
 				dim: "\x1b[38;5;245m",
 				error: "\x1b[38;5;210m",
 				success: "\x1b[38;5;114m",
+				userBackground: "\x1b[48;2;31;39;50m",
 				warning: "\x1b[38;5;222m",
 			};
 }
 
 function paint(color: string, text: string, bold = false): string {
 	return `${color}${bold ? BOLD : ""}${text}${RESET}`;
+}
+
+function paintBackground(background: string, text: string): string {
+	return `${background}${text}${RESET}`;
 }
 
 function markdownThemeFor(colors: Palette): MarkdownTheme {
@@ -137,13 +144,14 @@ export class InteractiveChat implements Component {
 				for (const line of message.added) lines.push(...renderLine(paint(colors.success, `+ ${line}`), width));
 			} else if (message.role === "user") {
 				lines.push(
-					...new Box(new Text(message.text, 0, 0), { border: "single", padding: 1, title: "You" }).render(width),
+					...new Text(message.text, 2, 1).render(width).map((line) => paintBackground(colors.userBackground, line)),
 				);
 			} else {
-				lines.push(...renderLine(paint(colors.assistant, "Assistant", true), width));
 				lines.push(...new Markdown(message.text, { paddingX: 2, theme: markdownTheme }).render(width));
 			}
 		}
+		const hasProcess = state.processItems.length > 0 || (state.busy && !state.streamingText);
+		if (hasProcess && lines.length > 0) lines.push(" ");
 		const toolCount = state.processItems.filter((item) => item.type === "tool").length;
 		const hiddenToolItems = Math.max(0, toolCount - MAX_VISIBLE_TOOL_ITEMS);
 		let skippedToolItems = 0;
@@ -166,13 +174,13 @@ export class InteractiveChat implements Component {
 			const color = item.status === "error" ? colors.error : item.status === "done" ? colors.success : colors.warning;
 			lines.push(...renderLine(`    ${paint(color, marker)} ${paint(colors.dim, command)}`, width));
 		}
-		if (state.busy && !state.processItems.some((item) => item.type === "thinking")) {
+		if (state.busy && !state.streamingText && !state.processItems.some((item) => item.type === "thinking")) {
 			const frame = SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length] ?? SPINNER_FRAMES[0];
 			lines.push(...renderLine(`    ${paint(colors.accent, `${frame} Thinking`)}`, width));
 		}
+		if (hasProcess) lines.push(" ");
 		if (state.streamingText) {
-			if (lines.length > 0) lines.push(" ");
-			lines.push(...renderLine(paint(colors.assistant, "Assistant", true), width));
+			if (lines.length > 0 && lines.at(-1) !== " ") lines.push(" ");
 			lines.push(...new Markdown(state.streamingText, { paddingX: 2, theme: markdownTheme }).render(width));
 		}
 		const hasActivity = state.status || state.queue.length > 0 || state.error;

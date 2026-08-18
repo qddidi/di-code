@@ -31,7 +31,8 @@ export interface StartupConfiguration {
 }
 
 const FAUX_RESPONSES: readonly FauxResponse[] = [
-	{ type: "success", content: [{ type: "text", text: "Faux response." }] },
+	{ type: "success", content: [{ type: "text", text: "你好，我是di-code，一个面向终端的 TypeScript AI Coding Agent，支持多 Provider 流式对话、工具调用、JSONL 会话持久化、交互式 TUI、插件扩展与 JSONL RPC 集成。" }] },
+	{ type: "success", content: [{ type: "text", text: "当前回复为faux数据" }] },
 ];
 
 const SETTINGS_PATH = join(".di-code", "settings.json");
