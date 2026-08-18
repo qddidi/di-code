@@ -1520,6 +1520,49 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
+	it("keeps the workspace chooser frame outside Compose in a short terminal", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-at-"));
+		try {
+			for (const directory of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]) {
+				mkdirSync(join(root, directory));
+			}
+			const faux = createFauxProvider({ responses: [] });
+			const session = new AgentSession({ allowedRoot: root, provider: faux.provider, model: faux.model });
+			const terminal = new TestTerminal(false, 80, 10);
+			const tui = new TUI(terminal);
+			const mode = new InteractiveMode({ session, tui });
+			mode.start();
+
+			terminal.sendInput("@");
+			await waitFor(() => tui.hasOverlay());
+			const frame = tui.render(terminal.columns);
+			const editorTop = frame.findIndex((line) => line.includes(" Compose "));
+			const editorBottom = frame.findIndex((line, index) => index > editorTop && line.startsWith("└"));
+			const menuRows = frame
+				.map((line, index) => ({ line, index }))
+				.filter(({ line }) => line.includes("╭") || line.includes("╰") || line.includes("alpha/"));
+			assert.equal(
+				frame.some((line) => line.includes("╭")),
+				true,
+			);
+			assert.equal(
+				frame.some((line) => line.includes("╰")),
+				true,
+			);
+			assert.equal(
+				frame.some((line) => line.includes("alpha/")),
+				true,
+			);
+			assert.equal(
+				menuRows.every(({ index }) => index < editorTop || index > editorBottom),
+				true,
+			);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows slash autocomplete without sending the completed command to the provider", async () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
@@ -1532,6 +1575,8 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("\t");
 		await waitFor(() => tui.hasOverlay());
 		await waitFor(() => terminal.output.includes("Open the model selector"));
+		assert.equal(terminal.output.includes("╭"), true);
+		assert.equal(terminal.output.includes("╰"), true);
 		assert.equal(terminal.output.includes("Open the model selector"), true);
 		terminal.sendInput("\r");
 		assert.equal(tui.hasOverlay(), false);

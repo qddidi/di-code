@@ -87,6 +87,22 @@ describe("TUI overlay layout", () => {
 		assert.equal(aboveLines[8]?.includes("choice two"), true);
 	});
 
+	it("keeps a placement overlay above an editor whose logical anchor is outside the viewport", () => {
+		const tui = new TUI(new VirtualTerminal(16, 6));
+		tui.addChild(new OverlayProbe(Array.from({ length: 20 }, (_, index) => `history ${index}`)));
+		tui.showOverlay(new OverlayProbe(["choice one", "choice two"]), {
+			width: 12,
+			placement: { anchorRow: 30, avoidStartRow: 16, preferred: "below" },
+			nonCapturing: true,
+		});
+
+		const lines = tui.render(16);
+
+		assert.equal(lines[14]?.includes("choice one"), true);
+		assert.equal(lines[15]?.includes("choice two"), true);
+		assert.equal(lines[18]?.includes("choice one"), false);
+	});
+
 	it("resolves percentage width and maximum height", () => {
 		const tui = new TUI(new VirtualTerminal(20, 6));
 		const overlay = new OverlayProbe(["one", "two", "three"]);

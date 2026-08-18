@@ -1,5 +1,5 @@
 import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
-import { Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
+import { Box, Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
 import { highlightCode } from "../utils/syntax-highlight.ts";
 import { renderDiff } from "./interactive-diff.ts";
 import type { InteractiveState } from "./interactive-state.ts";
@@ -264,14 +264,28 @@ export interface AutocompleteMenuState {
 
 export class AutocompleteMenu implements Component {
 	private readonly readState: () => AutocompleteMenuState;
+	private readonly box: Box;
 
 	constructor(readState: () => AutocompleteMenuState) {
 		this.readState = readState;
+		this.box = new Box(
+			{
+				invalidate: () => {},
+				render: (width) => this.renderItems(width),
+			},
+			{ border: "rounded", padding: 1, title: "Suggestions" },
+		);
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.box.invalidate();
+	}
 
 	render(width: number): string[] {
+		return this.box.render(width);
+	}
+
+	private renderItems(width: number): string[] {
 		const state = this.readState();
 		const maxVisible = 6;
 		const start = Math.min(

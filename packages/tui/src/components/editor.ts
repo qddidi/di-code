@@ -43,6 +43,13 @@ function normalizePastedText(value: string): string {
 		.join("");
 }
 
+function tokenBeforeCursor(text: string, cursor: number): string {
+	const beforeCursor = text.slice(0, cursor);
+	const delimiters = [...beforeCursor.matchAll(/\s/g)].map((match) => (match.index ?? -1) + match[0].length);
+	const delimiter = Math.max(0, ...delimiters);
+	return beforeCursor.slice(delimiter);
+}
+
 function renderSoftwareCursor(line: string): string {
 	const markerIndex = line.indexOf(CURSOR_MARKER);
 	if (markerIndex < 0) return line;
@@ -353,11 +360,13 @@ export class Editor implements Component, Focusable {
 		this.preferredColumn = undefined;
 		this.invalidate();
 		this.onChange?.(this.value);
-		this.requestSlashCommandAutocomplete();
+		this.requestTriggeredAutocomplete();
 	}
 
-	private requestSlashCommandAutocomplete(): void {
-		if (!this.autocompleteProvider || !/^\/[^\s/]*$/.test(this.value.slice(0, this.cursor))) return;
+	private requestTriggeredAutocomplete(): void {
+		if (!this.autocompleteProvider) return;
+		const token = tokenBeforeCursor(this.value, this.cursor);
+		if (!token.startsWith("@") && !/^\/[^\s/]*$/.test(token)) return;
 		void this.requestAutocomplete();
 	}
 

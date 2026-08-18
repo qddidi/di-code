@@ -92,6 +92,12 @@ function padToWidth(text: string, width: number): string {
 	return `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`;
 }
 
+function clipPlacementLines(lines: readonly string[], maxLines: number): string[] {
+	if (maxLines >= lines.length) return [...lines];
+	if (maxLines <= 1) return lines.length > 0 ? [lines[lines.length - 1] ?? ""] : [];
+	return [...lines.slice(0, maxLines - 1), lines[lines.length - 1] ?? ""];
+}
+
 function compositeLine(
 	baseLine: string,
 	overlayLine: string,
@@ -136,20 +142,28 @@ export function compositeOverlay(
 	if (options.placement) {
 		const anchorRow = options.placement.anchorRow - viewportTop;
 		const viewportBottom = terminalHeight - margin;
-		if (anchorRow >= margin && anchorRow < viewportBottom) {
-			const belowSpace = Math.max(0, viewportBottom - anchorRow - 1);
-			const aboveAnchorRow = (options.placement.avoidStartRow ?? options.placement.anchorRow) - viewportTop;
-			const aboveSpace = Math.max(0, aboveAnchorRow - margin);
-			const preferred = options.placement.preferred ?? "below";
-			const useBelow =
-				preferred === "below"
-					? belowSpace >= overlayLines.length || aboveSpace === 0
-					: aboveSpace < overlayLines.length && belowSpace > 0;
-			const availableSpace = useBelow ? belowSpace : aboveSpace;
-			overlayLines = overlayLines.slice(0, availableSpace);
-			if (overlayLines.length === 0) return [...baseLines];
-			viewportRow = useBelow ? anchorRow + 1 : aboveAnchorRow - overlayLines.length;
+		const aboveAnchorRow = (options.placement.avoidStartRow ?? options.placement.anchorRow) - viewportTop;
+		const belowStart = Math.max(margin, anchorRow + 1);
+		const belowSpace = anchorRow < viewportBottom ? Math.max(0, viewportBottom - belowStart) : 0;
+		const aboveEnd = Math.min(viewportBottom, aboveAnchorRow);
+		const aboveSpace = Math.max(0, aboveEnd - margin);
+		const preferred = options.placement.preferred ?? "below";
+		const belowFits = belowSpace >= overlayLines.length;
+		const aboveFits = aboveSpace >= overlayLines.length;
+		let useBelow: boolean;
+		if (belowFits !== aboveFits) {
+			useBelow = belowFits;
+		} else if (belowFits && aboveFits) {
+			useBelow = preferred === "below";
+		} else if (belowSpace !== aboveSpace) {
+			useBelow = belowSpace > aboveSpace;
+		} else {
+			useBelow = preferred === "below";
 		}
+		const availableSpace = useBelow ? belowSpace : aboveSpace;
+		overlayLines = clipPlacementLines(overlayLines, availableSpace);
+		if (overlayLines.length === 0) return [...baseLines];
+		viewportRow = useBelow ? belowStart : aboveEnd - overlayLines.length;
 	}
 	const row = viewportTop + viewportRow;
 	const column = Math.max(

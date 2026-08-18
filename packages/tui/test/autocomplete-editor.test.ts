@@ -81,6 +81,26 @@ describe("CombinedAutocompleteProvider", () => {
 });
 
 describe("Editor autocomplete", () => {
+	it("opens workspace suggestions immediately after typing @", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-autocomplete-trigger-"));
+		try {
+			mkdirSync(join(root, "src"), { recursive: true });
+			writeFileSync(join(root, "README.md"), "readme");
+			const editor = new Editor({ autocomplete: new CombinedAutocompleteProvider([], root) });
+
+			editor.handleInput("@");
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			assert.equal(editor.isShowingAutocomplete(), true);
+			assert.equal(
+				editor.getAutocompleteItems().some((item) => item.value === "@src/"),
+				true,
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("opens slash-command suggestions automatically and refilters as the command is typed", async () => {
 		const provider = new CombinedAutocompleteProvider(
 			[

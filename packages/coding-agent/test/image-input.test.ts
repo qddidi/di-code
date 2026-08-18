@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -64,7 +64,27 @@ describe("loadImageInputs", () => {
 			images: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
 		});
 		await expect(extractImageAttachments("Explain @missing.png", root)).rejects.toThrow(
-			"Image attachment was not found: missing.png",
+			"File attachment was not found: missing.png",
+		);
+	});
+
+	it("injects UTF-8 text references into the prompt with a relative file marker", async () => {
+		await mkdir(join(root, "docs"), { recursive: true });
+		await writeFile(join(root, "docs", "guide.md"), "## Guide\n内容", { encoding: "utf8" });
+
+		await expect(extractImageAttachments("Explain @docs/guide.md", root)).resolves.toEqual({
+			text: '<file name="docs/guide.md">\n## Guide\n内容\n</file>\nExplain',
+			images: [],
+		});
+	});
+
+	it("rejects binary and outside-root text references", async () => {
+		await writeFile(join(root, "data.bin"), Buffer.from([1, 0, 2]));
+		await expect(extractImageAttachments("Inspect @data.bin", root)).rejects.toThrow(
+			"Binary files are not supported by @ attachments: data.bin",
+		);
+		await expect(extractImageAttachments("Inspect @../secret.txt", root)).rejects.toThrow(
+			"Path is outside the allowed root",
 		);
 	});
 });
