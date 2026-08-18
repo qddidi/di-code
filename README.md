@@ -31,7 +31,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 
 ## 功能
 
-- OpenAI / DeepSeek Responses API 与智谱 GLM Chat Completions API 流式适配，包含文本、推理、工具调用和用量信息。
+- OpenAI Responses API 与 DeepSeek、智谱 GLM 等 OpenAI Chat Completions 兼容 API 流式适配，包含文本、推理、工具调用和用量信息。
 - Provider 无关的消息、模型、工具与事件协议。
 - Agent 工具循环：模型请求工具后，执行工具并将结果回传给模型，直至任务结束。
 - 内置 `read`、`write`、`edit`、`bash` 编码工具。
@@ -260,7 +260,7 @@ Provider 字段：
 | --- | --- | --- |
 | providers 对象的 key | string | Provider ID，必须非空，例如 `company-gateway` |
 | `name` | string | 可选显示名称；省略时使用 Provider ID |
-| `api` | string | 自定义 Provider 使用 `openai-responses`；内建 `deepseek` 使用 `deepseek-responses`，内建 `zhipu` 使用 `zhipu-chat-completions` |
+| `api` | string | 使用 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`；Chat Completions 是协议标识，不绑定厂商 |
 | `baseUrl` | string | Provider endpoint；模型没有单独配置时会继承它 |
 | `apiKey` | string | 推荐写 `$ENV_VAR` 或 `${ENV_VAR}`；命令形式和 `!command` 不支持 |
 | `models` | array | 自定义 Provider 必需；内建 `openai`、`deepseek`、`zhipu` 可省略并使用生成目录 |
@@ -296,11 +296,11 @@ Provider 字段：
       "apiKey": "$OPENAI_API_KEY"
     },
     "deepseek": {
-      "api": "deepseek-responses",
+      "api": "openai-chat-completions",
       "apiKey": "$DEEPSEEK_API_KEY"
     },
     "zhipu": {
-      "api": "zhipu-chat-completions",
+      "api": "openai-chat-completions",
       "apiKey": "$ZAI_API_KEY"
     }
   }

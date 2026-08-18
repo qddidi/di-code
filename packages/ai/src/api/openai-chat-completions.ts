@@ -2,6 +2,7 @@ import type { TSchema } from "typebox";
 import type {
 	AssistantContent,
 	Context,
+	FailedAssistantMessage,
 	ImageContent,
 	Model,
 	StreamOptions,
@@ -18,18 +19,18 @@ export interface ChatCompletionsRequest {
 	readonly messages: readonly ChatMessage[];
 	readonly tools?: readonly ChatFunctionTool[];
 	readonly stream: true;
-	readonly stream_options: { readonly include_usage: true };
+	readonly stream_options?: { readonly include_usage: true };
 	readonly max_tokens?: number;
+	readonly max_completion_tokens?: number;
 	readonly temperature?: number;
+	readonly thinking?: { readonly type: "enabled" | "disabled"; readonly clear_thinking?: false };
+	readonly reasoning_effort?: "low" | "medium" | "high";
+	readonly tool_stream?: true;
 }
 
 type ChatMessage =
 	| { readonly role: "system" | "user"; readonly content: string }
-	| {
-			readonly role: "assistant";
-			readonly content: string | null;
-			readonly tool_calls?: readonly ChatToolCall[];
-	  }
+	| { readonly role: "assistant"; readonly content: string | null; readonly tool_calls?: readonly ChatToolCall[] }
 	| { readonly role: "tool"; readonly tool_call_id: string; readonly content: string };
 
 interface ChatToolCall {
@@ -46,6 +47,7 @@ export interface ChatFunctionTool {
 export interface OpenAIChatCompletionsStreamOptions extends StreamOptions {
 	readonly apiKey: string;
 	readonly baseUrl?: string;
+	readonly providerName?: string;
 }
 
 export interface OpenAIChatCompletionsDependencies {
@@ -56,9 +58,8 @@ export interface OpenAIChatCompletionsDependencies {
 class InvalidChatStreamError extends Error {}
 
 function record(value: unknown, field: string): Record<string, unknown> {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
 		throw new InvalidChatStreamError(`${field} must be an object`);
-	}
 	return value as Record<string, unknown>;
 }
 
@@ -82,15 +83,21 @@ function projectMessages(model: Model, context: Context): ChatMessage[] {
 	if (context.systemPrompt?.length) messages.push({ role: "system", content: context.systemPrompt });
 	for (const message of context.messages) {
 		if (message.role === "user") {
-			const text = message.content
-				.map((block) => (block.type === "image" ? projectImage(model, block) : block.text))
-				.join("\n");
-			messages.push({ role: "user", content: text });
+			messages.push({
+				role: "user",
+				content: message.content
+					.map((block) => (block.type === "image" ? projectImage(model, block) : block.text))
+					.join("\n"),
+			});
 		} else if (message.role === "tool_result") {
-			const text = message.content
-				.map((block) => (block.type === "image" ? projectImage(model, block) : block.text))
-				.join("\n");
-			messages.push({ role: "tool", tool_call_id: message.toolCallId, content: text || "(no tool output)" });
+			messages.push({
+				role: "tool",
+				tool_call_id: message.toolCallId,
+				content:
+					message.content
+						.map((block) => (block.type === "image" ? projectImage(model, block) : block.text))
+						.join("\n") || "(no tool output)",
+			});
 		} else {
 			const text = message.content
 				.filter((block): block is Extract<AssistantContent, { type: "text" }> => block.type === "text")
@@ -118,46 +125,44 @@ export function buildOpenAIChatCompletionsRequest(
 	context: Context,
 	options: StreamOptions = {},
 ): ChatCompletionsRequest {
-	if (model.api !== "zhipu-chat-completions")
-		throw new Error('Chat Completions adapter requires model.api to be "zhipu-chat-completions"');
-	if (options.maxTokens !== undefined && (!Number.isInteger(options.maxTokens) || options.maxTokens <= 0)) {
+	if (model.api !== "openai-chat-completions")
+		throw new Error('Chat Completions adapter requires model.api to be "openai-chat-completions"');
+	if (options.maxTokens !== undefined && (!Number.isInteger(options.maxTokens) || options.maxTokens <= 0))
 		throw new Error("maxTokens must be a positive integer");
-	}
 	if (
 		options.temperature !== undefined &&
 		(!Number.isFinite(options.temperature) || options.temperature < 0 || options.temperature > 2)
-	) {
+	)
 		throw new Error("temperature must be a finite number between 0 and 2");
-	}
-	return {
+	const compat = model.chatCompletionsCompat;
+	const request: ChatCompletionsRequest = {
 		model: model.id,
 		messages: projectMessages(model, context),
 		...(context.tools?.length
 			? { tools: context.tools.map((tool) => ({ type: "function" as const, function: tool })) }
 			: {}),
 		stream: true,
-		stream_options: { include_usage: true },
-		...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+		...(compat?.supportsUsageInStreaming === false ? {} : { stream_options: { include_usage: true as const } }),
+		...(options.maxTokens === undefined
+			? {}
+			: { [compat?.maxTokensField ?? "max_completion_tokens"]: options.maxTokens }),
 		...(options.temperature === undefined ? {} : { temperature: options.temperature }),
 	};
-}
-
-function createSuccess(
-	model: Model,
-	content: AssistantContent[],
-	usage: Usage,
-	reason: "stop" | "length" | "tool_use",
-	now: () => number,
-): SuccessfulAssistantMessage {
-	return {
-		role: "assistant",
-		content,
-		provider: model.provider,
-		model: model.id,
-		usage,
-		timestamp: now(),
-		stopReason: reason,
-	};
+	if (compat?.thinkingFormat === "zai") {
+		if (options.reasoningEffort && compat.supportsReasoningEffort) {
+			(request as unknown as Record<string, unknown>).thinking = { type: "enabled", clear_thinking: false };
+			(request as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+		} else (request as unknown as Record<string, unknown>).thinking = { type: "disabled" };
+	} else if (compat?.thinkingFormat === "deepseek") {
+		(request as unknown as Record<string, unknown>).thinking = options.reasoningEffort
+			? { type: "enabled" }
+			: { type: "disabled" };
+		if (options.reasoningEffort && compat.supportsReasoningEffort)
+			(request as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+	}
+	if (compat?.zaiToolStream && context.tools?.length)
+		(request as unknown as Record<string, unknown>).tool_stream = true;
+	return request;
 }
 
 async function consumeSse(
@@ -171,18 +176,16 @@ async function consumeSse(
 	let dataLines: string[] = [];
 	const dispatch = () => {
 		if (dataLines.length) {
-			const data = dataLines.join("\n");
+			onData(dataLines.join("\n"));
 			dataLines = [];
-			onData(data);
 		}
 	};
 	const line = (value: string) => {
 		if (!value) return dispatch();
 		if (value.startsWith(":")) return;
 		const colon = value.indexOf(":");
-		const field = colon < 0 ? value : value.slice(0, colon);
-		const data = colon < 0 ? "" : value.slice(colon + 1).replace(/^ /, "");
-		if (field === "data") dataLines.push(data);
+		if ((colon < 0 ? value : value.slice(0, colon)) === "data")
+			dataLines.push(colon < 0 ? "" : value.slice(colon + 1).replace(/^ /, ""));
 	};
 	try {
 		while (true) {
@@ -205,6 +208,37 @@ async function consumeSse(
 	}
 }
 
+function usageFrom(value: unknown, current: Usage): Usage {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return current;
+	const u = value as Record<string, unknown>;
+	return {
+		...current,
+		input: typeof u.prompt_tokens === "number" ? u.prompt_tokens : current.input,
+		output: typeof u.completion_tokens === "number" ? u.completion_tokens : current.output,
+		totalTokens: typeof u.total_tokens === "number" ? u.total_tokens : current.totalTokens,
+	};
+}
+
+async function safeHttpError(response: Response): Promise<Error> {
+	let detail = "";
+	try {
+		const parsed = JSON.parse(await response.clone().text()) as unknown;
+		const rawError =
+			parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? (parsed as Record<string, unknown>).error
+				: undefined;
+		if (rawError && typeof rawError === "object" && !Array.isArray(rawError)) {
+			const error = rawError as Record<string, unknown>;
+			detail = [error.code, error.type, error.message]
+				.filter((part): part is string => typeof part === "string")
+				.join(": ");
+		}
+	} catch {
+		/* Provider errors are still reported by status when the body is not JSON. */
+	}
+	return new Error(`HTTP ${response.status}${detail ? ` (${detail.slice(0, 300)})` : ""}`);
+}
+
 export function streamOpenAIChatCompletions(
 	model: Model,
 	context: Context,
@@ -214,45 +248,67 @@ export function streamOpenAIChatCompletions(
 	const stream = createAssistantMessageEventStream();
 	const content: AssistantContent[] = [];
 	let usage = zeroUsage();
-	let active:
-		| { kind: "text" | "thinking" | "tool"; value: string; id?: string; name?: string; contentIndex: number }
-		| undefined;
-	let nextIndex = 0;
+	let textActive: { value: string; contentIndex: number } | undefined;
+	let thinkingActive: { value: string; contentIndex: number } | undefined;
+	const tools = new Map<number, { id: string; name: string; value: string; chunks: string[]; contentIndex: number }>();
 	let terminalSeen = false;
+	let nextIndex = 0;
 	const now = dependencies.now ?? Date.now;
-	const finishActive = () => {
-		if (!active) return;
-		if (active.kind === "text") {
-			stream.push({ type: "text_end", contentIndex: active.contentIndex, content: active.value });
-			content.push({ type: "text", text: active.value });
-		} else if (active.kind === "thinking") {
-			stream.push({ type: "thinking_end", contentIndex: active.contentIndex, content: active.value });
-			content.push({ type: "thinking", thinking: active.value });
-		} else {
-			const tool = context.tools?.find((candidate) => candidate.name === active?.name);
-			if (!tool || !active.id || !active.name)
-				throw new InvalidChatStreamError(`tool ${active?.name ?? ""} is not defined`);
-			const toolCall: ToolCallContent = {
-				type: "tool_call",
-				id: active.id,
-				name: active.name,
-				arguments: parseToolArguments(tool, active.value) as Record<string, unknown>,
-			};
-			stream.push({ type: "tool_call_end", contentIndex: active.contentIndex, toolCall });
-			content.push(toolCall);
+	const finishText = () => {
+		if (textActive) {
+			stream.push({ type: "text_end", contentIndex: textActive.contentIndex, content: textActive.value });
+			content.push({ type: "text", text: textActive.value });
+			textActive = undefined;
 		}
-		nextIndex += 1;
-		active = undefined;
 	};
-	const failMessage = (reason: "error" | "aborted", message: string) => ({
-		role: "assistant" as const,
+	const finishThinking = () => {
+		if (thinkingActive) {
+			stream.push({ type: "thinking_end", contentIndex: thinkingActive.contentIndex, content: thinkingActive.value });
+			content.push({ type: "thinking", thinking: thinkingActive.value });
+			thinkingActive = undefined;
+		}
+	};
+	const finishTool = (index: number) => {
+		const active = tools.get(index);
+		if (!active) return;
+		const definition = context.tools?.find((tool) => tool.name === active.name);
+		if (!definition) throw new InvalidChatStreamError(`tool ${active.name} is not defined`);
+		const toolCall: ToolCallContent = {
+			type: "tool_call",
+			id: active.id,
+			name: active.name,
+			arguments: parseToolArguments(definition, active.value) as Record<string, unknown>,
+		};
+		stream.push({ type: "tool_call_start", contentIndex: active.contentIndex, id: active.id, name: active.name });
+		for (const chunk of active.chunks)
+			stream.push({ type: "tool_call_delta", contentIndex: active.contentIndex, argumentsDelta: chunk });
+		stream.push({ type: "tool_call_end", contentIndex: active.contentIndex, toolCall });
+		content.push(toolCall);
+		tools.delete(index);
+	};
+	const finishAll = () => {
+		finishThinking();
+		finishText();
+		for (const index of [...tools.keys()].sort((a, b) => a - b)) finishTool(index);
+	};
+	const success = (reason: "stop" | "length" | "tool_use"): SuccessfulAssistantMessage => ({
+		role: "assistant",
 		content: [...content],
 		provider: model.provider,
 		model: model.id,
 		usage,
 		timestamp: now(),
 		stopReason: reason,
-		errorMessage: message,
+	});
+	const failure = (reason: "error" | "aborted", errorMessage: string): FailedAssistantMessage => ({
+		role: "assistant",
+		content: [...content],
+		provider: model.provider,
+		model: model.id,
+		usage,
+		timestamp: now(),
+		stopReason: reason,
+		errorMessage,
 	});
 	queueMicrotask(() => {
 		stream.push({ type: "start" });
@@ -260,10 +316,7 @@ export function streamOpenAIChatCompletions(
 			if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
 			if (!options.apiKey.trim()) throw new Error("API key is required");
 			const request = buildOpenAIChatCompletionsRequest(model, context, options);
-			const baseUrl = (options.baseUrl ?? model.baseUrl ?? "https://open.bigmodel.cn/api/coding/paas/v4").replace(
-				/\/+$/,
-				"",
-			);
+			const baseUrl = (options.baseUrl ?? model.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
 			const response = await (dependencies.fetch ?? globalThis.fetch)(`${baseUrl}/chat/completions`, {
 				method: "POST",
 				headers: {
@@ -274,69 +327,82 @@ export function streamOpenAIChatCompletions(
 				body: JSON.stringify(request),
 				signal: options.signal,
 			});
-			if (!response.ok) throw new Error(`request failed with HTTP ${response.status}`);
+			if (!response.ok) throw await safeHttpError(response);
 			if (!response.body) throw new Error("response body is missing");
 			await consumeSse(
 				response.body,
 				(data) => {
 					if (data === "[DONE]") return;
 					const event = record(JSON.parse(data), "event");
-					if (event.usage) {
-						const u = record(event.usage, "usage");
-						usage = {
-							...usage,
-							input: typeof u.prompt_tokens === "number" ? u.prompt_tokens : usage.input,
-							output: typeof u.completion_tokens === "number" ? u.completion_tokens : usage.output,
-							totalTokens: typeof u.total_tokens === "number" ? u.total_tokens : usage.totalTokens,
-						};
-					}
+					usage = usageFrom(event.usage, usage);
 					const choices = Array.isArray(event.choices) ? event.choices : [];
-					const choice = choices[0];
-					if (!choice) return;
-					const c = record(choice, "choice");
-					const delta = record(c.delta, "choice.delta");
-					const reasoning = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
+					if (!choices[0]) return;
+					const choice = record(choices[0], "choice");
+					usage = usageFrom(choice.usage, usage);
+					const delta = record(choice.delta ?? {}, "choice.delta");
+					const reasoning =
+						[delta.reasoning_content, delta.reasoning, delta.reasoning_text].find(
+							(value): value is string => typeof value === "string",
+						) ?? "";
 					const text = typeof delta.content === "string" ? delta.content : "";
 					if (reasoning) {
-						if (!active || active.kind !== "thinking") {
-							finishActive();
-							active = { kind: "thinking", value: "", contentIndex: nextIndex };
-							stream.push({ type: "thinking_start", contentIndex: nextIndex });
+						finishText();
+						if (!thinkingActive) {
+							thinkingActive = { value: "", contentIndex: nextIndex++ };
+							stream.push({ type: "thinking_start", contentIndex: thinkingActive.contentIndex });
 						}
-						active.value += reasoning;
-						stream.push({ type: "thinking_delta", contentIndex: active.contentIndex, delta: reasoning });
+						thinkingActive.value += reasoning;
+						stream.push({ type: "thinking_delta", contentIndex: thinkingActive.contentIndex, delta: reasoning });
 					}
 					if (text) {
-						if (!active || active.kind !== "text") {
-							finishActive();
-							active = { kind: "text", value: "", contentIndex: nextIndex };
-							stream.push({ type: "text_start", contentIndex: nextIndex });
+						finishThinking();
+						if (!textActive) {
+							textActive = { value: "", contentIndex: nextIndex++ };
+							stream.push({ type: "text_start", contentIndex: textActive.contentIndex });
 						}
-						active.value += text;
-						stream.push({ type: "text_delta", contentIndex: active.contentIndex, delta: text });
+						textActive.value += text;
+						stream.push({ type: "text_delta", contentIndex: textActive.contentIndex, delta: text });
 					}
 					if (Array.isArray(delta.tool_calls))
 						for (const raw of delta.tool_calls) {
 							const call = record(raw, "tool_call");
-							const fn = record(call.function, "tool_call.function");
+							const fn = record(call.function ?? {}, "tool_call.function");
 							const index = typeof call.index === "number" ? call.index : 0;
-							if (!active || active.kind !== "tool" || (active as { index?: number }).index !== index) {
-								finishActive();
-								active = Object.assign({ kind: "tool" as const, value: "", contentIndex: nextIndex, index }, {});
-								active.id = typeof call.id === "string" ? call.id : `call_${index}`;
-								active.name = typeof fn.name === "string" ? fn.name : "";
-								stream.push({ type: "tool_call_start", contentIndex: nextIndex, id: active.id, name: active.name });
+							finishText();
+							finishThinking();
+							let active = tools.get(index);
+							if (!active) {
+								active = {
+									id: typeof call.id === "string" ? call.id : `call_${index}`,
+									name: typeof fn.name === "string" ? fn.name : "",
+									value: "",
+									chunks: [],
+									contentIndex: nextIndex++,
+								};
+								tools.set(index, active);
 							}
 							const args = typeof fn.arguments === "string" ? fn.arguments : "";
 							active.value += args;
-							if (args)
-								stream.push({ type: "tool_call_delta", contentIndex: active.contentIndex, argumentsDelta: args });
+							if (args) active.chunks.push(args);
 						}
-					const finish = c.finish_reason;
-					if (finish) {
-						finishActive();
-						const reason = finish === "length" ? "length" : finish === "tool_calls" ? "tool_use" : "stop";
-						stream.push({ type: "done", reason, message: createSuccess(model, content, usage, reason, now) });
+					const finish = choice.finish_reason;
+					if (finish !== null && finish !== undefined) {
+						if (
+							finish !== "stop" &&
+							finish !== "end" &&
+							finish !== "length" &&
+							finish !== "tool_calls" &&
+							finish !== "function_call"
+						)
+							throw new InvalidChatStreamError(`unsupported finish_reason ${String(finish)}`);
+						finishAll();
+						const reason =
+							finish === "length"
+								? "length"
+								: finish === "tool_calls" || finish === "function_call"
+									? "tool_use"
+									: "stop";
+						stream.push({ type: "done", reason, message: success(reason) });
 						terminalSeen = true;
 					}
 				},
@@ -345,13 +411,22 @@ export function streamOpenAIChatCompletions(
 			if (!terminalSeen) throw new Error("stream ended before a terminal response");
 		})().catch((cause: unknown) => {
 			if (terminalSeen) return;
+			try {
+				finishAll();
+			} catch {
+				// Preserve the original provider/stream error when partial tool arguments are invalid.
+			}
 			const aborted = options.signal?.aborted || (cause instanceof DOMException && cause.name === "AbortError");
+			const rawMessage = cause instanceof Error ? cause.message : String(cause);
+			const safeMessage = options.apiKey.trim()
+				? rawMessage.split(options.apiKey.trim()).join("[REDACTED]")
+				: rawMessage;
 			stream.push({
 				type: "error",
 				reason: aborted ? "aborted" : "error",
-				message: failMessage(
+				message: failure(
 					aborted ? "aborted" : "error",
-					`${model.provider === "zhipu" ? "Zhipu" : "OpenAI"} request ${aborted ? "aborted" : "failed"}: ${cause instanceof Error ? cause.message : String(cause)}`,
+					`${options.providerName ?? model.provider} request ${aborted ? "aborted" : "failed"}: ${safeMessage}`,
 				),
 			});
 			terminalSeen = true;

@@ -118,7 +118,7 @@ di-code "检查当前项目的测试状态"
 | 字段 | 作用 |
 | --- | --- |
 | `providers` | Provider 配置对象，key 是 Provider ID |
-| `api` | 接口类型：`openai-responses`、`deepseek-responses`、`zhipu-chat-completions` 或 `anthropic-messages` |
+| `api` | 接口类型：`openai-responses`、`openai-chat-completions` 或 `anthropic-messages` |
 | `baseUrl` | Provider 的接口地址，必须是绝对的 `http` 或 `https` URL |
 | `apiKey` | API key，推荐填写 `$ENV_VAR` 或 `${ENV_VAR}` |
 | `models` | 自定义 Provider 必填的模型列表 |
@@ -499,7 +499,7 @@ $env:DI_CODE_MODEL = "company-coder"
 di-code "总结当前项目"
 ```
 
-`api` 可为 `openai-responses`、`deepseek-responses`、`zhipu-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。
+`api` 可为 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。Chat Completions 模型还可声明 `chatCompletionsCompat`，用于 DeepSeek/GLM 的 thinking、reasoning_effort、`max_tokens`、流式 usage 和 `tool_stream` 等兼容差异。
 
 `apiKey` 支持 `$NAME` 或 `${NAME}` 环境变量引用。虽然可以直接写入字符串，但不要把 key 写到 `settings.json` 或提交到 Git。`baseUrl` 必须是绝对 `http`/`https` URL。
 

@@ -6,10 +6,16 @@ const model: Model = {
 	id: "glm-4.7",
 	name: "GLM-4.7",
 	provider: "zhipu",
-	api: "zhipu-chat-completions",
+	api: "openai-chat-completions",
 	baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 	input: ["text"],
 	reasoning: true,
+	chatCompletionsCompat: {
+		maxTokensField: "max_tokens",
+		supportsUsageInStreaming: true,
+		thinkingFormat: "zai",
+		zaiToolStream: true,
+	},
 	contextWindow: 200_000,
 	maxOutputTokens: 128_000,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -173,7 +179,7 @@ describe("createZhipuProvider", () => {
 		expect(fetch).not.toHaveBeenCalled();
 		expect(await stream.result()).toMatchObject({
 			stopReason: "error",
-			errorMessage: "Zhipu request failed: model glm-4.7 does not support image input",
+			errorMessage: "Zhipu AI request failed: model glm-4.7 does not support image input",
 		});
 	});
 });

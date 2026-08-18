@@ -4,10 +4,12 @@ import {
 	createAnthropicProvider,
 	createDeepSeekProvider,
 	createFauxProvider,
+	createOpenAIChatCompletionsProvider,
 	createOpenAIProvider,
 	createZhipuProvider,
 	type FauxResponse,
 	type Model,
+	type ModelApi,
 	type Provider,
 } from "@di-code/ai";
 
@@ -31,7 +33,15 @@ export interface StartupConfiguration {
 }
 
 const FAUX_RESPONSES: readonly FauxResponse[] = [
-	{ type: "success", content: [{ type: "text", text: "你好，我是di-code，一个面向终端的 TypeScript AI Coding Agent，支持多 Provider 流式对话、工具调用、JSONL 会话持久化、交互式 TUI、插件扩展与 JSONL RPC 集成。" }] },
+	{
+		type: "success",
+		content: [
+			{
+				type: "text",
+				text: "你好，我是di-code，一个面向终端的 TypeScript AI Coding Agent，支持多 Provider 流式对话、工具调用、JSONL 会话持久化、交互式 TUI、插件扩展与 JSONL RPC 集成。",
+			},
+		],
+	},
 	{ type: "success", content: [{ type: "text", text: "当前回复为faux数据" }] },
 ];
 
@@ -119,9 +129,7 @@ function parseModels(
 			}
 			if (
 				model.reasoning !== true ||
-				configuredReasoningEfforts.some(
-					(effort) => effort !== "low" && effort !== "medium" && effort !== "high",
-				) ||
+				configuredReasoningEfforts.some((effort) => effort !== "low" && effort !== "medium" && effort !== "high") ||
 				new Set(configuredReasoningEfforts).size !== configuredReasoningEfforts.length
 			) {
 				throw new Error(
@@ -137,19 +145,23 @@ function parseModels(
 		}
 		const api = optionalString(model.api, `${modelPath}.api`) ?? providerApi;
 		if (!api) throw new Error(`${SETTINGS_PATH}: ${modelPath}.api is required`);
+		if (!["faux", "openai-responses", "openai-chat-completions", "anthropic-messages"].includes(api)) {
+			throw new Error(`${SETTINGS_PATH}: ${modelPath}.api is unsupported`);
+		}
+		const typedApi = api as ModelApi;
 		const reasoningEfforts: Model["reasoningEfforts"] =
 			configuredReasoningEfforts === undefined && model.reasoning === true && api === "openai-responses"
 				? ["low", "medium", "high"]
 				: configuredReasoningEfforts === undefined
 					? undefined
-					: [...configuredReasoningEfforts] as Model["reasoningEfforts"];
+					: ([...configuredReasoningEfforts] as Model["reasoningEfforts"]);
 		const baseUrl = optionalString(model.baseUrl, `${modelPath}.baseUrl`) ?? providerBaseUrl;
 		const id = requiredString(model.id, `${modelPath}.id`);
 		return {
 			id,
 			name: requiredString(model.name ?? id, `${modelPath}.name`),
 			provider: providerId,
-			api,
+			api: typedApi,
 			...(baseUrl === undefined ? {} : { baseUrl }),
 			input: [...input],
 			reasoning: model.reasoning ?? false,
@@ -258,12 +270,11 @@ function createBuiltInRuntime(env: Environment, providerId: string): StartupRunt
 function createConfiguredRuntime(env: Environment, configuration: StartupProviderConfiguration): StartupRuntime {
 	if (
 		configuration.api !== "openai-responses" &&
-		configuration.api !== "deepseek-responses" &&
-		configuration.api !== "zhipu-chat-completions" &&
+		configuration.api !== "openai-chat-completions" &&
 		configuration.api !== "anthropic-messages"
 	) {
 		throw new Error(
-			`Unsupported API "${configuration.api ?? "missing"}" for provider "${configuration.id}". Expected openai-responses, deepseek-responses, zhipu-chat-completions, or anthropic-messages.`,
+			`Unsupported API "${configuration.api ?? "missing"}" for provider "${configuration.id}". Expected openai-responses, openai-chat-completions, or anthropic-messages.`,
 		);
 	}
 	if (
@@ -276,47 +287,76 @@ function createConfiguredRuntime(env: Environment, configuration: StartupProvide
 		throw new Error(`${SETTINGS_PATH}: providers.${configuration.id}.models is required for a custom provider`);
 	}
 	const provider =
-		configuration.api === "anthropic-messages"
-			? createAnthropicProvider({
+		configuration.api === "openai-chat-completions"
+			? createOpenAIChatCompletionsProvider({
 					env:
-						configuration.id === "anthropic"
+						configuration.id === "zhipu" || configuration.id === "deepseek"
 							? env
 							: Object.fromEntries(
-									Object.entries(env).filter(([name]) => name !== "ANTHROPIC_API_KEY" && name !== "ANTHROPIC_BASE_URL"),
+									Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
 								),
 					models: configuration.models,
 					apiKey: resolveConfigValue(configuration.apiKey, env),
 					baseUrl: configuration.models ? undefined : configuration.baseUrl,
 					providerId: configuration.id,
-					name: configuration.name,
+					name: configuration.name ?? configuration.id,
+					...(configuration.id === "zhipu"
+						? {
+								apiKeyEnvironmentVariable: "ZAI_API_KEY",
+								baseUrlEnvironmentVariable: "ZHIPU_BASE_URL",
+								defaultBaseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+							}
+						: configuration.id === "deepseek"
+							? {
+									apiKeyEnvironmentVariable: "DEEPSEEK_API_KEY",
+									baseUrlEnvironmentVariable: "DEEPSEEK_BASE_URL",
+									defaultBaseUrl: "https://api.deepseek.com",
+								}
+							: {}),
 				})
-			: configuration.id === "deepseek"
-				? createDeepSeekProvider({
-						env,
+			: configuration.api === "anthropic-messages"
+				? createAnthropicProvider({
+						env:
+							configuration.id === "anthropic"
+								? env
+								: Object.fromEntries(
+										Object.entries(env).filter(
+											([name]) => name !== "ANTHROPIC_API_KEY" && name !== "ANTHROPIC_BASE_URL",
+										),
+									),
 						models: configuration.models,
 						apiKey: resolveConfigValue(configuration.apiKey, env),
 						baseUrl: configuration.models ? undefined : configuration.baseUrl,
+						providerId: configuration.id,
+						name: configuration.name,
 					})
-				: configuration.id === "zhipu"
-					? createZhipuProvider({
+				: configuration.id === "deepseek"
+					? createDeepSeekProvider({
 							env,
 							models: configuration.models,
 							apiKey: resolveConfigValue(configuration.apiKey, env),
 							baseUrl: configuration.models ? undefined : configuration.baseUrl,
 						})
-					: createOpenAIProvider({
-							env:
-								configuration.id === "openai"
-									? env
-									: Object.fromEntries(
-											Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
-										),
-							models: configuration.models,
-							apiKey: resolveConfigValue(configuration.apiKey, env),
-							baseUrl: configuration.models ? undefined : configuration.baseUrl,
-							providerId: configuration.id,
-							name: configuration.name,
-						});
+					: configuration.id === "zhipu"
+						? createZhipuProvider({
+								env,
+								models: configuration.models,
+								apiKey: resolveConfigValue(configuration.apiKey, env),
+								baseUrl: configuration.models ? undefined : configuration.baseUrl,
+							})
+						: createOpenAIProvider({
+								env:
+									configuration.id === "openai"
+										? env
+										: Object.fromEntries(
+												Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
+											),
+								models: configuration.models,
+								apiKey: resolveConfigValue(configuration.apiKey, env),
+								baseUrl: configuration.models ? undefined : configuration.baseUrl,
+								providerId: configuration.id,
+								name: configuration.name,
+							});
 	const model = selectProviderModel(provider, configuration.id, env);
 	return { provider, model };
 }

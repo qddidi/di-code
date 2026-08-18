@@ -94,7 +94,7 @@ describe("Pi-style startup configuration", () => {
 
 		const configuration = await loadStartupConfiguration(root, {});
 
-			expect(configuration.providers[0]?.models?.[0]).toMatchObject({
+		expect(configuration.providers[0]?.models?.[0]).toMatchObject({
 			input: ["text", "image"],
 			reasoning: true,
 			reasoningEfforts: ["low", "medium", "high"],
@@ -201,10 +201,33 @@ describe("resolveStartupRuntime", () => {
 		);
 	});
 
-	it("rejects unsupported APIs", () => {
-		expect(() => resolveStartupRuntime({ AMUX_API_KEY: "test-key" }, [{ ...amux, api: "openai-completions" }])).toThrow(
-			'Unsupported API "openai-completions" for provider "amux". Expected openai-responses, deepseek-responses, zhipu-chat-completions, or anthropic-messages.',
-		);
+	it("creates a custom OpenAI Chat Completions provider", () => {
+		const runtime = resolveStartupRuntime({ CUSTOM_CHAT_API_KEY: "test-key", DI_CODE_PROVIDER: "custom-chat" }, [
+			{
+				id: "custom-chat",
+				name: "Custom Chat",
+				api: "openai-chat-completions",
+				apiKey: "$CUSTOM_CHAT_API_KEY",
+				baseUrl: "https://chat.example.test/v1",
+				models: [
+					{
+						id: "custom-model",
+						name: "Custom Model",
+						provider: "custom-chat",
+						api: "openai-chat-completions",
+						baseUrl: "https://chat.example.test/v1",
+						input: ["text"],
+						reasoning: false,
+						contextWindow: 128000,
+						maxOutputTokens: 16384,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					},
+				],
+			},
+		]);
+
+		expect(runtime.provider).toMatchObject({ id: "custom-chat", name: "Custom Chat" });
+		expect(runtime.model).toMatchObject({ id: "custom-model", api: "openai-chat-completions" });
 	});
 
 	it("requires a provider choice when several are configured", () => {
@@ -258,7 +281,7 @@ describe("resolveStartupRuntime", () => {
 		expect(runtime.model).toMatchObject({
 			id: "deepseek-v4-flash",
 			provider: "deepseek",
-			api: "deepseek-responses",
+			api: "openai-chat-completions",
 		});
 	});
 
@@ -269,7 +292,7 @@ describe("resolveStartupRuntime", () => {
 		expect(runtime.model).toMatchObject({
 			id: "glm-5.3",
 			provider: "zhipu",
-			api: "zhipu-chat-completions",
+			api: "openai-chat-completions",
 		});
 	});
 
@@ -288,19 +311,19 @@ describe("resolveStartupRuntime", () => {
 
 	it("allows a configured DeepSeek provider to use generated models", () => {
 		const runtime = resolveStartupRuntime({ DEEPSEEK_API_KEY: "test-key" }, [
-			{ id: "deepseek", api: "deepseek-responses" },
+			{ id: "deepseek", api: "openai-chat-completions" },
 		]);
 
 		expect(runtime.provider.id).toBe("deepseek");
-		expect(runtime.model).toMatchObject({ id: "deepseek-v4-flash", api: "deepseek-responses" });
+		expect(runtime.model).toMatchObject({ id: "deepseek-v4-flash", api: "openai-chat-completions" });
 	});
 
 	it("allows a configured Zhipu provider to use the generated Coding Plan models", () => {
 		const runtime = resolveStartupRuntime({ ZAI_API_KEY: "test-key" }, [
-			{ id: "zhipu", api: "zhipu-chat-completions" },
+			{ id: "zhipu", api: "openai-chat-completions" },
 		]);
 
 		expect(runtime.provider.id).toBe("zhipu");
-		expect(runtime.model).toMatchObject({ id: "glm-5.3", api: "zhipu-chat-completions" });
+		expect(runtime.model).toMatchObject({ id: "glm-5.3", api: "openai-chat-completions" });
 	});
 });

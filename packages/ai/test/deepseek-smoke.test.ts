@@ -16,7 +16,7 @@ function smokeModel(): Model {
 		id: process.env.DEEPSEEK_MODEL?.trim() ?? "",
 		name: "Configured DeepSeek smoke model",
 		provider: "deepseek",
-		api: "deepseek-responses",
+		api: "openai-chat-completions",
 		baseUrl: process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com",
 		input: ["text"],
 		reasoning: true,
@@ -26,7 +26,7 @@ function smokeModel(): Model {
 	};
 }
 
-describeSmoke("DeepSeek Responses real smoke", () => {
+describeSmoke("DeepSeek Chat Completions real smoke", () => {
 	it("returns non-empty text", async () => {
 		const provider = createDeepSeekProvider({ models: [smokeModel()] });
 		const context: Context = {

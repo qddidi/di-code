@@ -41,6 +41,8 @@ export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./pr
 export { createFauxProvider } from "./providers/faux.ts";
 export type { OpenAIProviderOptions } from "./providers/openai.ts";
 export { createOpenAIProvider } from "./providers/openai.ts";
+export type { OpenAIChatCompletionsProviderOptions } from "./providers/openai-chat-completions.ts";
+export { createOpenAIChatCompletionsProvider } from "./providers/openai-chat-completions.ts";
 export type { ZhipuProviderOptions } from "./providers/zhipu.ts";
 export { createZhipuProvider } from "./providers/zhipu.ts";
 export type {
@@ -55,8 +57,10 @@ export type {
 	JsonValue,
 	Message,
 	Model,
+	ModelApi,
 	ModelCost,
 	ModelInput,
+	OpenAIChatCompletionsCompat,
 	Provider,
 	ProviderReplay,
 	StopReason,

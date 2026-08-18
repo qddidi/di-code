@@ -205,6 +205,8 @@ export interface Model {
 	reasoning: boolean;
 	/** 该模型在当前 API 适配器中支持的思考强度；未声明表示不可调节。 */
 	reasoningEfforts?: readonly ThinkingLevel[];
+	/** 当前模型在 OpenAI Chat Completions 协议上的兼容能力。 */
+	chatCompletionsCompat?: OpenAIChatCompletionsCompat;
 	/** 单次请求可容纳的最大上下文 token 数。 */
 	contextWindow: number;
 	/** 单次请求允许生成的最大输出 token 数。 */
@@ -215,6 +217,28 @@ export interface Model {
 
 /** Provider 无关的离散思考强度名称。 */
 export type ThinkingLevel = "low" | "medium" | "high";
+
+/** AI 层支持的底层协议标识；厂商 ID 不属于这个联合类型。 */
+export type ModelApi =
+	| "faux"
+	| "openai-responses"
+	| "deepseek-responses"
+	| "openai-chat-completions"
+	| "anthropic-messages";
+
+/** OpenAI Chat Completions 兼容端点的有限、可验证能力开关。 */
+export interface OpenAIChatCompletionsCompat {
+	/** 流式响应是否接受 stream_options.include_usage。默认 true。 */
+	readonly supportsUsageInStreaming?: boolean;
+	/** max token 字段名；未声明时使用 max_completion_tokens。 */
+	readonly maxTokensField?: "max_tokens" | "max_completion_tokens";
+	/** 思考参数格式；当前只实现智谱的 thinking 结构。 */
+	readonly thinkingFormat?: "zai" | "deepseek";
+	/** 是否接受 reasoning_effort 字段。 */
+	readonly supportsReasoningEffort?: boolean;
+	/** 是否在有工具时启用智谱增量工具流。 */
+	readonly zaiToolStream?: boolean;
+}
 
 /** 提供给模型的工具名称、说明和 TypeBox 参数模式。 */
 export interface ToolDefinition<TParameters extends TSchema = TSchema> {

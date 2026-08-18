@@ -36,14 +36,14 @@ describe("model catalog", () => {
 		expect(output).toContain('reasoningEfforts: ["low", "medium", "high"]');
 	});
 
-	it("advertises DeepSeek Responses models as text-only reasoning models", () => {
+	it("advertises DeepSeek Chat Completions models as text-only reasoning models", () => {
 		const deepSeekModels = MODEL_SOURCE.filter((model) => model.provider === "deepseek");
 
 		expect(deepSeekModels.map((model) => model.id)).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
 		expect(deepSeekModels).toHaveLength(2);
 		for (const model of deepSeekModels) {
 			expect(model).toMatchObject({
-				api: "deepseek-responses",
+				api: "openai-chat-completions",
 				baseUrl: "https://api.deepseek.com",
 				input: ["text"],
 				reasoning: true,
@@ -89,7 +89,7 @@ describe("model catalog", () => {
 		]);
 		for (const model of zhipuModels) {
 			expect(model).toMatchObject({
-				api: "zhipu-chat-completions",
+				api: "openai-chat-completions",
 				baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 				input: ["text"],
 				reasoning: true,

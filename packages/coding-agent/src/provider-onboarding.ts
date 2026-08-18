@@ -69,7 +69,7 @@ class OnboardingScreen {
 function providerChoices(): OnboardingChoice[] {
 	return [
 		{ value: "openai", providerId: "openai", label: "OpenAI", description: "OpenAI Responses API" },
-		{ value: "deepseek", providerId: "deepseek", label: "DeepSeek", description: "DeepSeek Responses API" },
+		{ value: "deepseek", providerId: "deepseek", label: "DeepSeek", description: "DeepSeek Chat Completions API" },
 		{ value: "faux", providerId: "faux", label: "Faux (offline)", description: "Deterministic local provider" },
 		{ value: "zhipu", providerId: "zhipu", label: "Zhipu AI", description: "GLM Chat Completions API" },
 		{ value: "anthropic", providerId: "anthropic", label: "Anthropic", description: "Claude Messages API" },

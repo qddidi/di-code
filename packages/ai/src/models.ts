@@ -73,10 +73,18 @@ export const MODEL_SOURCE: readonly Model[] = [
 		id: "glm-5.3",
 		name: "GLM-5.3",
 		provider: "zhipu",
-		api: "zhipu-chat-completions",
+		api: "openai-chat-completions",
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
+		reasoningEfforts: ["low", "medium", "high"],
+		chatCompletionsCompat: {
+			thinkingFormat: "zai",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+			zaiToolStream: true,
+		},
 		contextWindow: 1_000_000,
 		maxOutputTokens: 128_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -85,10 +93,18 @@ export const MODEL_SOURCE: readonly Model[] = [
 		id: "glm-5-turbo",
 		name: "GLM-5 Turbo",
 		provider: "zhipu",
-		api: "zhipu-chat-completions",
+		api: "openai-chat-completions",
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
+		reasoningEfforts: ["low", "medium", "high"],
+		chatCompletionsCompat: {
+			thinkingFormat: "zai",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+			zaiToolStream: true,
+		},
 		contextWindow: 200_000,
 		maxOutputTokens: 128_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -97,10 +113,17 @@ export const MODEL_SOURCE: readonly Model[] = [
 		id: "glm-4.7",
 		name: "GLM-4.7",
 		provider: "zhipu",
-		api: "zhipu-chat-completions",
+		api: "openai-chat-completions",
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
+		chatCompletionsCompat: {
+			thinkingFormat: "zai",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: false,
+			zaiToolStream: true,
+		},
 		contextWindow: 200_000,
 		maxOutputTokens: 128_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -109,10 +132,16 @@ export const MODEL_SOURCE: readonly Model[] = [
 		id: "deepseek-v4-flash",
 		name: "DeepSeek V4 Flash",
 		provider: "deepseek",
-		api: "deepseek-responses",
+		api: "openai-chat-completions",
 		baseUrl: "https://api.deepseek.com",
 		input: ["text"],
 		reasoning: true,
+		chatCompletionsCompat: {
+			thinkingFormat: "deepseek",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+		},
 		contextWindow: 1_000_000,
 		maxOutputTokens: 384_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -121,10 +150,16 @@ export const MODEL_SOURCE: readonly Model[] = [
 		id: "deepseek-v4-pro",
 		name: "DeepSeek V4 Pro",
 		provider: "deepseek",
-		api: "deepseek-responses",
+		api: "openai-chat-completions",
 		baseUrl: "https://api.deepseek.com",
 		input: ["text"],
 		reasoning: true,
+		chatCompletionsCompat: {
+			thinkingFormat: "deepseek",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+		},
 		contextWindow: 1_000_000,
 		maxOutputTokens: 384_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -295,6 +330,33 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 				throw new Error(`${label}.reasoningEfforts must contain unique low, medium, or high values`);
 			}
 		}
+		if (model.chatCompletionsCompat !== undefined) {
+			if (model.api !== "openai-chat-completions") {
+				throw new Error(`${label}.chatCompletionsCompat requires api "openai-chat-completions"`);
+			}
+			const compat = model.chatCompletionsCompat;
+			if (typeof compat !== "object" || compat === null) {
+				throw new Error(`${label}.chatCompletionsCompat must be an object`);
+			}
+			if (compat.supportsUsageInStreaming !== undefined && typeof compat.supportsUsageInStreaming !== "boolean")
+				throw new Error(`${label}.chatCompletionsCompat.supportsUsageInStreaming must be a boolean`);
+			if (
+				compat.maxTokensField !== undefined &&
+				compat.maxTokensField !== "max_tokens" &&
+				compat.maxTokensField !== "max_completion_tokens"
+			)
+				throw new Error(`${label}.chatCompletionsCompat.maxTokensField is invalid`);
+			if (
+				compat.thinkingFormat !== undefined &&
+				compat.thinkingFormat !== "zai" &&
+				compat.thinkingFormat !== "deepseek"
+			)
+				throw new Error(`${label}.chatCompletionsCompat.thinkingFormat is invalid`);
+			if (compat.supportsReasoningEffort !== undefined && typeof compat.supportsReasoningEffort !== "boolean")
+				throw new Error(`${label}.chatCompletionsCompat.supportsReasoningEffort must be a boolean`);
+			if (compat.zaiToolStream !== undefined && typeof compat.zaiToolStream !== "boolean")
+				throw new Error(`${label}.chatCompletionsCompat.zaiToolStream must be a boolean`);
+		}
 		validatePositiveInteger(model.contextWindow, "contextWindow", label);
 		validatePositiveInteger(model.maxOutputTokens, "maxOutputTokens", label);
 		validateCost(model, label);
@@ -305,6 +367,7 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 			...model,
 			input: [...model.input],
 			...(model.reasoningEfforts ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+			...(model.chatCompletionsCompat ? { chatCompletionsCompat: { ...model.chatCompletionsCompat } } : {}),
 			cost: { ...model.cost },
 		};
 	});
@@ -317,6 +380,27 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 }
 
 function renderModel(model: Model): string {
+	const compatLines = model.chatCompletionsCompat
+		? [
+				"\t\tchatCompletionsCompat: {",
+				...(model.chatCompletionsCompat.thinkingFormat
+					? [`\t\t\tthinkingFormat: ${JSON.stringify(model.chatCompletionsCompat.thinkingFormat)},`]
+					: []),
+				...(model.chatCompletionsCompat.maxTokensField
+					? [`\t\t\tmaxTokensField: ${JSON.stringify(model.chatCompletionsCompat.maxTokensField)},`]
+					: []),
+				...(model.chatCompletionsCompat.supportsUsageInStreaming !== undefined
+					? [`\t\t\tsupportsUsageInStreaming: ${model.chatCompletionsCompat.supportsUsageInStreaming},`]
+					: []),
+				...(model.chatCompletionsCompat.supportsReasoningEffort !== undefined
+					? [`\t\t\tsupportsReasoningEffort: ${model.chatCompletionsCompat.supportsReasoningEffort},`]
+					: []),
+				...(model.chatCompletionsCompat.zaiToolStream !== undefined
+					? [`\t\t\tzaiToolStream: ${model.chatCompletionsCompat.zaiToolStream},`]
+					: []),
+				"\t\t},",
+			]
+		: [];
 	return [
 		"\t{",
 		`\t\tid: ${JSON.stringify(model.id)},`,
@@ -329,6 +413,7 @@ function renderModel(model: Model): string {
 		...(model.reasoningEfforts
 			? [`\t\treasoningEfforts: [${model.reasoningEfforts.map((effort) => JSON.stringify(effort)).join(", ")}],`]
 			: []),
+		...compatLines,
 		`\t\tcontextWindow: ${model.contextWindow},`,
 		`\t\tmaxOutputTokens: ${model.maxOutputTokens},`,
 		`\t\tcost: { input: ${model.cost.input}, output: ${model.cost.output}, cacheRead: ${model.cost.cacheRead}, cacheWrite: ${model.cost.cacheWrite} },`,
