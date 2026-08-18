@@ -134,7 +134,7 @@ describe("TUI frame contract", () => {
 		assert.equal(terminal.output.includes("\r\n\x1b[?25h"), true);
 	});
 
-	it("shows the hardware cursor at a marker and hides it when focus is lost", async () => {
+	it("hides the hardware cursor by default while keeping its position for IME", async () => {
 		const terminal = new VirtualTerminal(10, 4);
 		const tui = new TUI(terminal);
 		const input = new FocusProbe(["A界"]);
@@ -143,10 +143,43 @@ describe("TUI frame contract", () => {
 		tui.start();
 
 		assert.equal(terminal.output.includes(CURSOR_MARKER), false);
-		assert.equal(terminal.output.endsWith("\r\x1b[3C\x1b[?25h"), true);
+		assert.equal(terminal.output.endsWith("\r\x1b[3C\x1b[?25l"), true);
 		terminal.clearOutput();
 		tui.setFocus(null);
 		await flushRender();
+		assert.equal(terminal.output.includes("\x1b[?25l"), true);
+		tui.stop();
+	});
+
+	it("shows the hardware cursor when explicitly enabled", () => {
+		const terminal = new VirtualTerminal(10, 4);
+		const tui = new TUI(terminal, true);
+		const input = new FocusProbe(["A界"]);
+		tui.addChild(input);
+		tui.setFocus(input);
+		tui.start();
+
+		assert.equal(terminal.output.endsWith("\r\x1b[3C\x1b[?25h"), true);
+		tui.stop();
+	});
+
+	it("updates hardware cursor visibility while running", async () => {
+		const terminal = new VirtualTerminal(10, 4);
+		const tui = new TUI(terminal);
+		const input = new FocusProbe(["input"]);
+		tui.addChild(input);
+		tui.setFocus(input);
+		tui.start();
+		terminal.clearOutput();
+
+		tui.setShowHardwareCursor(true);
+		await flushRender();
+		assert.equal(tui.getShowHardwareCursor(), true);
+		assert.equal(terminal.output.includes("\x1b[?25h"), true);
+
+		terminal.clearOutput();
+		tui.setShowHardwareCursor(false);
+		assert.equal(tui.getShowHardwareCursor(), false);
 		assert.equal(terminal.output.includes("\x1b[?25l"), true);
 		tui.stop();
 	});

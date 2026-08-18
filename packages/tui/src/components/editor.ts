@@ -43,6 +43,16 @@ function normalizePastedText(value: string): string {
 		.join("");
 }
 
+function renderSoftwareCursor(line: string): string {
+	const markerIndex = line.indexOf(CURSOR_MARKER);
+	if (markerIndex < 0) return line;
+	const before = line.slice(0, markerIndex + CURSOR_MARKER.length);
+	const after = line.slice(markerIndex + CURSOR_MARKER.length);
+	if (after.length === 0) return `${before}\x1b[7m \x1b[0m`;
+	const cursorEnd = nextBoundary(after, 0);
+	return `${before}\x1b[7m${after.slice(0, cursorEnd)}\x1b[0m${after.slice(cursorEnd)}`;
+}
+
 interface CursorPosition {
 	line: number;
 	column: number;
@@ -277,7 +287,8 @@ export class Editor implements Component, Focusable {
 			return this.cachedLines;
 
 		const marked = `${this.value.slice(0, this.cursor)}${CURSOR_MARKER}${this.value.slice(this.cursor)}`;
-		const wrapped = wrapTextWithAnsi(marked, width);
+		const layoutWidth = this.focused ? Math.max(1, width - 1) : width;
+		const wrapped = wrapTextWithAnsi(marked, layoutWidth);
 		const cursorLine = Math.max(
 			0,
 			wrapped.findIndex((line) => line.includes(CURSOR_MARKER)),
@@ -285,7 +296,7 @@ export class Editor implements Component, Focusable {
 		const firstVisibleLine = this.maxHeight ? Math.max(0, cursorLine - this.maxHeight + 1) : 0;
 		const visibleLines = this.maxHeight ? wrapped.slice(firstVisibleLine, firstVisibleLine + this.maxHeight) : wrapped;
 		const lines = visibleLines.map((wrappedLine) => {
-			const line = this.focused ? wrappedLine : wrappedLine.replace(CURSOR_MARKER, "");
+			const line = this.focused ? renderSoftwareCursor(wrappedLine) : wrappedLine.replace(CURSOR_MARKER, "");
 			const padding = Math.max(0, width - visibleWidth(line));
 			return `${line}${" ".repeat(padding)}`;
 		});

@@ -85,10 +85,12 @@ export class TUI extends Container {
 	private lastRenderAt = 0;
 	private forcePending = false;
 	private readonly overlays: OverlayEntry[] = [];
+	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 
-	constructor(terminal: Terminal) {
+	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
 		this.terminal = terminal;
+		if (showHardwareCursor !== undefined) this.showHardwareCursor = showHardwareCursor;
 	}
 
 	get rows(): number {
@@ -97,6 +99,17 @@ export class TUI extends Container {
 
 	get columns(): number {
 		return this.terminal.columns;
+	}
+
+	getShowHardwareCursor(): boolean {
+		return this.showHardwareCursor;
+	}
+
+	setShowHardwareCursor(enabled: boolean): void {
+		if (this.showHardwareCursor === enabled) return;
+		this.showHardwareCursor = enabled;
+		if (this.started) this.positionCursor(this.cursorPosition, this.previousLines.length, this.terminal.rows);
+		this.requestRender();
 	}
 
 	start(): void {
@@ -478,7 +491,8 @@ export class TUI extends Container {
 		if (cursor.column > 0) output += `\x1b[${cursor.column}C`;
 		this.terminal.write(output);
 		this.hardwareCursorRow = cursor.row;
-		this.terminal.showCursor();
+		if (this.showHardwareCursor) this.terminal.showCursor();
+		else this.terminal.hideCursor();
 	}
 
 	private cursorsEqual(left: CursorPosition | null, right: CursorPosition | null): boolean {

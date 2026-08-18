@@ -134,9 +134,23 @@ describe("Editor rendering", () => {
 
 		assert.deepEqual(
 			lines.map((line) => visibleWidth(line)),
-			[3, 3],
+			[3, 3, 3],
 		);
 		assert.equal(lines.join("").split(CURSOR_MARKER).length - 1, 1);
+	});
+
+	it("draws an inverse software cursor while preserving the hardware cursor marker", () => {
+		const emptyEditor = new Editor();
+		emptyEditor.focused = true;
+		assert.equal(emptyEditor.render(4)[0].includes("\x1b[7m \x1b[0m"), true);
+
+		const editor = new Editor();
+		editor.focused = true;
+		editor.setValue("abc");
+		editor.handleInput("\x1b[D");
+		const rendered = editor.render(8).join("");
+		assert.equal(rendered.includes(CURSOR_MARKER), true);
+		assert.equal(rendered.includes("\x1b[7mc\x1b[0m"), true);
 	});
 
 	it("keeps CJK and emoji within a narrow width", () => {
