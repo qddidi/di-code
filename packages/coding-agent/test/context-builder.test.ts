@@ -33,6 +33,33 @@ function summaryEntry(id: string, parentId: string, summary: string, firstKeptEn
 	};
 }
 
+function failedAssistantEntry(id: string, parentId: string, stopReason: "error" | "aborted"): SessionMessageEntry {
+	return {
+		type: "message",
+		version: 1,
+		id,
+		parentId,
+		timestamp,
+		message: {
+			role: "assistant",
+			content: [{ type: "thinking", thinking: "unfinished" }],
+			provider: "openai",
+			model: "reasoning-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: Date.parse(timestamp),
+			stopReason,
+			errorMessage: "stream interrupted",
+		},
+	};
+}
+
 function textOf(message: Message): string {
 	const block = message.content[0];
 	if (!block || block.type !== "text") throw new Error("Expected a text message");
@@ -47,6 +74,21 @@ describe("buildSessionContext", () => {
 
 		expect(context.messages.map(textOf)).toEqual(["one", "two"]);
 		expect(context.sourceEntryIds).toEqual(["m1", "m2"]);
+	});
+
+	it("keeps failed assistant records on disk but excludes them from restored context", () => {
+		const entries: SessionEntry[] = [
+			messageEntry("m1", "header", "before failure"),
+			failedAssistantEntry("m2", "m1", "error"),
+			failedAssistantEntry("m3", "m2", "aborted"),
+			messageEntry("m4", "m3", "after failure"),
+		];
+
+		const context = buildSessionContext(entries);
+
+		expect(context.messages.map(textOf)).toEqual(["before failure", "after failure"]);
+		expect(context.sourceEntryIds).toEqual(["m1", "m4"]);
+		expect(entries).toHaveLength(4);
 	});
 
 	it("projects the latest summary followed by messages from its kept boundary", () => {

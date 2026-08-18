@@ -23,6 +23,14 @@ function messageEntries(entries: readonly SessionEntry[]): SessionMessageEntry[]
 	return entries.filter((entry): entry is SessionMessageEntry => entry.type === "message");
 }
 
+function contextMessageEntries(entries: readonly SessionEntry[]): SessionMessageEntry[] {
+	return messageEntries(entries).filter(
+		(entry) =>
+			entry.message.role !== "assistant" ||
+			(entry.message.stopReason !== "error" && entry.message.stopReason !== "aborted"),
+	);
+}
+
 export function buildSessionContext(entries: readonly SessionEntry[]): BuiltSessionContext {
 	const snapshot = structuredClone([...entries]);
 	let summaryIndex = -1;
@@ -34,7 +42,7 @@ export function buildSessionContext(entries: readonly SessionEntry[]): BuiltSess
 	}
 
 	if (summaryIndex < 0) {
-		const messages = messageEntries(snapshot);
+		const messages = contextMessageEntries(snapshot);
 		return {
 			messages: messages.map((entry) => entry.message),
 			sourceEntryIds: messages.map((entry) => entry.id),
@@ -52,7 +60,7 @@ export function buildSessionContext(entries: readonly SessionEntry[]): BuiltSess
 		throw new Error("Summary firstKeptEntryId must reference an earlier message entry.");
 	}
 
-	const keptEntries = messageEntries(snapshot.slice(firstKeptIndex));
+	const keptEntries = contextMessageEntries(snapshot.slice(firstKeptIndex));
 	return {
 		messages: [createSummaryMessage(summary), ...keptEntries.map((entry) => entry.message)],
 		sourceEntryIds: [null, ...keptEntries.map((entry) => entry.id)],

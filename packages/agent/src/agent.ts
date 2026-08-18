@@ -35,6 +35,14 @@ function createUserMessage(content: readonly UserContent[], now: () => number): 
 	};
 }
 
+function isModelContextMessage(message: Message): boolean {
+	return message.role !== "assistant" || (message.stopReason !== "error" && message.stopReason !== "aborted");
+}
+
+function createModelContext(messages: readonly Message[]): Message[] {
+	return structuredClone(messages.filter(isModelContextMessage));
+}
+
 /** 管理已完成的对话历史，并把单轮事件按顺序分发给订阅者。 */
 export class Agent {
 	// transcript 保留完整历史，context 可以由产品层替换成压缩后的模型视图。
@@ -58,7 +66,7 @@ export class Agent {
 		this.tools = [...(options.tools ?? [])];
 		const initialMessages = structuredClone([...(options.initialMessages ?? [])]);
 		this.transcriptMessages = initialMessages;
-		this.contextMessageState = structuredClone([...(options.initialContextMessages ?? initialMessages)]);
+		this.contextMessageState = createModelContext(options.initialContextMessages ?? initialMessages);
 		this.systemPrompt = options.systemPrompt;
 		this.now = options.now ?? Date.now;
 	}
@@ -94,7 +102,7 @@ export class Agent {
 		if (this.streaming) {
 			throw new Error("Cannot replace Agent context while processing a prompt.");
 		}
-		this.contextMessageState = structuredClone([...messages]);
+		this.contextMessageState = createModelContext(messages);
 	}
 
 	subscribe(listener: AgentListener): () => void {
@@ -175,7 +183,7 @@ export class Agent {
 					// agent_end 含旧模型 context；只把本轮新增部分追加到完整 transcript。
 					const currentTurn = event.messages.slice(contextLength);
 					this.transcriptMessages.push(...structuredClone(currentTurn));
-					this.contextMessageState = structuredClone(event.messages);
+					this.contextMessageState = createModelContext(event.messages);
 					finalAssistant = candidate;
 				}
 			}

@@ -25,6 +25,26 @@ function assistantMessage(text: string, timestamp: number): Extract<Message, { r
 	};
 }
 
+function failedThinkingMessage(timestamp: number): Extract<Message, { role: "assistant" }> {
+	return {
+		role: "assistant",
+		content: [{ type: "thinking", thinking: "partial private reasoning" }],
+		provider: "openai",
+		model: "reasoning-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		timestamp,
+		stopReason: "error",
+		errorMessage: "stream interrupted",
+	};
+}
+
 describe("Agent state wrapper", () => {
 	it("uses initial messages in the next provider request", async () => {
 		const initialMessages: Message[] = [
@@ -61,6 +81,28 @@ describe("Agent state wrapper", () => {
 
 		expect(requestedMessages[0]?.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
 		expect(requestedMessages[0]?.[0]).toEqual(initialMessages[0]);
+	});
+
+	it("keeps failed thinking in the transcript but excludes it from the next provider context", async () => {
+		const initialMessages: Message[] = [userMessage("interrupted question", 1), failedThinkingMessage(2)];
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "recovered" }] }],
+		});
+		const requestedMessages: Message[][] = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context: Context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const agent = new Agent({ provider, model: faux.model, initialMessages });
+
+		await agent.prompt("continue after the interruption");
+
+		expect(requestedMessages[0]?.map((message) => message.role)).toEqual(["user", "user"]);
+		expect(agent.transcript.slice(0, 2)).toEqual(initialMessages);
+		expect(agent.contextMessages.map((message) => message.role)).toEqual(["user", "user", "assistant"]);
 	});
 
 	it("uses compressed initial context while retaining the full transcript", async () => {
