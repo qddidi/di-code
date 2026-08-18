@@ -81,7 +81,6 @@ describe("Pi-style startup configuration", () => {
 							id: "gpt-custom",
 							input: ["text", "image"],
 							reasoning: true,
-							reasoningEfforts: ["low", "medium", "high"],
 							cacheRetention: "long",
 							sessionAffinity: "codex",
 							contextWindow: 256000,
