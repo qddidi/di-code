@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFauxProvider, type Provider } from "@di-code/ai";
+import { createFauxProvider, type Message, type Provider } from "@di-code/ai";
 import type { Component, Terminal } from "@di-code/tui";
 import { CURSOR_MARKER, TUI, visibleWidth } from "@di-code/tui";
 import { describe, it } from "vitest";
@@ -1451,6 +1451,150 @@ describe("InteractiveMode", () => {
 		} finally {
 			rmSync(skillDirectory, { recursive: true, force: true });
 		}
+	});
+
+	it("uses Alt+S to steer a running AgentSession", async () => {
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first response that stays active" }] },
+				{ type: "success", content: [{ type: "text", text: "revised response" }] },
+			],
+		});
+		const requestedMessages: Message[][] = [];
+		let releaseFirstResponse: (() => void) | undefined;
+		const firstResponseReleased = new Promise<void>((resolve) => {
+			releaseFirstResponse = resolve;
+		});
+		let firstChunkSent = false;
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				const stream = faux.provider.stream(model, context, options);
+				if (requestedMessages.length !== 1) return stream;
+				return {
+					async *[Symbol.asyncIterator]() {
+						for await (const event of stream) {
+							yield event;
+							if (event.type === "text_delta") {
+								firstChunkSent = true;
+								await firstResponseReleased;
+							}
+						}
+					},
+					result: () => stream.result(),
+				};
+			},
+		};
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("start");
+		terminal.sendInput("\r");
+		await waitFor(() => firstChunkSent);
+		terminal.sendInput("change the plan");
+		terminal.sendInput("\x1bs");
+		await waitFor(() => tui.render(terminal.columns).join("\n").includes("steer: change the plan"));
+		releaseFirstResponse?.();
+		await waitFor(() => session.transcript.length === 4);
+
+		assert.equal(requestedMessages.length, 2);
+		const steering = requestedMessages[1]?.at(-1);
+		assert.equal(steering?.role, "user");
+		if (steering?.role !== "user") throw new Error("Expected steering to be a user message.");
+		assert.deepEqual(steering.content, [{ type: "text", text: "change the plan" }]);
+		assert.equal(tui.render(terminal.columns).join("\n").includes("revised response"), true);
+		mode.stop();
+	});
+
+	it("uses /steer to steer a running AgentSession", async () => {
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first response that stays active" }] },
+				{ type: "success", content: [{ type: "text", text: "short revised response" }] },
+			],
+		});
+		const requestedMessages: Message[][] = [];
+		let releaseFirstResponse: (() => void) | undefined;
+		const firstResponseReleased = new Promise<void>((resolve) => {
+			releaseFirstResponse = resolve;
+		});
+		let firstChunkSent = false;
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				const stream = faux.provider.stream(model, context, options);
+				if (requestedMessages.length !== 1) return stream;
+				return {
+					async *[Symbol.asyncIterator]() {
+						for await (const event of stream) {
+							yield event;
+							if (event.type === "text_delta") {
+								firstChunkSent = true;
+								await firstResponseReleased;
+							}
+						}
+					},
+					result: () => stream.result(),
+				};
+			},
+		};
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("start");
+		terminal.sendInput("\r");
+		await waitFor(() => firstChunkSent);
+		terminal.sendInput("/steer answer briefly");
+		terminal.sendInput("\r");
+		await waitFor(() => tui.render(terminal.columns).join("\n").includes("steer: answer briefly"));
+		releaseFirstResponse?.();
+		await waitFor(() => session.transcript.length === 4);
+
+		assert.equal(requestedMessages.length, 2);
+		const steering = requestedMessages[1]?.at(-1);
+		assert.equal(steering?.role, "user");
+		if (steering?.role !== "user") throw new Error("Expected steering to be a user message.");
+		assert.deepEqual(steering.content, [{ type: "text", text: "answer briefly" }]);
+		assert.equal(tui.render(terminal.columns).join("\n").includes("short revised response"), true);
+		mode.stop();
+	});
+
+	it("rejects empty and idle /steer commands without clearing the editor", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("/steer");
+		terminal.sendInput("\r");
+		await flush();
+
+		assert.equal(tui.render(terminal.columns).join("\n").includes("/steer"), true);
+		assert.equal(tui.render(terminal.columns).join("\n").includes("Steering content must not be empty."), true);
+		terminal.sendInput("\x15");
+		terminal.sendInput("/steer wait for me");
+		terminal.sendInput("\r");
+		await flush();
+
+		assert.equal(session.transcript.length, 0);
+		assert.equal(tui.render(terminal.columns).join("\n").includes("/steer wait for me"), true);
+		assert.equal(
+			tui.render(terminal.columns).join("\n").includes("Steering is only available while a prompt is running."),
+			true,
+		);
+		mode.stop();
 	});
 
 	it("queues prompts in FIFO order and retries the last failure", async () => {

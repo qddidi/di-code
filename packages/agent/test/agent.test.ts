@@ -324,6 +324,38 @@ describe("Agent state wrapper", () => {
 		expect(faux.pendingResponses()).toBe(1);
 	});
 
+	it("injects steering after the current turn and before the next provider request", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first answer" }] },
+				{ type: "success", content: [{ type: "text", text: "revised answer" }] },
+			],
+		});
+		const requestedMessages: Message[][] = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const agent = new Agent({ provider, model: faux.model, now: () => 10 });
+		let steered = false;
+		agent.subscribe((event) => {
+			if (event.type === "message_update" && !steered) {
+				steered = true;
+				agent.steerWithContent([{ type: "text", text: "revise direction" }]);
+			}
+		});
+
+		await agent.prompt("start");
+
+		expect(requestedMessages).toHaveLength(2);
+		expect(requestedMessages[1]?.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+		expect(requestedMessages[1]?.at(-1)).toEqual(userMessage("revise direction", 10));
+		expect(agent.transcript.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+	});
+
 	it("isolates event payloads from listener mutation", async () => {
 		const faux = createFauxProvider({
 			responses: [{ type: "success", content: [{ type: "text", text: "original" }] }],

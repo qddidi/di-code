@@ -65,6 +65,7 @@ export type AgentSessionEvent =
 	| import("@di-code/agent").AgentEvent
 	| { type: "compaction_start"; reason: "threshold" | "manual" }
 	| { type: "compaction_end"; reason: "threshold" | "manual"; success: boolean; errorMessage?: string }
+	| { type: "queue_update"; steering: readonly string[] }
 	| { type: "usage_update"; usage: SessionUsage };
 
 export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<void>;
@@ -73,6 +74,13 @@ function defaultThinkingLevel(model: Model): ThinkingLevel | undefined {
 	const efforts = model.reasoningEfforts;
 	if (!efforts || efforts.length === 0) return undefined;
 	return efforts.includes("medium") ? "medium" : efforts[0];
+}
+
+function textFromUserMessage(message: Extract<Message, { role: "user" }>): string {
+	return message.content
+		.filter((content): content is Extract<UserContent, { type: "text" }> => content.type === "text")
+		.map((content) => content.text)
+		.join("");
 }
 
 export class AgentSession {
@@ -95,6 +103,7 @@ export class AgentSession {
 	>;
 	private persistenceError?: unknown;
 	private promptActive = false;
+	private readonly steeringMessages: Array<{ displayText: string; deliveredText: string }> = [];
 	private readonly sessionListeners = new Set<AgentSessionListener>();
 
 	constructor(options: AgentSessionOptions) {
@@ -173,6 +182,13 @@ export class AgentSession {
 			await this.emitSession({ type: "usage_update", usage: this.usage });
 		});
 		this.agent.subscribe(async (event, signal) => {
+			if (event.type === "message_end" && event.message.role === "user") {
+				const queued = this.steeringMessages[0];
+				if (queued && textFromUserMessage(event.message) === queued.deliveredText) {
+					this.steeringMessages.shift();
+					await this.emitQueueUpdate();
+				}
+			}
 			if (this.extensionHost) await this.extensionHost.emit(event, signal);
 			await this.emitSession(event);
 		});
@@ -272,6 +288,25 @@ export class AgentSession {
 		return this.promptWithImages(text, [], signal);
 	}
 
+	/** Queues an instruction for the next provider request while this Session is running. */
+	async steer(text: string, signal?: AbortSignal): Promise<void> {
+		await this.steerWithImages(text, [], signal);
+	}
+
+	/** Queues provider-neutral text and image content for the active Agent run. */
+	async steerWithImages(text: string, images: readonly ImageContent[], signal?: AbortSignal): Promise<void> {
+		if (this.persistenceError !== undefined) throw this.persistenceError;
+		if (!this.promptActive) throw new Error("AgentSession is not processing a prompt.");
+		if (images.length > 0 && !this.model.input.includes("image")) {
+			throw new Error(`Model "${this.model.id}" does not support image input.`);
+		}
+		const prompt = await resolveSkillCommand(text, this.skills, signal);
+		const content: UserContent[] = [{ type: "text", text: prompt }, ...structuredClone([...images])];
+		this.agent.steerWithContent(content);
+		this.steeringMessages.push({ displayText: text, deliveredText: prompt });
+		await this.emitQueueUpdate();
+	}
+
 	/** Sends one text prompt with explicitly supplied image attachments. */
 	async promptWithImages(
 		text: string,
@@ -321,6 +356,13 @@ export class AgentSession {
 
 	private async emitSession(event: AgentSessionEvent): Promise<void> {
 		for (const listener of this.sessionListeners) await listener(structuredClone(event));
+	}
+
+	private async emitQueueUpdate(): Promise<void> {
+		await this.emitSession({
+			type: "queue_update",
+			steering: this.steeringMessages.map((message) => message.displayText),
+		});
 	}
 
 	private addUsage(usage: Usage): void {

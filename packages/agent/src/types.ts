@@ -38,6 +38,8 @@ export interface AgentLoopConfig {
 	readonly sessionId?: string;
 	readonly now?: () => number;
 	readonly thinkingLevel?: ThinkingLevel;
+	/** Returns user instructions to inject after the current turn completes. */
+	readonly getSteeringMessages?: () => UserMessage[];
 }
 
 export type MessageUpdateEvent = Exclude<StreamEvent, { type: "start" | "done" | "error" }>;

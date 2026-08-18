@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, Model, Provider, ThinkingLevel, UserContent } from "@di-code/ai";
+import type { AssistantMessage, Message, Model, Provider, ThinkingLevel, UserContent, UserMessage } from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentContext, AgentEvent, AgentTool } from "./types.ts";
 
@@ -40,6 +40,7 @@ export class Agent {
 	// transcript 保留完整历史，context 可以由产品层替换成压缩后的模型视图。
 	private transcriptMessages: Message[];
 	private contextMessageState: Message[];
+	private readonly steeringMessages: UserMessage[] = [];
 	private streaming = false;
 	private readonly listeners = new Set<AgentListener>();
 	private readonly provider: Provider;
@@ -111,6 +112,18 @@ export class Agent {
 		return this.promptWithContent([{ type: "text", text }], signal);
 	}
 
+	/** Queues a user instruction for the next provider request in the active run. */
+	steer(text: string): void {
+		this.steerWithContent([{ type: "text", text }]);
+	}
+
+	/** Queues provider-neutral text/image content for the active run. */
+	steerWithContent(content: readonly UserContent[]): void {
+		if (!this.streaming) throw new Error("Agent is not processing a prompt.");
+		if (content.length === 0) throw new Error("Agent steering content must not be empty.");
+		this.steeringMessages.push(createUserMessage(content, this.now));
+	}
+
 	/** Submits one user message with provider-neutral text and image content blocks. */
 	async promptWithContent(content: readonly UserContent[], signal?: AbortSignal): Promise<AssistantMessage> {
 		// 当前实现只有一份可提交历史，因此禁止两个轮次并发写入，避免提交顺序不确定。
@@ -136,6 +149,7 @@ export class Agent {
 				sessionId: this.sessionId,
 				now: this.now,
 				thinkingLevel: this.thinkingLevel,
+				getSteeringMessages: () => this.steeringMessages.splice(0),
 			},
 			signal,
 		);

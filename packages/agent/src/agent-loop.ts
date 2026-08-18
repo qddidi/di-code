@@ -217,24 +217,22 @@ async function runAgentLoop(
 		emit({ type: "message_end", message: assistant });
 
 		const toolCalls = getToolCalls(assistant);
-		if (
-			assistant.stopReason === "error" ||
-			assistant.stopReason === "aborted" ||
-			assistant.stopReason !== "tool_use" ||
-			toolCalls.length === 0
-		) {
+		const hasToolCalls = assistant.stopReason === "tool_use" && toolCalls.length > 0;
+		if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
 			emit({ type: "turn_end", message: assistant, toolResults: [] });
 			emit({ type: "agent_end", messages });
 			return;
 		}
 
 		const toolResults: ToolResultMessage[] = [];
-		for (const toolCall of toolCalls) {
-			const result = await executeToolCall(toolCall, context, config, signal, emit);
-			messages.push(result);
-			toolResults.push(result);
-			if (signal?.aborted) {
-				break;
+		if (hasToolCalls) {
+			for (const toolCall of toolCalls) {
+				const result = await executeToolCall(toolCall, context, config, signal, emit);
+				messages.push(result);
+				toolResults.push(result);
+				if (signal?.aborted) {
+					break;
+				}
 			}
 		}
 		emit({ type: "turn_end", message: assistant, toolResults });
@@ -246,6 +244,22 @@ async function runAgentLoop(
 			emit({ type: "message_start", message: createPreview(config, "") });
 			emit({ type: "message_end", message: aborted });
 			emit({ type: "turn_end", message: aborted, toolResults: [] });
+			emit({ type: "agent_end", messages });
+			return;
+		}
+
+		const steeringMessages = config.getSteeringMessages?.() ?? [];
+		if (steeringMessages.length > 0) {
+			emit({ type: "turn_start" });
+			for (const steering of steeringMessages) {
+				messages.push(steering);
+				emit({ type: "message_start", message: steering });
+				emit({ type: "message_end", message: steering });
+			}
+			continue;
+		}
+
+		if (!hasToolCalls) {
 			emit({ type: "agent_end", messages });
 			return;
 		}

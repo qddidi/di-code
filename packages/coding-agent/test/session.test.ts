@@ -35,6 +35,52 @@ describe("AgentSession read integration", () => {
 		expect(events).toContain("agent_end");
 	});
 
+	it("delivers steering into the next provider request and transcript", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first answer" }] },
+				{ type: "success", content: [{ type: "text", text: "revised answer" }] },
+			],
+		});
+		const requestedMessages: Message[][] = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context: Context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const session = new AgentSession({ allowedRoot: root, provider, model: faux.model });
+		const queueUpdates: string[][] = [];
+		let steered = false;
+		const unsubscribe = session.subscribeSession(async (event) => {
+			if (event.type === "queue_update") queueUpdates.push([...event.steering]);
+			if (event.type === "message_update" && !steered) {
+				steered = true;
+				await session.steer("use the revised direction");
+			}
+		});
+
+		await session.prompt("start");
+		unsubscribe();
+
+		expect(requestedMessages).toHaveLength(2);
+		expect(requestedMessages[1]?.at(-1)).toMatchObject({
+			role: "user",
+			content: [{ type: "text", text: "use the revised direction" }],
+		});
+		expect(session.transcript.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+		expect(queueUpdates).toEqual([["use the revised direction"], []]);
+	});
+
+	it("rejects steering while idle", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: root, provider: faux.provider, model: faux.model });
+
+		await expect(session.steer("too late")).rejects.toThrow("AgentSession is not processing a prompt.");
+		expect(faux.pendingResponses()).toBe(0);
+	});
+
 	it("uses one stable cache session id across provider requests", async () => {
 		const faux = createFauxProvider({
 			responses: [

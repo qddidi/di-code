@@ -50,6 +50,7 @@ const BUILTIN_SLASH_COMMANDS: readonly SlashCommand[] = [
 	{ name: "compact", description: "Compact the persisted context now" },
 	{ name: "usage", description: "Show token and cost usage" },
 	{ name: "retry", description: "Retry the last failed prompt" },
+	{ name: "steer", description: "Steer the running agent" },
 ];
 
 function asImageAttachmentReference(pasted: string, cwd: string): string {
@@ -73,6 +74,11 @@ function normalizeDroppedImagePrompt(prompt: string, cwd: string): string {
 	return imageReference === prefix[1]
 		? prompt
 		: `${imageReference}${normalizeDroppedImagePrompt(prefix[2] ?? "", cwd)}`;
+}
+
+function steeringCommandArgument(prompt: string): string | undefined {
+	const match = /^\/steer(?:\s+([\s\S]*))?$/i.exec(prompt);
+	return match ? (match[1] ?? "").trim() : undefined;
 }
 
 export interface InteractiveModeOptions {
@@ -110,6 +116,7 @@ export class InteractiveMode {
 	private started = false;
 	private lastFailedPrompt?: string;
 	private queuedPrompts: string[] = [];
+	private steeringPrompts: string[] = [];
 	private readonly onExit?: () => void;
 	private theme: "dark" | "light" = "dark";
 	private overlay?: OverlayHandle;
@@ -222,6 +229,10 @@ export class InteractiveMode {
 	}
 
 	private handleCommand(data: string): boolean {
+		if (matchesKey(data, Key.alt("s"))) {
+			void this.submitSteering(this.editor.getValue());
+			return true;
+		}
 		if (data === "\x1b[Z") {
 			try {
 				const level = this.session.cycleThinkingLevel();
@@ -441,6 +452,12 @@ export class InteractiveMode {
 		this.unsubscribeSession?.();
 		this.unsubscribeSession = this.session.subscribeSession((event) => {
 			if (!this.started) return;
+			if (event.type === "queue_update") {
+				this.steeringPrompts = [...event.steering];
+				this.refreshQueue();
+				this.refresh();
+				return;
+			}
 			this.projection.apply(event);
 			this.refresh();
 		});
@@ -463,7 +480,8 @@ export class InteractiveMode {
 			this.clipboardDirectory = clipboardImageDirectory(next.allowedRoot);
 			void cleanupStaleClipboardImages(next.allowedRoot);
 			this.queuedPrompts = [];
-			this.projection.setQueue([]);
+			this.steeringPrompts = [];
+			this.refreshQueue();
 			this.projection.replaceTranscript(next.transcript);
 			this.projection.setUsage(next.usage);
 			this.projection.setStatus(`session=${choice.id}`);
@@ -479,6 +497,11 @@ export class InteractiveMode {
 	private async submit(text: string, retry = false): Promise<void> {
 		const prompt = text.trim();
 		if (prompt.length === 0 || !this.started) return;
+		const steeringArgument = steeringCommandArgument(prompt);
+		if (steeringArgument !== undefined) {
+			await this.submitSteering(steeringArgument);
+			return;
+		}
 		if (prompt.startsWith("/") && !this.isLoadedSkillCommand(prompt)) {
 			this.editor.setValue("");
 			this.handleSlashCommand(prompt);
@@ -496,7 +519,7 @@ export class InteractiveMode {
 		}
 		if (this.promptInFlight) {
 			this.queuedPrompts.push(prompt);
-			this.projection.setQueue(this.queuedPrompts);
+			this.refreshQueue();
 			this.root.invalidate();
 			this.tui.requestRender();
 			return;
@@ -526,11 +549,53 @@ export class InteractiveMode {
 			this.activeAbort = undefined;
 			this.projection.setRetrying(false);
 			const next = this.queuedPrompts.shift();
-			this.projection.setQueue(this.queuedPrompts);
+			this.refreshQueue();
 			this.root.invalidate();
 			this.tui.requestRender();
 			if (next && this.started) void this.submit(next);
 		}
+	}
+
+	private async submitSteering(text: string): Promise<void> {
+		const prompt = text.trim();
+		if (prompt.length === 0) {
+			this.projection.setError("Steering content must not be empty.");
+			this.refresh();
+			return;
+		}
+		if (this.sessionSwitching) {
+			this.projection.setError("A session is opening; wait before steering the agent.");
+			this.refresh();
+			return;
+		}
+		if (this.compactionInFlight) {
+			this.projection.setError("A compaction is running; wait before steering the agent.");
+			this.refresh();
+			return;
+		}
+		if (!this.promptInFlight) {
+			this.projection.setError("Steering is only available while a prompt is running.");
+			this.refresh();
+			return;
+		}
+		try {
+			const input = await extractImageAttachments(
+				normalizeDroppedImagePrompt(prompt, this.session.allowedRoot),
+				this.session.allowedRoot,
+			);
+			await this.session.steerWithImages(input.text, input.images);
+			this.editor.setValue("");
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+		}
+		this.refresh();
+	}
+
+	private refreshQueue(): void {
+		this.projection.setQueue([
+			...this.steeringPrompts.map((prompt) => `steer: ${prompt}`),
+			...this.queuedPrompts.map((prompt) => `queued: ${prompt}`),
+		]);
 	}
 
 	private async cleanupUnreferencedClipboardFiles(): Promise<void> {
