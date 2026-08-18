@@ -268,8 +268,13 @@ export class AutocompleteMenu implements Component {
 
 	render(width: number): string[] {
 		const state = this.readState();
-		return state.items.slice(0, 6).flatMap((item, index) => {
-			const prefix = index === state.index ? "> " : "  ";
+		const maxVisible = 6;
+		const start = Math.min(
+			Math.max(0, state.index - Math.floor(maxVisible / 2)),
+			Math.max(0, state.items.length - maxVisible),
+		);
+		return state.items.slice(start, start + maxVisible).flatMap((item, offset) => {
+			const prefix = start + offset === state.index ? "> " : "  ";
 			const description = item.description ? ` - ${item.description}` : "";
 			return new Text(`${prefix}${item.label}${description}`).render(width);
 		});

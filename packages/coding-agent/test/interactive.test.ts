@@ -1353,6 +1353,36 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
+	it("opens slash autocomplete on slash, includes extension commands, and keeps the menu outside the editor", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+		const host = new ExtensionHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
+		await host.registerExtension("test", (api) => {
+			api.registerCommand({
+				name: "greet",
+				description: "Extension greeting",
+				handler: () => {},
+			});
+		});
+		const terminal = new TestTerminal(false, 80, 10);
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui, extensionHost: host });
+		mode.start();
+
+		terminal.sendInput("/g");
+		await waitFor(
+			() => tui.hasOverlay() && tui.render(terminal.columns).some((line) => line.includes("Extension greeting")),
+		);
+
+		const frame = tui.render(terminal.columns);
+		const menuRow = frame.findIndex((line) => line.includes("Extension greeting"));
+		const editorTop = frame.findIndex((line) => line.includes(" Compose "));
+		const editorBottom = frame.findIndex((line, index) => index > editorTop && line.startsWith("└"));
+		assert.equal(menuRow >= 0, true);
+		assert.equal(menuRow < editorTop || menuRow > editorBottom, true);
+		mode.stop();
+	});
+
 	it("queues prompts in FIFO order and retries the last failure", async () => {
 		const faux = createFauxProvider({
 			chunkSize: 1,

@@ -81,6 +81,31 @@ describe("CombinedAutocompleteProvider", () => {
 });
 
 describe("Editor autocomplete", () => {
+	it("opens slash-command suggestions automatically and refilters as the command is typed", async () => {
+		const provider = new CombinedAutocompleteProvider(
+			[
+				{ name: "help", description: "Show help" },
+				{ name: "model", description: "Choose model" },
+			],
+			".",
+		);
+		const editor = new Editor({ autocomplete: provider });
+
+		editor.handleInput("/");
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(
+			editor.getAutocompleteItems().map((item) => item.value),
+			["help", "model"],
+		);
+
+		editor.handleInput("m");
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(
+			editor.getAutocompleteItems().map((item) => item.value),
+			["model"],
+		);
+	});
+
 	it("opens suggestions, navigates, and applies the selected item", async () => {
 		const provider = new CombinedAutocompleteProvider([{ name: "help" }, { name: "hello" }], ".");
 		const editor = new Editor({ autocomplete: provider });

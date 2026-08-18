@@ -353,6 +353,12 @@ export class Editor implements Component, Focusable {
 		this.preferredColumn = undefined;
 		this.invalidate();
 		this.onChange?.(this.value);
+		this.requestSlashCommandAutocomplete();
+	}
+
+	private requestSlashCommandAutocomplete(): void {
+		if (!this.autocompleteProvider || !/^\/[^\s/]*$/.test(this.value.slice(0, this.cursor))) return;
+		void this.requestAutocomplete();
 	}
 
 	private moveLeft(): void {

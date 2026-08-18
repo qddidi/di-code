@@ -69,11 +69,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const token = tokenBeforeCursor(context.text, context.cursor);
 		if (token.startsWith("/") && !token.slice(1).includes("/")) {
 			const query = token.slice(1);
-			const items = fuzzyFilter(this.commands, query, (command) => command.name).map((command) => ({
-				value: command.name,
-				label: command.name,
-				...(command.description ? { description: command.description } : {}),
-			}));
+			const items = fuzzyFilter(this.commands, query, (command) => `${command.name} ${command.description ?? ""}`).map(
+				(command) => ({
+					value: command.name,
+					label: command.name,
+					...(command.description ? { description: command.description } : {}),
+				}),
+			);
 			return items.length > 0 ? { items, prefix: token } : null;
 		}
 		if (!token.startsWith("@")) return null;

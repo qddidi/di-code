@@ -30,6 +30,7 @@ export type {
 	OverlayAnchor,
 	OverlayHandle,
 	OverlayOptions,
+	OverlayPlacement,
 	SizeValue,
 } from "./overlay.ts";
 export type { ProcessTerminalOptions, Terminal } from "./terminal.ts";

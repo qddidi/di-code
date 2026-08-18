@@ -60,6 +60,33 @@ describe("TUI overlay layout", () => {
 		);
 	});
 
+	it("places an anchored non-capturing overlay below its input and flips above when needed", () => {
+		const below = new TUI(new VirtualTerminal(16, 6));
+		below.addChild(new OverlayProbe(Array.from({ length: 6 }, (_, index) => `history ${index}`)));
+		below.showOverlay(new OverlayProbe(["choice one", "choice two"]), {
+			width: 12,
+			placement: { anchorRow: 0, preferred: "below" },
+			nonCapturing: true,
+		});
+		const belowLines = below.render(16);
+		assert.equal(belowLines[0]?.includes("history 0"), true);
+		assert.equal(belowLines[1]?.includes("choice one"), true);
+		assert.equal(belowLines[2]?.includes("choice two"), true);
+
+		const above = new TUI(new VirtualTerminal(16, 6));
+		above.addChild(new OverlayProbe(Array.from({ length: 10 }, (_, index) => `history ${index}`)));
+		above.showOverlay(new OverlayProbe(["choice one", "choice two"]), {
+			width: 12,
+			placement: { anchorRow: 9, preferred: "below" },
+			nonCapturing: true,
+		});
+		const aboveLines = above.render(16);
+
+		assert.equal(aboveLines[9]?.includes("history 9"), true);
+		assert.equal(aboveLines[7]?.includes("choice one"), true);
+		assert.equal(aboveLines[8]?.includes("choice two"), true);
+	});
+
 	it("resolves percentage width and maximum height", () => {
 		const tui = new TUI(new VirtualTerminal(20, 6));
 		const overlay = new OverlayProbe(["one", "two", "three"]);

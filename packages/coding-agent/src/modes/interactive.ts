@@ -9,6 +9,7 @@ import {
 	type OverlayHandle,
 	SelectList,
 	SettingsList,
+	type SlashCommand,
 	type TUI,
 } from "@di-code/tui";
 import {
@@ -39,6 +40,17 @@ export { InteractiveProjection } from "./interactive-state.ts";
 const IMAGE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"]);
 const PASTE_IMAGE_KEY = process.platform === "win32" ? Key.alt("v") : Key.ctrl("v");
 const PASTE_IMAGE_SHORTCUT = process.platform === "win32" ? "Alt+V" : "Ctrl+V";
+const BUILTIN_SLASH_COMMANDS: readonly SlashCommand[] = [
+	{ name: "help", description: "Show interactive commands" },
+	{ name: "clear", description: "Clear visible messages" },
+	{ name: "model", description: "Open the model selector" },
+	{ name: "session", description: "Open the session selector" },
+	{ name: "theme", description: "Open the theme selector" },
+	{ name: "settings", description: "Open the settings selector" },
+	{ name: "compact", description: "Compact the persisted context now" },
+	{ name: "usage", description: "Show token and cost usage" },
+	{ name: "retry", description: "Retry the last failed prompt" },
+];
 
 function asImageAttachmentReference(pasted: string, cwd: string): string {
 	if (pasted.includes("\n")) return pasted;
@@ -114,26 +126,18 @@ export class InteractiveMode {
 		this.extensionHost = options.extensionHost;
 		this.readClipboardImagePath = options.readClipboardImagePath ?? readClipboardImagePath;
 		this.clipboardDirectory = clipboardImageDirectory(this.session.allowedRoot);
-		const commands = [
-			{ name: "help", description: "Show interactive commands" },
-			{ name: "clear", description: "Clear visible messages" },
-			{ name: "model", description: "Open the model selector" },
-			{ name: "session", description: "Open the session selector" },
-			{ name: "theme", description: "Open the theme selector" },
-			{ name: "settings", description: "Open the settings selector" },
-			{ name: "compact", description: "Compact the persisted context now" },
-			{ name: "usage", description: "Show token and cost usage" },
-			{ name: "retry", description: "Retry the last failed prompt" },
-		] as const;
-		const allCommands = [...commands, ...(this.extensionHost?.listCommands() ?? [])];
 		const autocomplete: AutocompleteProvider = {
 			getSuggestions: (context, autocompleteOptions) =>
-				new CombinedAutocompleteProvider(allCommands, this.session.allowedRoot).getSuggestions(
+				new CombinedAutocompleteProvider(this.listSlashCommands(), this.session.allowedRoot).getSuggestions(
 					context,
 					autocompleteOptions,
 				),
 			applyCompletion: (context, item, prefix) =>
-				new CombinedAutocompleteProvider(allCommands, this.session.allowedRoot).applyCompletion(context, item, prefix),
+				new CombinedAutocompleteProvider(this.listSlashCommands(), this.session.allowedRoot).applyCompletion(
+					context,
+					item,
+					prefix,
+				),
 		};
 		this.editor = new Editor({
 			maxHeight: 3,
@@ -384,10 +388,16 @@ export class InteractiveMode {
 			items: this.editor.getAutocompleteItems(),
 			index: this.editor.getAutocompleteIndex(),
 		}));
+		const editorBounds = this.root.getEditorBounds(this.tui.columns);
 		this.autocompleteOverlay = this.tui.showOverlay(menu, {
 			width: "55%",
 			maxHeight: 8,
 			anchor: "bottom-left",
+			placement: {
+				anchorRow: editorBounds.end - 1,
+				avoidStartRow: editorBounds.start,
+				preferred: "below",
+			},
 			margin: 1,
 			nonCapturing: true,
 		});
@@ -533,7 +543,11 @@ export class InteractiveMode {
 		const args = argParts.join(" ");
 		switch (command) {
 			case "help":
-				this.projection.setStatus("commands: /clear /model /session /theme /settings /compact /usage /retry");
+				this.projection.setStatus(
+					`commands: ${this.listSlashCommands()
+						.map((item) => `/${item.name}`)
+						.join(" ")}`,
+				);
 				break;
 			case "clear":
 				this.projection.clearVisibleMessages();
@@ -573,6 +587,10 @@ export class InteractiveMode {
 			}
 		}
 		this.refresh();
+	}
+
+	private listSlashCommands(): readonly SlashCommand[] {
+		return [...BUILTIN_SLASH_COMMANDS, ...(this.extensionHost?.listCommands() ?? [])];
 	}
 
 	private formatUsage(): string {

@@ -14,10 +14,18 @@ export type OverlayAnchor =
 
 export type SizeValue = number | `${number}%`;
 
+export interface OverlayPlacement {
+	readonly anchorRow: number;
+	readonly avoidStartRow?: number;
+	readonly preferred?: "above" | "below";
+}
+
 export interface OverlayOptions {
 	readonly width?: SizeValue;
 	readonly maxHeight?: SizeValue;
 	readonly anchor?: OverlayAnchor;
+	/** Positions the overlay beside a logical line in the current terminal viewport. */
+	readonly placement?: OverlayPlacement;
 	readonly margin?: number;
 	readonly nonCapturing?: boolean;
 }
@@ -50,6 +58,15 @@ export function validateOverlayOptions(options: OverlayOptions): void {
 	assertSizeValue(options.maxHeight, "maxHeight");
 	if (options.margin !== undefined && (!Number.isInteger(options.margin) || options.margin < 0)) {
 		throw new Error("Overlay margin must be a non-negative integer");
+	}
+	if (options.placement && (!Number.isInteger(options.placement.anchorRow) || options.placement.anchorRow < 0)) {
+		throw new Error("Overlay placement anchorRow must be a non-negative integer");
+	}
+	if (
+		options.placement?.avoidStartRow !== undefined &&
+		(!Number.isInteger(options.placement.avoidStartRow) || options.placement.avoidStartRow < 0)
+	) {
+		throw new Error("Overlay placement avoidStartRow must be a non-negative integer");
 	}
 }
 
@@ -104,18 +121,37 @@ export function compositeOverlay(
 		1,
 		Math.min(availableHeight, resolveSize(options.maxHeight, terminalHeight, availableHeight)),
 	);
-	const overlayLines = component.render(width).slice(0, maxHeight);
+	let overlayLines = component.render(width).slice(0, maxHeight);
 	if (overlayLines.length === 0) return [...baseLines];
 
 	const anchor = options.anchor ?? "center";
-	const viewportRow = Math.max(
+	const viewportTop = Math.max(0, baseLines.length - terminalHeight);
+	let viewportRow = Math.max(
 		margin,
 		Math.min(
 			terminalHeight - margin - overlayLines.length,
 			verticalPosition(anchor, overlayLines.length, terminalHeight, margin),
 		),
 	);
-	const row = Math.max(0, baseLines.length - terminalHeight) + viewportRow;
+	if (options.placement) {
+		const anchorRow = options.placement.anchorRow - viewportTop;
+		const viewportBottom = terminalHeight - margin;
+		if (anchorRow >= margin && anchorRow < viewportBottom) {
+			const belowSpace = Math.max(0, viewportBottom - anchorRow - 1);
+			const aboveAnchorRow = (options.placement.avoidStartRow ?? options.placement.anchorRow) - viewportTop;
+			const aboveSpace = Math.max(0, aboveAnchorRow - margin);
+			const preferred = options.placement.preferred ?? "below";
+			const useBelow =
+				preferred === "below"
+					? belowSpace >= overlayLines.length || aboveSpace === 0
+					: aboveSpace < overlayLines.length && belowSpace > 0;
+			const availableSpace = useBelow ? belowSpace : aboveSpace;
+			overlayLines = overlayLines.slice(0, availableSpace);
+			if (overlayLines.length === 0) return [...baseLines];
+			viewportRow = useBelow ? anchorRow + 1 : aboveAnchorRow - overlayLines.length;
+		}
+	}
+	const row = viewportTop + viewportRow;
 	const column = Math.max(
 		margin,
 		Math.min(terminalWidth - margin - width, horizontalPosition(anchor, width, terminalWidth, margin)),

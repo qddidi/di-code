@@ -34,6 +34,12 @@ export class InteractiveLayout implements Component {
 		return [...this.header.render(width), ...this.chat.render(width), ...this.footer.render(width)];
 	}
 
+	getEditorBounds(width: number): { readonly start: number; readonly end: number } {
+		const start =
+			this.header.render(width).length + this.chat.render(width).length + this.composer.render(width).length;
+		return { start, end: start + this.renderEditor(width).length };
+	}
+
 	render(width: number): string[] {
 		return [
 			...this.header.render(width),
