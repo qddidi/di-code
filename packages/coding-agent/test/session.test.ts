@@ -59,6 +59,41 @@ describe("AgentSession read integration", () => {
 		expect(requestedSessionIds).toEqual([session.sessionId, session.sessionId]);
 	});
 
+	it("cycles thinking level and forwards it to the next provider request", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		const model = { ...faux.model, reasoning: true, reasoningEfforts: ["low", "medium", "high"] as const };
+		const requestedEfforts: Array<string | undefined> = [];
+		const provider: Provider = {
+			...faux.provider,
+			models: [model],
+			stream(nextModel, context, options) {
+				requestedEfforts.push(options?.reasoningEffort);
+				return faux.provider.stream(nextModel, context, options);
+			},
+		};
+		const session = new AgentSession({ allowedRoot: root, provider, model });
+
+		expect(session.thinkingLevel).toBe("medium");
+		expect(session.cycleThinkingLevel()).toBe("high");
+		await session.prompt("question");
+
+		expect(requestedEfforts).toEqual(["high"]);
+	});
+
+	it("clears thinking level when switching to a model without declared effort support", () => {
+		const faux = createFauxProvider({ responses: [] });
+		const reasoningModel = { ...faux.model, reasoning: true, reasoningEfforts: ["low", "medium", "high"] as const };
+		const plainModel = { ...faux.model, id: "plain-model", reasoning: false };
+		const provider: Provider = { ...faux.provider, models: [reasoningModel, plainModel] };
+		const session = new AgentSession({ allowedRoot: root, provider, model: reasoningModel });
+
+		expect(session.cycleThinkingLevel()).toBe("high");
+		session.setModel("plain-model");
+
+		expect(session.thinkingLevel).toBeUndefined();
+		expect(session.cycleThinkingLevel()).toBeUndefined();
+	});
+
 	it("rejects image attachments before calling a text-only model", async () => {
 		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "unused" }] }] });
 		const textOnlyModel: Model = { ...faux.model, input: ["text"] };

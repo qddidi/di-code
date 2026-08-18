@@ -1222,6 +1222,24 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
+	it("cycles thinking level with Shift+Tab and shows it beside the model", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const model = { ...faux.model, reasoning: true, reasoningEfforts: ["low", "medium", "high"] as const };
+		const provider: Provider = { ...faux.provider, models: [model] };
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider, model });
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const mode = new InteractiveMode({ session, tui });
+		mode.start();
+
+		terminal.sendInput("\x1b[Z");
+		await waitFor(() => terminal.output.includes("MODEL  faux-model(high)"));
+
+		assert.equal(session.thinkingLevel, "high");
+		assert.equal(terminal.output.includes("faux-model(high)"), true);
+		mode.stop();
+	});
+
 	it("shows token usage through the /usage command", async () => {
 		const faux = createFauxProvider({
 			responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }],

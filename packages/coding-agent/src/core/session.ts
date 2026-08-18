@@ -9,7 +9,16 @@ import {
 	resolveContextBudget,
 	shouldCompact,
 } from "@di-code/agent";
-import type { AssistantMessage, ImageContent, Message, Model, Provider, Usage, UserContent } from "@di-code/ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	Provider,
+	ThinkingLevel,
+	Usage,
+	UserContent,
+} from "@di-code/ai";
 import type { ExtensionHost } from "../extensions/runtime.ts";
 import { buildSessionContext } from "./context-builder.ts";
 import type { SkillResource } from "./resources/types.ts";
@@ -60,6 +69,12 @@ export type AgentSessionEvent =
 
 export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<void>;
 
+function defaultThinkingLevel(model: Model): ThinkingLevel | undefined {
+	const efforts = model.reasoningEfforts;
+	if (!efforts || efforts.length === 0) return undefined;
+	return efforts.includes("medium") ? "medium" : efforts[0];
+}
+
 export class AgentSession {
 	private readonly agent: Agent;
 	private readonly allowedRootValue: string;
@@ -68,6 +83,7 @@ export class AgentSession {
 	private readonly skills: readonly SkillResource[];
 	private readonly extensionHost?: ExtensionHost;
 	private model: Model;
+	private thinkingLevelValue?: ThinkingLevel;
 	private readonly sessionIdValue: string;
 	private readonly now: () => number;
 	private compactionEnabledValue: boolean;
@@ -88,6 +104,7 @@ export class AgentSession {
 		this.skills = structuredClone([...(options.skills ?? [])]);
 		this.extensionHost = options.extensionHost;
 		this.model = options.model;
+		this.thinkingLevelValue = defaultThinkingLevel(this.model);
 		this.sessionIdValue = options.sessionManager?.header.id ?? randomUUID();
 		this.now = options.now ?? Date.now;
 		this.contextBudget = resolveContextBudget(options.model);
@@ -116,6 +133,7 @@ export class AgentSession {
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
+			thinkingLevel: this.thinkingLevelValue,
 			systemPrompt: options.systemPrompt,
 			sessionId: this.sessionIdValue,
 			tools: [
@@ -176,6 +194,10 @@ export class AgentSession {
 		return this.model.id;
 	}
 
+	get thinkingLevel(): ThinkingLevel | undefined {
+		return this.thinkingLevelValue;
+	}
+
 	get allowedRoot(): string {
 		return this.allowedRootValue;
 	}
@@ -193,13 +215,28 @@ export class AgentSession {
 		const next = this.provider.models.find((model) => model.id === modelId);
 		if (!next) throw new Error(`Unknown model "${modelId}" for provider "${this.provider.id}".`);
 		this.model = structuredClone(next);
+		this.thinkingLevelValue =
+			this.thinkingLevelValue !== undefined && this.model.reasoningEfforts?.includes(this.thinkingLevelValue)
+				? this.thinkingLevelValue
+				: defaultThinkingLevel(this.model);
 		this.agent.setModel(this.model);
+		this.agent.setThinkingLevel(this.thinkingLevelValue);
 		this.contextBudget = resolveContextBudget(this.model);
 		this.keepRecentTokens = Math.min(
 			this.keepRecentTokens,
 			Math.max(1, Math.min(20_000, Math.floor(this.contextBudget.triggerTokens / 2))),
 		);
 		return structuredClone(this.model);
+	}
+
+	cycleThinkingLevel(): ThinkingLevel | undefined {
+		if (this.promptActive) throw new Error("Cannot change thinking level while AgentSession is processing a prompt.");
+		const efforts = this.model.reasoningEfforts;
+		if (!efforts || efforts.length === 0) return undefined;
+		const currentIndex = this.thinkingLevelValue === undefined ? -1 : efforts.indexOf(this.thinkingLevelValue);
+		this.thinkingLevelValue = efforts[(currentIndex + 1) % efforts.length];
+		this.agent.setThinkingLevel(this.thinkingLevelValue);
+		return this.thinkingLevelValue;
 	}
 
 	get compactionEnabled(): boolean {

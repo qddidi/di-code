@@ -158,7 +158,7 @@ export class InteractiveMode {
 		this.editor.onAutocompleteChange = () => this.updateAutocompleteOverlay();
 		const readViewState = (): InteractiveViewState => ({
 			...this.projection.state,
-			model: this.session.modelId,
+			model: `${this.session.modelId}${this.session.thinkingLevel ? `(${this.session.thinkingLevel})` : ""}`,
 			theme: this.theme,
 			pasteImageShortcut: PASTE_IMAGE_SHORTCUT,
 		});
@@ -222,6 +222,16 @@ export class InteractiveMode {
 	}
 
 	private handleCommand(data: string): boolean {
+		if (data === "\x1b[Z") {
+			try {
+				const level = this.session.cycleThinkingLevel();
+				this.projection.setStatus(level ? `thinking=${level}` : "Current model does not support thinking levels.");
+			} catch (cause) {
+				this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+			}
+			this.refresh();
+			return true;
+		}
 		if (data === "\x14") {
 			this.openThemeSelector();
 			return true;

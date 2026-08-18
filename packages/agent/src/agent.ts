@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, Model, Provider, UserContent } from "@di-code/ai";
+import type { AssistantMessage, Message, Model, Provider, ThinkingLevel, UserContent } from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentContext, AgentEvent, AgentTool } from "./types.ts";
 
@@ -11,6 +11,7 @@ export interface AgentOptions {
 	readonly now?: () => number;
 	readonly initialMessages?: readonly Message[];
 	readonly initialContextMessages?: readonly Message[];
+	readonly thinkingLevel?: ThinkingLevel;
 }
 
 /** Agent 事件监听器；返回 Promise 时，后续监听器会等待它完成。 */
@@ -43,6 +44,7 @@ export class Agent {
 	private readonly listeners = new Set<AgentListener>();
 	private readonly provider: Provider;
 	private model: Model;
+	private thinkingLevel?: ThinkingLevel;
 	private readonly sessionId?: string;
 	private readonly systemPrompt?: string;
 	private readonly now: () => number;
@@ -50,6 +52,7 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		this.provider = options.provider;
 		this.model = options.model;
+		this.thinkingLevel = options.thinkingLevel;
 		this.sessionId = options.sessionId;
 		this.tools = [...(options.tools ?? [])];
 		const initialMessages = structuredClone([...(options.initialMessages ?? [])]);
@@ -79,6 +82,11 @@ export class Agent {
 	setModel(model: Model): void {
 		if (this.streaming) throw new Error("Cannot change Agent model while processing a prompt.");
 		this.model = structuredClone(model);
+	}
+
+	setThinkingLevel(level: ThinkingLevel | undefined): void {
+		if (this.streaming) throw new Error("Cannot change thinking level while processing a prompt.");
+		this.thinkingLevel = level;
 	}
 
 	replaceContext(messages: readonly Message[]): void {
@@ -122,7 +130,13 @@ export class Agent {
 		const stream = agentLoop(
 			prompt,
 			context,
-			{ provider: this.provider, model: this.model, sessionId: this.sessionId, now: this.now },
+			{
+				provider: this.provider,
+				model: this.model,
+				sessionId: this.sessionId,
+				now: this.now,
+				thinkingLevel: this.thinkingLevel,
+			},
 			signal,
 		);
 

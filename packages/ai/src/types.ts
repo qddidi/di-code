@@ -201,6 +201,8 @@ export interface Model {
 	input: ModelInput[];
 	/** 模型是否支持生成独立的思考内容。 */
 	reasoning: boolean;
+	/** 该模型在当前 API 适配器中支持的思考强度；未声明表示不可调节。 */
+	reasoningEfforts?: readonly ThinkingLevel[];
 	/** 单次请求可容纳的最大上下文 token 数。 */
 	contextWindow: number;
 	/** 单次请求允许生成的最大输出 token 数。 */
@@ -208,6 +210,9 @@ export interface Model {
 	/** 模型按 token 来源划分的计价信息。 */
 	cost: ModelCost;
 }
+
+/** Provider 无关的离散思考强度名称。 */
+export type ThinkingLevel = "low" | "medium" | "high";
 
 /** 提供给模型的工具名称、说明和 TypeBox 参数模式。 */
 export interface ToolDefinition<TParameters extends TSchema = TSchema> {
@@ -266,6 +271,8 @@ export interface StreamOptions {
 	temperature?: number;
 	/** 本次调用允许生成的最大 token 数。 */
 	maxTokens?: number;
+	/** 本次请求使用的思考强度；只由声明支持它的 Provider 解释。 */
+	reasoningEffort?: ThinkingLevel;
 }
 
 /** 既可逐个消费事件，也可等待最终助手消息的流式结果。 */

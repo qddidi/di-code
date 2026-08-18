@@ -101,7 +101,7 @@ async function streamAssistantResponse(
 				messages: [...messages],
 				tools: toolDefinitions(context),
 			},
-			{ signal, sessionId: config.sessionId },
+			{ signal, sessionId: config.sessionId, reasoningEffort: config.thinkingLevel },
 		);
 		let terminalMessage: AssistantMessage | undefined;
 		for await (const event of response) {

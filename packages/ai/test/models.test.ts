@@ -25,6 +25,15 @@ describe("model catalog", () => {
 
 		expect(imageModel?.input).toContain("image");
 		expect(reasoningModel).toMatchObject({ reasoning: true, input: ["text"] });
+		expect(reasoningModel?.reasoningEfforts).toEqual(["low", "medium", "high"]);
+	});
+
+	it("renders declared reasoning efforts into the generated catalog", () => {
+		const reasoningModel = MODEL_SOURCE.find((entry) => entry.provider === "openai" && entry.id === "o3-mini");
+		if (reasoningModel === undefined) throw new Error("Expected the OpenAI reasoning source model");
+		const output = renderModelCatalog([reasoningModel]);
+
+		expect(output).toContain('reasoningEfforts: ["low", "medium", "high"]');
 	});
 
 	it("advertises DeepSeek Responses models as text-only reasoning models", () => {

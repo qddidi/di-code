@@ -67,6 +67,7 @@ export type {
 	SuccessfulStopReason,
 	TextContent,
 	ThinkingContent,
+	ThinkingLevel,
 	ToolCallContent,
 	ToolDefinition,
 	ToolResultContent,

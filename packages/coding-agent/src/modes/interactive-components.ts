@@ -240,7 +240,7 @@ export class InteractiveFooter implements Component {
 		const pasteImageShortcut = state.pasteImageShortcut ?? (process.platform === "win32" ? "Alt+V" : "Ctrl+V");
 		const hints =
 			width >= 60
-				? `Enter send   ${pasteImageShortcut} paste image   Esc cancel   Ctrl+O model`
+				? `Enter send   ${pasteImageShortcut} paste image   Shift+Tab thinking   Esc cancel   Ctrl+O model`
 				: `Enter send  ${pasteImageShortcut} image`;
 		return [...renderLine(status, width), ...renderLine(paint(colors.dim, hints), width)];
 	}

@@ -24,6 +24,7 @@ function openAiModel(id: string, name: string, options: OpenAiModelOptions): Mod
 		baseUrl: OPENAI_BASE_URL,
 		input: options.input ?? ["text", "image"],
 		reasoning: options.reasoning,
+		...(options.reasoning ? { reasoningEfforts: ["low", "medium", "high"] as const } : {}),
 		contextWindow: options.contextWindow,
 		maxOutputTokens: options.maxOutputTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -283,13 +284,29 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 			throw new Error(`${label}.input must contain text and/or image`);
 		}
 		if (new Set(model.input).size !== model.input.length) throw new Error(`${label}.input must not contain duplicates`);
+		if (model.reasoningEfforts !== undefined) {
+			if (!model.reasoning || model.reasoningEfforts.length === 0) {
+				throw new Error(`${label}.reasoningEfforts requires a reasoning model and must not be empty`);
+			}
+			if (
+				model.reasoningEfforts.some((effort) => effort !== "low" && effort !== "medium" && effort !== "high") ||
+				new Set(model.reasoningEfforts).size !== model.reasoningEfforts.length
+			) {
+				throw new Error(`${label}.reasoningEfforts must contain unique low, medium, or high values`);
+			}
+		}
 		validatePositiveInteger(model.contextWindow, "contextWindow", label);
 		validatePositiveInteger(model.maxOutputTokens, "maxOutputTokens", label);
 		validateCost(model, label);
 		const key = `${provider}\u0000${id}`;
 		if (keys.has(key)) throw new Error(`${label} is duplicated`);
 		keys.add(key);
-		return { ...model, input: [...model.input], cost: { ...model.cost } };
+		return {
+			...model,
+			input: [...model.input],
+			...(model.reasoningEfforts ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+			cost: { ...model.cost },
+		};
 	});
 
 	return normalized.sort((left, right) => {
@@ -309,6 +326,9 @@ function renderModel(model: Model): string {
 		`\t\tbaseUrl: ${JSON.stringify(model.baseUrl)},`,
 		`\t\tinput: [${model.input.map((input) => JSON.stringify(input)).join(", ")}],`,
 		`\t\treasoning: ${model.reasoning},`,
+		...(model.reasoningEfforts
+			? [`\t\treasoningEfforts: [${model.reasoningEfforts.map((effort) => JSON.stringify(effort)).join(", ")}],`]
+			: []),
 		`\t\tcontextWindow: ${model.contextWindow},`,
 		`\t\tmaxOutputTokens: ${model.maxOutputTokens},`,
 		`\t\tcost: { input: ${model.cost.input}, output: ${model.cost.output}, cacheRead: ${model.cost.cacheRead}, cacheWrite: ${model.cost.cacheWrite} },`,

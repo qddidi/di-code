@@ -5,6 +5,7 @@ import type {
 	Provider,
 	Static,
 	StreamEvent,
+	ThinkingLevel,
 	ToolDefinition,
 	ToolResultContent,
 	ToolResultMessage,
@@ -36,6 +37,7 @@ export interface AgentLoopConfig {
 	readonly model: Model;
 	readonly sessionId?: string;
 	readonly now?: () => number;
+	readonly thinkingLevel?: ThinkingLevel;
 }
 
 export type MessageUpdateEvent = Exclude<StreamEvent, { type: "start" | "done" | "error" }>;

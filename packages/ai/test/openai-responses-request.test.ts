@@ -309,12 +309,25 @@ describe("buildOpenAIResponsesRequest", () => {
 	});
 
 	it("adds reasoning summary configuration only for reasoning models", () => {
-		const reasoningModel = { ...model, reasoning: true };
+		const reasoningModel = { ...model, reasoning: true, reasoningEfforts: ["low", "medium", "high"] as const };
 		const request = buildOpenAIResponsesRequest(reasoningModel, textContext());
 
 		expect(request.reasoning).toEqual({ summary: "auto" });
 		expect(request.include).toEqual(["reasoning.encrypted_content"]);
 		expect(buildOpenAIResponsesRequest(model, textContext()).include).toBeUndefined();
+	});
+
+	it("projects the selected thinking level into the OpenAI reasoning request", () => {
+		const reasoningModel = { ...model, reasoning: true, reasoningEfforts: ["low", "medium", "high"] as const };
+		const request = buildOpenAIResponsesRequest(reasoningModel, textContext(), { reasoningEffort: "high" });
+
+		expect(request.reasoning).toEqual({ summary: "auto", effort: "high" });
+	});
+
+	it("rejects a reasoning effort that the selected model has not declared", () => {
+		expect(() => buildOpenAIResponsesRequest(model, textContext(), { reasoningEffort: "high" })).toThrow(
+			'Model "test-openai-model" does not support reasoning effort "high".',
+		);
 	});
 
 	it("replays same-model reasoning and its paired function call before the tool result", () => {
