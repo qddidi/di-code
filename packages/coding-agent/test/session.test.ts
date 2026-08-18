@@ -140,6 +140,56 @@ describe("AgentSession read integration", () => {
 		expect(session.cycleThinkingLevel()).toBeUndefined();
 	});
 
+	it("switches the Provider runtime for subsequent prompts", async () => {
+		const initial = createFauxProvider({ responses: [] });
+		const next = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "next provider response" }] }],
+		});
+		const session = new AgentSession({ allowedRoot: root, provider: initial.provider, model: initial.model });
+
+		session.setRuntime(next.provider, next.model);
+		await session.prompt("use the next provider");
+
+		expect(session.providerId).toBe("faux");
+		expect(session.modelId).toBe("faux-model");
+		expect(session.transcript.at(-1)).toMatchObject({
+			role: "assistant",
+			content: [{ type: "text", text: "next provider response" }],
+		});
+		expect(next.pendingResponses()).toBe(0);
+	});
+
+	it("rejects runtime switches while a prompt is processing", async () => {
+		const initial = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "done" }] }] });
+		const next = createFauxProvider({ responses: [] });
+		let releaseStream: (() => void) | undefined;
+		const streamReleased = new Promise<void>((resolve) => {
+			releaseStream = resolve;
+		});
+		const provider: Provider = {
+			...initial.provider,
+			stream(model, context, options) {
+				const stream = initial.provider.stream(model, context, options);
+				return {
+					async *[Symbol.asyncIterator]() {
+						await streamReleased;
+						yield* stream;
+					},
+					result: () => stream.result(),
+				};
+			},
+		};
+		const session = new AgentSession({ allowedRoot: root, provider, model: initial.model });
+		const pending = session.prompt("wait");
+
+		expect(session.isStreaming).toBe(true);
+		expect(() => session.setRuntime(next.provider, next.model)).toThrow(
+			"Cannot change runtime while AgentSession is processing a prompt.",
+		);
+		releaseStream?.();
+		await pending;
+	});
+
 	it("rejects image attachments before calling a text-only model", async () => {
 		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "unused" }] }] });
 		const textOnlyModel: Model = { ...faux.model, input: ["text"] };

@@ -1,8 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadStartupConfiguration, resolveStartupArgs, resolveStartupRuntime } from "../src/startup.ts";
+import {
+	loadStartupConfiguration,
+	removeGlobalProviderApiKey,
+	resolveStartupArgs,
+	resolveStartupRuntime,
+} from "../src/startup.ts";
 
 describe("resolveStartupArgs", () => {
 	it("starts interactive mode when the process receives no arguments", () => {
@@ -17,9 +22,11 @@ describe("resolveStartupArgs", () => {
 
 describe("Pi-style startup configuration", () => {
 	let root: string;
+	let globalDir: string;
 
 	beforeEach(async () => {
 		root = await mkdtemp(join(tmpdir(), "di-code-settings-"));
+		globalDir = join(root, "global");
 	});
 
 	afterEach(async () => {
@@ -29,6 +36,11 @@ describe("Pi-style startup configuration", () => {
 	async function writeSettings(value: unknown): Promise<void> {
 		await mkdir(join(root, ".di-code"), { recursive: true });
 		await writeFile(join(root, ".di-code", "settings.json"), JSON.stringify(value));
+	}
+
+	async function writeGlobalSettings(value: unknown): Promise<void> {
+		await mkdir(globalDir, { recursive: true });
+		await writeFile(join(globalDir, "settings.json"), JSON.stringify(value));
 	}
 
 	it("loads providers, inherits provider fields, and applies Pi model defaults", async () => {
@@ -44,7 +56,7 @@ describe("Pi-style startup configuration", () => {
 			},
 		});
 
-		const configuration = await loadStartupConfiguration(root, { AMUX_API_KEY: "test-key" });
+		const configuration = await loadStartupConfiguration(root, { AMUX_API_KEY: "test-key" }, globalDir);
 
 		expect(configuration.providers).toHaveLength(1);
 		expect(configuration.providers[0]).toMatchObject({
@@ -92,7 +104,7 @@ describe("Pi-style startup configuration", () => {
 			},
 		});
 
-		const configuration = await loadStartupConfiguration(root, {});
+		const configuration = await loadStartupConfiguration(root, {}, globalDir);
 
 		expect(configuration.providers[0]?.models?.[0]).toMatchObject({
 			input: ["text", "image"],
@@ -118,7 +130,7 @@ describe("Pi-style startup configuration", () => {
 			},
 		});
 
-		const configuration = await loadStartupConfiguration(root, { AMUX_API_KEY: "test-key" });
+		const configuration = await loadStartupConfiguration(root, { AMUX_API_KEY: "test-key" }, globalDir);
 		const runtime = resolveStartupRuntime(configuration.environment, configuration.providers);
 
 		expect(runtime.model.baseUrl).toBe("https://model.example.test/v1");
@@ -127,7 +139,7 @@ describe("Pi-style startup configuration", () => {
 	it("rejects the removed legacy settings shape", async () => {
 		await writeSettings({ provider: "openai", openai: { model: "gpt-4o" } });
 
-		await expect(loadStartupConfiguration(root, {})).rejects.toThrow(
+		await expect(loadStartupConfiguration(root, {}, globalDir)).rejects.toThrow(
 			".di-code\\settings.json: providers must be an object",
 		);
 	});
@@ -136,11 +148,13 @@ describe("Pi-style startup configuration", () => {
 		await mkdir(join(root, ".di-code"));
 		await writeFile(join(root, ".di-code", "settings.json"), "{");
 
-		await expect(loadStartupConfiguration(root, {})).rejects.toThrow(".di-code\\settings.json: invalid JSON");
+		await expect(loadStartupConfiguration(root, {}, globalDir)).rejects.toThrow(
+			".di-code\\settings.json: invalid JSON",
+		);
 	});
 
 	it("returns no configured providers when the file does not exist", async () => {
-		await expect(loadStartupConfiguration(root, { DI_CODE_PROVIDER: "faux" })).resolves.toEqual({
+		await expect(loadStartupConfiguration(root, { DI_CODE_PROVIDER: "faux" }, globalDir)).resolves.toEqual({
 			environment: { DI_CODE_PROVIDER: "faux" },
 			providers: [],
 		});
@@ -150,7 +164,143 @@ describe("Pi-style startup configuration", () => {
 		await mkdir(join(root, ".di-code"));
 		await writeFile(join(root, ".di-code", "settings.json"), " \r\n\t");
 
-		await expect(loadStartupConfiguration(root, {})).resolves.toEqual({ environment: {}, providers: [] });
+		await expect(loadStartupConfiguration(root, {}, globalDir)).resolves.toEqual({ environment: {}, providers: [] });
+	});
+
+	it("loads providers from the user settings file when the project has no settings", async () => {
+		await writeGlobalSettings({
+			providers: {
+				global: {
+					api: "openai-responses",
+					baseUrl: "https://global.example.test/v1",
+					apiKey: "$GLOBAL_API_KEY",
+					models: [{ id: "global-model" }],
+				},
+			},
+		});
+
+		const configuration = await loadStartupConfiguration(root, { GLOBAL_API_KEY: "global-key" }, globalDir);
+
+		expect(configuration.providers).toHaveLength(1);
+		expect(configuration.providers[0]).toMatchObject({
+			id: "global",
+			api: "openai-responses",
+			baseUrl: "https://global.example.test/v1",
+			apiKey: "$GLOBAL_API_KEY",
+		});
+	});
+
+	it("merges project provider fields over global provider fields", async () => {
+		await writeGlobalSettings({
+			providers: {
+				shared: {
+					api: "openai-responses",
+					baseUrl: "https://global.example.test/v1",
+					apiKey: "$GLOBAL_API_KEY",
+					models: [{ id: "global-model" }],
+				},
+			},
+		});
+		await writeSettings({
+			providers: {
+				shared: { baseUrl: "https://project.example.test/v1" },
+				projectOnly: {
+					api: "openai-responses",
+					models: [{ id: "project-model" }],
+				},
+			},
+		});
+
+		const configuration = await loadStartupConfiguration(root, {}, globalDir);
+
+		expect(configuration.providers).toHaveLength(2);
+		expect(configuration.providers[0]).toMatchObject({
+			id: "shared",
+			baseUrl: "https://project.example.test/v1",
+			apiKey: "$GLOBAL_API_KEY",
+			models: [{ id: "global-model" }],
+		});
+		expect(configuration.providers[1]?.id).toBe("projectOnly");
+	});
+
+	it("uses the saved global Provider and model defaults when more than one Provider is configured", async () => {
+		await writeGlobalSettings({
+			defaultProvider: "deepseek",
+			defaultModel: "deepseek-v4-pro",
+			providers: {
+				deepseek: { api: "openai-chat-completions", apiKey: "$DEEPSEEK_API_KEY" },
+				openai: { api: "openai-responses", apiKey: "$OPENAI_API_KEY" },
+			},
+		});
+
+		const configuration = await loadStartupConfiguration(
+			root,
+			{
+				DEEPSEEK_API_KEY: "deepseek-test-key",
+				OPENAI_API_KEY: "openai-test-key",
+			},
+			globalDir,
+		);
+		const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
+
+		expect(configuration.defaults).toEqual({ providerId: "deepseek", modelId: "deepseek-v4-pro" });
+		expect(runtime.provider.id).toBe("deepseek");
+		expect(runtime.model.id).toBe("deepseek-v4-pro");
+	});
+
+	it("lets explicit Provider and model environment variables override saved defaults", async () => {
+		const runtime = resolveStartupRuntime(
+			{
+				DI_CODE_PROVIDER: "openai",
+				DI_CODE_MODEL: "gpt-4o",
+				DEEPSEEK_API_KEY: "deepseek-test-key",
+				OPENAI_API_KEY: "openai-test-key",
+			},
+			[
+				{ id: "deepseek", api: "openai-chat-completions", apiKey: "$DEEPSEEK_API_KEY" },
+				{ id: "openai", api: "openai-responses", apiKey: "$OPENAI_API_KEY" },
+			],
+			{ providerId: "deepseek", modelId: "deepseek-v4-pro" },
+		);
+
+		expect(runtime.provider.id).toBe("openai");
+		expect(runtime.model.id).toBe("gpt-4o");
+	});
+
+	it("removes only one global provider API key while preserving its remaining configuration", async () => {
+		await writeGlobalSettings({
+			providers: {
+				deepseek: {
+					api: "openai-chat-completions",
+					apiKey: "stored-test-key",
+					baseUrl: "https://api.deepseek.example.test/v1",
+					models: [{ id: "deepseek-model" }],
+				},
+				other: { api: "openai-responses", apiKey: "other-test-key", models: [{ id: "other-model" }] },
+			},
+		});
+
+		expect(await removeGlobalProviderApiKey(globalDir, "deepseek")).toBe(true);
+		expect(JSON.parse(await readFile(join(globalDir, "settings.json"), "utf8"))).toEqual({
+			providers: {
+				deepseek: {
+					api: "openai-chat-completions",
+					baseUrl: "https://api.deepseek.example.test/v1",
+					models: [{ id: "deepseek-model" }],
+				},
+				other: { api: "openai-responses", apiKey: "other-test-key", models: [{ id: "other-model" }] },
+			},
+		});
+	});
+
+	it("does not create or rewrite settings when the global provider has no API key", async () => {
+		await writeGlobalSettings({ providers: { deepseek: { api: "openai-chat-completions" } } });
+		const settingsPath = join(globalDir, "settings.json");
+		const before = await readFile(settingsPath, "utf8");
+
+		expect(await removeGlobalProviderApiKey(globalDir, "deepseek")).toBe(false);
+		expect(await readFile(settingsPath, "utf8")).toBe(before);
+		expect(await removeGlobalProviderApiKey(join(root, "missing"), "deepseek")).toBe(false);
 	});
 });
 

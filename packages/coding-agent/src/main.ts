@@ -16,6 +16,7 @@ import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
 import { loadPlugins } from "./plugins/loader.ts";
 import { PluginManager } from "./plugins/manager.ts";
+import type { StartupConfiguration } from "./startup.ts";
 
 export interface MainRuntime {
 	readonly provider: Provider;
@@ -29,6 +30,7 @@ export interface MainOptions extends PrintIo {
 	) => MainRuntime | undefined | Promise<MainRuntime | undefined>;
 	readonly allowedRoot?: string;
 	readonly agentDir?: string;
+	readonly startupConfiguration?: StartupConfiguration;
 	readonly now?: () => number;
 }
 
@@ -283,6 +285,9 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					session,
 					tui,
 					extensionHost: extensions.host,
+					...(options.startupConfiguration
+						? { providerOnboarding: { configuration: options.startupConfiguration, agentDir } }
+						: {}),
 					sessions: [
 						{
 							id: "new-session",

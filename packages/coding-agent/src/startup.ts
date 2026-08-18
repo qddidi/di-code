@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
 	createAnthropicProvider,
@@ -30,6 +31,12 @@ export interface StartupProviderConfiguration {
 export interface StartupConfiguration {
 	readonly environment: Environment;
 	readonly providers: readonly StartupProviderConfiguration[];
+	readonly defaults?: StartupDefaults;
+}
+
+export interface StartupDefaults {
+	readonly providerId?: string;
+	readonly modelId?: string;
 }
 
 const FAUX_RESPONSES: readonly FauxResponse[] = [
@@ -45,11 +52,14 @@ const FAUX_RESPONSES: readonly FauxResponse[] = [
 	{ type: "success", content: [{ type: "text", text: "当前回复为faux数据" }] },
 ];
 
-const SETTINGS_PATH = join(".di-code", "settings.json");
+const SETTINGS_FILE_NAME = "settings.json";
+const SETTINGS_PATH = join(".di-code", SETTINGS_FILE_NAME);
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
 interface SettingsFile {
+	readonly defaultProvider?: string;
+	readonly defaultModel?: string;
 	readonly providers: Record<
 		string,
 		{
@@ -66,30 +76,30 @@ export function resolveStartupArgs(args: readonly string[]): readonly string[] {
 	return args.length === 0 ? ["--interactive"] : args;
 }
 
-function optionalString(value: unknown, path: string): string | undefined {
+function optionalString(value: unknown, path: string, settingsPath: string): string | undefined {
 	if (value === undefined) return undefined;
-	if (typeof value !== "string") throw new Error(`${SETTINGS_PATH}: ${path} must be a string`);
+	if (typeof value !== "string") throw new Error(`${settingsPath}: ${path} must be a string`);
 	return value;
 }
 
-function requiredString(value: unknown, path: string): string {
-	const result = optionalString(value, path);
-	if (!result?.trim()) throw new Error(`${SETTINGS_PATH}: ${path} must be a non-empty string`);
+function requiredString(value: unknown, path: string, settingsPath = SETTINGS_PATH): string {
+	const result = optionalString(value, path, settingsPath);
+	if (!result?.trim()) throw new Error(`${settingsPath}: ${path} must be a non-empty string`);
 	return result.trim();
 }
 
-function positiveInteger(value: unknown, path: string, fallback: number): number {
+function positiveInteger(value: unknown, path: string, fallback: number, settingsPath: string): number {
 	const result = value ?? fallback;
 	if (!Number.isInteger(result) || (result as number) <= 0) {
-		throw new Error(`${SETTINGS_PATH}: ${path} must be a positive integer`);
+		throw new Error(`${settingsPath}: ${path} must be a positive integer`);
 	}
 	return result as number;
 }
 
-function nonNegativeNumber(value: unknown, path: string, fallback: number): number {
+function nonNegativeNumber(value: unknown, path: string, fallback: number, settingsPath: string): number {
 	const result = value ?? fallback;
 	if (typeof result !== "number" || !Number.isFinite(result) || result < 0) {
-		throw new Error(`${SETTINGS_PATH}: ${path} must be a non-negative finite number`);
+		throw new Error(`${settingsPath}: ${path} must be a non-negative finite number`);
 	}
 	return result;
 }
@@ -100,32 +110,33 @@ function parseModels(
 	providerId: string,
 	providerApi: string | undefined,
 	providerBaseUrl: string | undefined,
+	settingsPath: string,
 ): readonly Model[] | undefined {
 	if (value === undefined) return undefined;
-	if (!Array.isArray(value)) throw new Error(`${SETTINGS_PATH}: ${path} must be an array`);
+	if (!Array.isArray(value)) throw new Error(`${settingsPath}: ${path} must be an array`);
 
 	return value.map((entry, index) => {
 		const modelPath = `${path}[${index}]`;
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath} must be an object`);
+			throw new Error(`${settingsPath}: ${modelPath} must be an object`);
 		}
 		const model = entry as Record<string, unknown>;
 		const input = model.input ?? ["text"];
 		if (!Array.isArray(input) || input.length === 0 || input.some((item) => item !== "text" && item !== "image")) {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath}.input must contain text and/or image`);
+			throw new Error(`${settingsPath}: ${modelPath}.input must contain text and/or image`);
 		}
 		const cost = model.cost ?? {};
 		if (typeof cost !== "object" || cost === null || Array.isArray(cost)) {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath}.cost must be an object`);
+			throw new Error(`${settingsPath}: ${modelPath}.cost must be an object`);
 		}
 		const prices = cost as Record<string, unknown>;
 		if (model.reasoning !== undefined && typeof model.reasoning !== "boolean") {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath}.reasoning must be a boolean`);
+			throw new Error(`${settingsPath}: ${modelPath}.reasoning must be a boolean`);
 		}
 		const configuredReasoningEfforts = model.reasoningEfforts;
 		if (configuredReasoningEfforts !== undefined) {
 			if (!Array.isArray(configuredReasoningEfforts) || configuredReasoningEfforts.length === 0) {
-				throw new Error(`${SETTINGS_PATH}: ${modelPath}.reasoningEfforts must be a non-empty array`);
+				throw new Error(`${settingsPath}: ${modelPath}.reasoningEfforts must be a non-empty array`);
 			}
 			if (
 				model.reasoning !== true ||
@@ -133,20 +144,20 @@ function parseModels(
 				new Set(configuredReasoningEfforts).size !== configuredReasoningEfforts.length
 			) {
 				throw new Error(
-					`${SETTINGS_PATH}: ${modelPath}.reasoningEfforts requires reasoning=true and unique low, medium, or high values`,
+					`${settingsPath}: ${modelPath}.reasoningEfforts requires reasoning=true and unique low, medium, or high values`,
 				);
 			}
 		}
 		if (model.cacheRetention !== undefined && model.cacheRetention !== "long") {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath}.cacheRetention must be "long" when provided`);
+			throw new Error(`${settingsPath}: ${modelPath}.cacheRetention must be "long" when provided`);
 		}
 		if (model.sessionAffinity !== undefined && model.sessionAffinity !== "codex") {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath}.sessionAffinity must be "codex" when provided`);
+			throw new Error(`${settingsPath}: ${modelPath}.sessionAffinity must be "codex" when provided`);
 		}
-		const api = optionalString(model.api, `${modelPath}.api`) ?? providerApi;
-		if (!api) throw new Error(`${SETTINGS_PATH}: ${modelPath}.api is required`);
+		const api = optionalString(model.api, `${modelPath}.api`, settingsPath) ?? providerApi;
+		if (!api) throw new Error(`${settingsPath}: ${modelPath}.api is required`);
 		if (!["faux", "openai-responses", "openai-chat-completions", "anthropic-messages"].includes(api)) {
-			throw new Error(`${SETTINGS_PATH}: ${modelPath}.api is unsupported`);
+			throw new Error(`${settingsPath}: ${modelPath}.api is unsupported`);
 		}
 		const typedApi = api as ModelApi;
 		const reasoningEfforts: Model["reasoningEfforts"] =
@@ -155,11 +166,11 @@ function parseModels(
 				: configuredReasoningEfforts === undefined
 					? undefined
 					: ([...configuredReasoningEfforts] as Model["reasoningEfforts"]);
-		const baseUrl = optionalString(model.baseUrl, `${modelPath}.baseUrl`) ?? providerBaseUrl;
-		const id = requiredString(model.id, `${modelPath}.id`);
+		const baseUrl = optionalString(model.baseUrl, `${modelPath}.baseUrl`, settingsPath) ?? providerBaseUrl;
+		const id = requiredString(model.id, `${modelPath}.id`, settingsPath);
 		return {
 			id,
-			name: requiredString(model.name ?? id, `${modelPath}.name`),
+			name: requiredString(model.name ?? id, `${modelPath}.name`, settingsPath),
 			provider: providerId,
 			api: typedApi,
 			...(baseUrl === undefined ? {} : { baseUrl }),
@@ -168,42 +179,136 @@ function parseModels(
 			...(reasoningEfforts ? { reasoningEfforts } : {}),
 			...(model.cacheRetention === "long" ? { cacheRetention: "long" as const } : {}),
 			...(model.sessionAffinity === "codex" ? { sessionAffinity: "codex" as const } : {}),
-			contextWindow: positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000),
-			maxOutputTokens: positiveInteger(model.maxTokens ?? model.maxOutputTokens, `${modelPath}.maxTokens`, 16_384),
+			contextWindow: positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000, settingsPath),
+			maxOutputTokens: positiveInteger(
+				model.maxTokens ?? model.maxOutputTokens,
+				`${modelPath}.maxTokens`,
+				16_384,
+				settingsPath,
+			),
 			cost: {
-				input: nonNegativeNumber(prices.input, `${modelPath}.cost.input`, 0) / 1_000_000,
-				output: nonNegativeNumber(prices.output, `${modelPath}.cost.output`, 0) / 1_000_000,
-				cacheRead: nonNegativeNumber(prices.cacheRead, `${modelPath}.cost.cacheRead`, 0) / 1_000_000,
-				cacheWrite: nonNegativeNumber(prices.cacheWrite, `${modelPath}.cost.cacheWrite`, 0) / 1_000_000,
+				input: nonNegativeNumber(prices.input, `${modelPath}.cost.input`, 0, settingsPath) / 1_000_000,
+				output: nonNegativeNumber(prices.output, `${modelPath}.cost.output`, 0, settingsPath) / 1_000_000,
+				cacheRead: nonNegativeNumber(prices.cacheRead, `${modelPath}.cost.cacheRead`, 0, settingsPath) / 1_000_000,
+				cacheWrite: nonNegativeNumber(prices.cacheWrite, `${modelPath}.cost.cacheWrite`, 0, settingsPath) / 1_000_000,
 			},
 		};
 	});
 }
 
-function parseSettings(value: unknown): SettingsFile {
+function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		throw new Error(`${SETTINGS_PATH}: root value must be an object`);
+		throw new Error(`${settingsPath}: root value must be an object`);
 	}
 	const record = value as Record<string, unknown>;
 	const providersValue = record.providers;
 	if (typeof providersValue !== "object" || providersValue === null || Array.isArray(providersValue)) {
-		throw new Error(`${SETTINGS_PATH}: providers must be an object`);
+		throw new Error(`${settingsPath}: providers must be an object`);
 	}
 	const providers: Record<string, SettingsFile["providers"][string]> = {};
 	for (const [id, entry] of Object.entries(providersValue as Record<string, unknown>)) {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-			throw new Error(`${SETTINGS_PATH}: providers.${id} must be an object`);
+			throw new Error(`${settingsPath}: providers.${id} must be an object`);
 		}
 		const provider = entry as Record<string, unknown>;
 		providers[id] = {
-			name: optionalString(provider.name, `providers.${id}.name`),
-			baseUrl: optionalString(provider.baseUrl, `providers.${id}.baseUrl`),
-			apiKey: optionalString(provider.apiKey, `providers.${id}.apiKey`),
-			api: optionalString(provider.api, `providers.${id}.api`),
+			name: optionalString(provider.name, `providers.${id}.name`, settingsPath),
+			baseUrl: optionalString(provider.baseUrl, `providers.${id}.baseUrl`, settingsPath),
+			apiKey: optionalString(provider.apiKey, `providers.${id}.apiKey`, settingsPath),
+			api: optionalString(provider.api, `providers.${id}.api`, settingsPath),
 			models: provider.models,
 		};
 	}
-	return { providers };
+	const defaultProvider =
+		record.defaultProvider === undefined
+			? undefined
+			: requiredString(record.defaultProvider, "defaultProvider", settingsPath);
+	const defaultModel =
+		record.defaultModel === undefined ? undefined : requiredString(record.defaultModel, "defaultModel", settingsPath);
+	return {
+		providers,
+		...(defaultProvider === undefined ? {} : { defaultProvider }),
+		...(defaultModel === undefined ? {} : { defaultModel }),
+	};
+}
+
+async function readSettingsFile(path: string, displayPath: string): Promise<SettingsFile | undefined> {
+	try {
+		const source = await readFile(path, "utf8");
+		if (source.trim().length === 0) return undefined;
+		return parseSettings(JSON.parse(source), displayPath);
+	} catch (cause) {
+		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+		if (cause instanceof SyntaxError) throw new Error(`${displayPath}: invalid JSON`, { cause });
+		throw cause;
+	}
+}
+
+function mergeSettings(
+	globalSettings: SettingsFile | undefined,
+	projectSettings: SettingsFile | undefined,
+): SettingsFile {
+	const globalProviders = globalSettings?.providers ?? {};
+	const projectProviders = projectSettings?.providers ?? {};
+	const providers = { ...globalProviders };
+	for (const [id, projectProvider] of Object.entries(projectProviders)) {
+		providers[id] = {
+			...globalProviders[id],
+			...(projectProvider.name === undefined ? {} : { name: projectProvider.name }),
+			...(projectProvider.baseUrl === undefined ? {} : { baseUrl: projectProvider.baseUrl }),
+			...(projectProvider.apiKey === undefined ? {} : { apiKey: projectProvider.apiKey }),
+			...(projectProvider.api === undefined ? {} : { api: projectProvider.api }),
+			...(projectProvider.models === undefined ? {} : { models: projectProvider.models }),
+		};
+	}
+	const defaultProvider = projectSettings?.defaultProvider ?? globalSettings?.defaultProvider;
+	const defaultModel =
+		projectSettings?.defaultModel ??
+		(projectSettings?.defaultProvider === undefined ? globalSettings?.defaultModel : undefined);
+	return {
+		providers,
+		...(defaultProvider === undefined ? {} : { defaultProvider }),
+		...(defaultModel === undefined ? {} : { defaultModel }),
+	};
+}
+
+export async function saveGlobalProviderApiKey(
+	agentDir: string,
+	providerId: string,
+	api: Exclude<ModelApi, "faux">,
+	apiKey: string,
+	modelId?: string,
+): Promise<void> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const trimmedApiKey = apiKey.trim();
+	if (!trimmedApiKey) throw new Error(`${settingsFilePath}: apiKey must be a non-empty string`);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	const settings = mergeSettings(existingSettings, {
+		providers: { [providerId]: { api, apiKey: trimmedApiKey } },
+		defaultProvider: providerId,
+		...(modelId === undefined ? {} : { defaultModel: modelId }),
+	});
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+/** Removes only the persisted credential for one provider; environment variables remain untouched. */
+export async function removeGlobalProviderApiKey(agentDir: string, providerId: string): Promise<boolean> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	const provider = existingSettings?.providers[providerId];
+	if (!provider || provider.apiKey === undefined) return false;
+
+	const { apiKey: _apiKey, ...providerWithoutApiKey } = provider;
+	const settings: SettingsFile = {
+		...existingSettings,
+		providers: {
+			...existingSettings.providers,
+			[providerId]: providerWithoutApiKey,
+		},
+	};
+	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	return true;
 }
 
 function resolveConfigValue(value: string | undefined, env: Environment): string | undefined {
@@ -364,8 +469,10 @@ function createConfiguredRuntime(env: Environment, configuration: StartupProvide
 export function resolveStartupRuntime(
 	env: Environment,
 	providers: readonly StartupProviderConfiguration[],
+	defaults: StartupDefaults = {},
 ): StartupRuntime {
-	const selectedProviderId = env.DI_CODE_PROVIDER?.trim() || (providers.length === 1 ? providers[0]?.id : undefined);
+	const selectedProviderId =
+		env.DI_CODE_PROVIDER?.trim() || defaults.providerId || (providers.length === 1 ? providers[0]?.id : undefined);
 	if (selectedProviderId === "faux") return createFauxRuntime();
 	if (!selectedProviderId) {
 		if (providers.length === 0) {
@@ -373,9 +480,13 @@ export function resolveStartupRuntime(
 		}
 		throw new Error("DI_CODE_PROVIDER is required when more than one provider is configured.");
 	}
+	const runtimeEnvironment =
+		env.DI_CODE_MODEL?.trim() || defaults.providerId !== selectedProviderId || !defaults.modelId
+			? env
+			: { ...env, DI_CODE_MODEL: defaults.modelId };
 	const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
-	if (selectedProvider) return createConfiguredRuntime(env, selectedProvider);
-	const builtInRuntime = createBuiltInRuntime(env, selectedProviderId);
+	if (selectedProvider) return createConfiguredRuntime(runtimeEnvironment, selectedProvider);
+	const builtInRuntime = createBuiltInRuntime(runtimeEnvironment, selectedProviderId);
 	if (builtInRuntime) return builtInRuntime;
 	throw new Error(
 		`Unknown configured provider "${selectedProviderId}". Available providers: ${providers.map((provider) => provider.id).join(", ")}.`,
@@ -385,19 +496,13 @@ export function resolveStartupRuntime(
 export async function loadStartupConfiguration(
 	cwd: string,
 	environment: Environment = process.env,
+	agentDir = join(homedir(), ".di-code"),
 ): Promise<StartupConfiguration> {
-	let settings: SettingsFile;
-	try {
-		const source = await readFile(join(cwd, SETTINGS_PATH), "utf8");
-		if (source.trim().length === 0) return { environment, providers: [] };
-		settings = parseSettings(JSON.parse(source));
-	} catch (cause) {
-		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
-			return { environment, providers: [] };
-		}
-		if (cause instanceof SyntaxError) throw new Error(`${SETTINGS_PATH}: invalid JSON`, { cause });
-		throw cause;
-	}
+	const [globalSettings, projectSettings] = await Promise.all([
+		readSettingsFile(join(agentDir, SETTINGS_FILE_NAME), join(agentDir, SETTINGS_FILE_NAME)),
+		readSettingsFile(join(cwd, SETTINGS_PATH), SETTINGS_PATH),
+	]);
+	const settings = mergeSettings(globalSettings, projectSettings);
 
 	const providers = Object.entries(settings.providers).map(([id, provider]) => ({
 		id: requiredString(id, `providers.${id}`),
@@ -405,9 +510,13 @@ export async function loadStartupConfiguration(
 		api: provider.api,
 		apiKey: provider.apiKey,
 		baseUrl: provider.baseUrl,
-		models: parseModels(provider.models, `providers.${id}.models`, id, provider.api, provider.baseUrl),
+		models: parseModels(provider.models, `providers.${id}.models`, id, provider.api, provider.baseUrl, SETTINGS_PATH),
 	}));
-	return { environment, providers };
+	const defaults =
+		settings.defaultProvider === undefined && settings.defaultModel === undefined
+			? undefined
+			: { providerId: settings.defaultProvider, modelId: settings.defaultModel };
+	return { environment, providers, ...(defaults === undefined ? {} : { defaults }) };
 }
 
 export async function loadStartupEnvironment(

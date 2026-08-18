@@ -45,7 +45,11 @@ di-code
 3. **填写 API key**：选择真实 Provider 时，在隐藏输入框中粘贴对应的 key；输入内容不会显示在终端中。
 4. **确认并开始对话**：向导完成后进入 interactive 模式，在底部输入框输入问题并按 `Enter`。
 
-向导输入的 API key 只存在于当前进程内存，不会保存到 `.env`、`.di-code/settings.json`、会话文件或日志。退出后再次启动，如果没有环境变量或 settings 配置，向导会再次出现。
+向导输入的 API key 会保存到用户全局 `~/.di-code/settings.json`，供之后启动复用；不会写入 `.env`、项目 `.di-code/settings.json`、会话文件或日志。请保护用户目录的访问权限，不要复制或提交该文件。
+
+已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。它总会要求真实 Provider 输入新的隐藏 key，写入用户全局 `settings.json` 成功后立即切换当前会话的 Provider 和模型。`/logout` 只移除当前 Provider 在该全局文件中的 `apiKey`，保留 `api`、`baseUrl`、`models` 及其他 Provider 配置；它不会也无法删除环境变量中的 key，因此环境变量仍可能继续生效。
+
+`/login` 还会更新同一文件的 `defaultProvider` 和 `defaultModel`。当全局配置中有多个 Provider 时，下一次启动会使用这两个默认值；显式设置的 `DI_CODE_PROVIDER` 与 `DI_CODE_MODEL` 始终优先。
 
 向导完成后可以直接这样使用：
 
@@ -55,12 +59,14 @@ di-code
 
 ### 方式二：直接用 `settings.json` 配置
 
-如果你已经知道 Provider、`baseUrl`、模型和 API key，可以不使用向导，直接在**当前项目根目录**创建 `.di-code/settings.json`。这是配置私有网关、自定义模型或希望配置可复用时推荐的方式。
+如果你已经知道 Provider、`baseUrl`、模型和 API key，可以不使用向导，直接创建 `settings.json`。启动时会先读取用户全局配置 `~/.di-code/settings.json`，再读取当前项目的 `.di-code/settings.json`；项目配置会覆盖同名 Provider 的已设置字段，并保留全局 Provider 中项目未设置的字段。全局配置适合个人常用 Provider，项目配置适合私有网关或项目专用模型。
+
+同名 Provider 的 `models` 在项目中出现时会整体替换全局的模型列表；项目未写 `models` 时继续使用全局模型列表。只存在于任一文件中的 Provider 都会保留。
 
 下面这个例子使用 OpenAI Responses 兼容接口。将示例中的 `baseUrl`、`apiKey` 和模型字段替换为实际值后即可使用：
 
 
-`.di-code/settings.json`：
+`~/.di-code/settings.json` 或 `.di-code/settings.json`：
 
 ```json
 {
@@ -87,7 +93,7 @@ di-code
 默认使用第一个模型。可以添加多个模型然后使用`/model`切换
 
 
-`settings.json` 中的 `apiKey` 可以直接填写字符串，**但不建议这样做**，因为它很容易被提交到 Git。更安全的写法是引用环境变量：
+`settings.json` 中的 `apiKey` 可以直接填写字符串，也可以引用环境变量。全局配置通常不进入项目 Git，因此适合保存个人配置；项目配置若使用明文 key，必须确保 `.di-code/settings.json` 不会提交。环境变量写法如下：
 
 ```json
 {
@@ -118,6 +124,8 @@ di-code "检查当前项目的测试状态"
 | 字段 | 作用 |
 | --- | --- |
 | `providers` | Provider 配置对象，key 是 Provider ID |
+| `defaultProvider` | 可选的默认 Provider；`/login` 自动更新，多个 Provider 时用于消除启动歧义 |
+| `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 自动更新 |
 | `api` | 接口类型：`openai-responses`、`openai-chat-completions` 或 `anthropic-messages` |
 | `baseUrl` | Provider 的接口地址，必须是绝对的 `http` 或 `https` URL |
 | `apiKey` | API key，推荐填写 `$ENV_VAR` 或 `${ENV_VAR}` |
@@ -146,7 +154,7 @@ di-code "检查当前项目的测试状态"
 }
 ```
 
-如果 `settings.json` 中只有一个 Provider，可以省略 `DI_CODE_PROVIDER`；如果有多个 Provider，则必须设置它。`DI_CODE_MODEL` 省略时使用该 Provider 模型列表的第一项。配置完成后，先用 print 模式验证：
+合并后的 `settings.json` 中只有一个 Provider 时，可以省略 `DI_CODE_PROVIDER`；如果有多个 Provider，则必须设置它。`DI_CODE_MODEL` 省略时使用该 Provider 模型列表的第一项。配置完成后，先用 print 模式验证：
 
 ```powershell
 di-code --print "用一句话介绍当前项目"
@@ -269,6 +277,8 @@ di-code --continue "继续上一次工作"
 | `/session` | 选择或切换会话 |
 | `/theme` | 选择 dark 或 light 主题 |
 | `/settings` | 配置上下文压缩开关 |
+| `/login` | 打开 Provider、模型和隐藏 API key 向导；保存到用户全局配置并切换当前会话 |
+| `/logout` | 移除当前 Provider 的用户全局 `apiKey`，不改环境变量或其他配置字段 |
 | `/compact` | 立即压缩当前持久化会话的旧上下文 |
 | `/usage` | 查看请求数、token、费用和上下文占用 |
 | `/retry` | 重新提交最近失败或取消的 prompt |
@@ -465,7 +475,7 @@ di-code plugin remove project-status
 
 ## 自定义 Provider
 
-自定义 OpenAI Responses 兼容网关或私有模型时，在工作根目录创建 `.di-code/settings.json`。凭据推荐使用环境变量引用：
+自定义 OpenAI Responses 兼容网关或私有模型时，可在用户全局 `~/.di-code/settings.json` 或工作根目录 `.di-code/settings.json` 中声明 Provider。两个文件同时存在时，项目配置覆盖全局配置中的同名 Provider 字段。`apiKey` 可以直接填写，或使用环境变量引用：
 
 ```json
 {
@@ -501,7 +511,7 @@ di-code "总结当前项目"
 
 `api` 可为 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。Chat Completions 模型还可声明 `chatCompletionsCompat`，用于 DeepSeek/GLM 的 thinking、reasoning_effort、`max_tokens`、流式 usage 和 `tool_stream` 等兼容差异。
 
-`apiKey` 支持 `$NAME` 或 `${NAME}` 环境变量引用。虽然可以直接写入字符串，但不要把 key 写到 `settings.json` 或提交到 Git。`baseUrl` 必须是绝对 `http`/`https` URL。
+`apiKey` 支持直接字符串，也支持 `$NAME` 或 `${NAME}` 环境变量引用。项目级 `settings.json` 若含明文 key，必须保持未提交；`baseUrl` 必须是绝对 `http`/`https` URL。
 
 ## 脚本和 RPC 集成
 
@@ -548,7 +558,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 ## 安全边界与故障排查
 
 - 在可信项目根目录运行；`bash` 不是沙箱，插件也没有沙箱。
-- API key 只放环境变量或秘密管理工具。不要放入 prompt、Skill、插件源码、会话、图片或 Git。
+- 向导会将输入的 API key 保存到用户全局 `~/.di-code/settings.json`；不要放入 prompt、Skill、插件源码、会话、图片、项目配置或 Git。
 - 项目 Skill 与插件默认不加载，直到执行 `--trust-project`；该开关是“是否导入项目本地代码/指令”的决定，不会赋予额外系统权限。
 - Provider、模型、图片、配置和工具参数都会校验；外部项目内容和模型输出仍应视作不可信输入。
 

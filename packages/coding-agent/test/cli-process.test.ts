@@ -19,7 +19,7 @@ async function runCli(
 		!args.includes("--version") &&
 		!args.includes("-v");
 	try {
-		const environment = { ...process.env };
+		const environment: NodeJS.ProcessEnv = { ...process.env, USERPROFILE: join(root, "home") };
 		if (options.configured ?? true) environment.DI_CODE_PROVIDER = "faux";
 		else {
 			delete environment.DI_CODE_PROVIDER;
@@ -71,7 +71,9 @@ describe("CLI process entry", () => {
 		const result = await runCli(["--print", "hello"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe("Faux response.\n");
+		expect(result.stdout).toBe(
+			"你好，我是di-code，一个面向终端的 TypeScript AI Coding Agent，支持多 Provider 流式对话、工具调用、JSONL 会话持久化、交互式 TUI、插件扩展与 JSONL RPC 集成。\n",
+		);
 		expect(result.stderr).toBe("");
 	});
 

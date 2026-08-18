@@ -1,13 +1,35 @@
-import { createFauxProvider, MODELS, type Model } from "@di-code/ai";
-import { Input, Key, KeybindingsManager, type SelectItem, SelectList, type Terminal, Text, TUI } from "@di-code/tui";
+import { createFauxProvider, MODELS, type Model, type ModelApi } from "@di-code/ai";
+import {
+	Box,
+	Input,
+	Key,
+	KeybindingsManager,
+	type SelectItem,
+	SelectList,
+	type Terminal,
+	Text,
+	TUI,
+} from "@di-code/tui";
 import type { CliCommand } from "./cli.ts";
-import { resolveStartupRuntime, type StartupConfiguration, type StartupRuntime } from "./startup.ts";
+import {
+	resolveStartupRuntime,
+	type StartupConfiguration,
+	type StartupRuntime,
+	saveGlobalProviderApiKey,
+} from "./startup.ts";
 
 export type StartupRunCommand = Extract<CliCommand, { kind: "run" }>;
 
 export interface ProviderOnboardingOptions {
 	readonly configuration: StartupConfiguration;
 	readonly terminal: Terminal;
+	readonly agentDir: string;
+}
+
+export interface InteractiveProviderOnboardingOptions {
+	readonly configuration: StartupConfiguration;
+	readonly agentDir: string;
+	readonly tui: TUI;
 }
 
 export function shouldStartProviderOnboarding(
@@ -28,7 +50,6 @@ interface OnboardingChoice extends SelectItem {
 }
 
 class OnboardingScreen {
-	private readonly title = new Text("di-code provider setup", 1, 1);
 	private readonly prompt = new Text("", 1, 0);
 	private readonly error = new Text("", 1, 0);
 	private active: SelectList | Input | null = null;
@@ -50,16 +71,10 @@ class OnboardingScreen {
 	}
 
 	render(width: number): string[] {
-		return [
-			...this.title.render(width),
-			...this.prompt.render(width),
-			...this.error.render(width),
-			...(this.active?.render(width) ?? []),
-		];
+		return [...this.prompt.render(width), ...this.error.render(width), ...(this.active?.render(width) ?? [])];
 	}
 
 	invalidate(): void {
-		this.title.invalidate();
 		this.prompt.invalidate();
 		this.error.invalidate();
 		this.active?.invalidate();
@@ -102,6 +117,13 @@ function apiKeyEnvironmentVariable(providerId: OnboardingChoice["providerId"]): 
 	return undefined;
 }
 
+function providerApi(providerId: OnboardingChoice["providerId"]): Exclude<ModelApi, "faux"> | undefined {
+	if (providerId === "openai") return "openai-responses";
+	if (providerId === "deepseek" || providerId === "zhipu") return "openai-chat-completions";
+	if (providerId === "anthropic") return "anthropic-messages";
+	return undefined;
+}
+
 function modelChoices(models: readonly Model[]): SelectItem[] {
 	return models.map((model) => ({
 		value: model.id,
@@ -118,30 +140,37 @@ function onboardingSelectList(items: readonly SelectItem[]): SelectList {
 	});
 }
 
-export function runProviderOnboarding(options: ProviderOnboardingOptions): Promise<StartupRuntime | undefined> {
+function startProviderOnboarding(
+	options: Pick<ProviderOnboardingOptions, "configuration" | "agentDir">,
+	tui: TUI,
+	screen: OnboardingScreen,
+	complete: (runtime: StartupRuntime | undefined) => void,
+	failure: () => void,
+	forceApiKey: boolean,
+): Promise<StartupRuntime | undefined> {
 	return new Promise((resolve, reject) => {
-		const tui = new TUI(options.terminal);
-		const screen = new OnboardingScreen();
 		let settled = false;
+		let saving = false;
 		let selectedProvider: OnboardingChoice["providerId"] | undefined;
 
 		const finish = (runtime: StartupRuntime | undefined): void => {
 			if (settled) return;
 			settled = true;
 			if (runtime === undefined) screen.setCancelled();
-			tui.stop({ finalLines: runtime ? ["Provider configured for this run."] : ["Provider setup cancelled."] });
+			complete(runtime);
 			resolve(runtime);
 		};
 
 		const fail = (cause: unknown): void => {
 			if (settled) return;
 			settled = true;
-			tui.stop({ finalLines: ["Provider setup failed."] });
+			failure();
 			reject(cause);
 		};
 
-		const finishSelection = (modelId: string, apiKey?: string): void => {
-			if (!selectedProvider) return;
+		const finishSelection = async (modelId: string, apiKey?: string): Promise<void> => {
+			if (!selectedProvider || saving || settled) return;
+			saving = true;
 			const keyVariable = apiKeyEnvironmentVariable(selectedProvider);
 			const environment = {
 				...options.configuration.environment,
@@ -150,6 +179,8 @@ export function runProviderOnboarding(options: ProviderOnboardingOptions): Promi
 				...(keyVariable && apiKey ? { [keyVariable]: apiKey } : {}),
 			};
 			try {
+				const api = providerApi(selectedProvider);
+				if (apiKey && api) await saveGlobalProviderApiKey(options.agentDir, selectedProvider, api, apiKey, modelId);
 				finish(resolveStartupRuntime(environment, options.configuration.providers));
 			} catch (cause) {
 				fail(cause);
@@ -165,7 +196,7 @@ export function runProviderOnboarding(options: ProviderOnboardingOptions): Promi
 					tui.requestRender(true);
 					return;
 				}
-				finishSelection(modelId, key);
+				void finishSelection(modelId, key);
 			};
 			input.onEscape = () => finish(undefined);
 			screen.setStep(`Enter ${keyVariable} (input is hidden):`, input);
@@ -180,8 +211,8 @@ export function runProviderOnboarding(options: ProviderOnboardingOptions): Promi
 			modelList.onSelect = (item) => {
 				const keyVariable = apiKeyEnvironmentVariable(choice.providerId);
 				const existingKey = keyVariable ? options.configuration.environment[keyVariable]?.trim() : undefined;
-				if (keyVariable && !existingKey) showKey(item.value, keyVariable);
-				else finishSelection(item.value);
+				if (keyVariable && (forceApiKey || !existingKey)) showKey(item.value, keyVariable);
+				else void finishSelection(item.value);
 			};
 			modelList.onCancel = () => finish(undefined);
 			screen.setStep(`Select a ${choice.label} model:`, modelList);
@@ -196,9 +227,45 @@ export function runProviderOnboarding(options: ProviderOnboardingOptions): Promi
 		};
 		providerList.onCancel = () => finish(undefined);
 		screen.setStep("Select a provider:", providerList);
-		tui.addChild(screen);
-		tui.start();
 		tui.setFocus(providerList);
 		tui.requestRender(true);
 	});
+}
+
+export function runProviderOnboarding(options: ProviderOnboardingOptions): Promise<StartupRuntime | undefined> {
+	const tui = new TUI(options.terminal);
+	const screen = new OnboardingScreen();
+	tui.addChild(new Box(screen, { border: "rounded", padding: 1, title: "di-code provider setup" }));
+	tui.start();
+	return startProviderOnboarding(
+		options,
+		tui,
+		screen,
+		(runtime) => {
+			tui.stop({ finalLines: runtime ? ["Provider configured for this run."] : ["Provider setup cancelled."] });
+		},
+		() => tui.stop({ finalLines: ["Provider setup failed."] }),
+		false,
+	);
+}
+
+export function showInteractiveProviderOnboarding(
+	options: InteractiveProviderOnboardingOptions,
+): Promise<StartupRuntime | undefined> {
+	const screen = new OnboardingScreen();
+	const panel = new Box(screen, { border: "rounded", padding: 1, title: "di-code login" });
+	const overlay = options.tui.showOverlay(panel, {
+		width: "70%",
+		maxHeight: "60%",
+		anchor: "center",
+		margin: 1,
+	});
+	return startProviderOnboarding(
+		options,
+		options.tui,
+		screen,
+		() => overlay.hide(),
+		() => overlay.hide(),
+		true,
+	);
 }

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ProcessTerminal } from "@di-code/tui";
 import packageMetadata from "../package.json" with { type: "json" };
 import { runMain } from "./main.ts";
@@ -13,10 +15,15 @@ try {
 		createRuntime: (command) => {
 			const isInteractiveTerminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 			if (shouldStartProviderOnboarding(command, isInteractiveTerminal, configuration)) {
-				return runProviderOnboarding({ configuration, terminal: new ProcessTerminal() });
+				return runProviderOnboarding({
+					configuration,
+					terminal: new ProcessTerminal(),
+					agentDir: join(homedir(), ".di-code"),
+				});
 			}
-			return resolveStartupRuntime(configuration.environment, configuration.providers);
+			return resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
 		},
+		startupConfiguration: configuration,
 		stdout: (text) => process.stdout.write(text),
 		stderr: (text) => process.stderr.write(text),
 	});

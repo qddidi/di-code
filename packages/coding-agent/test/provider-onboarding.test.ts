@@ -1,11 +1,14 @@
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Terminal } from "@di-code/tui";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	runProviderOnboarding,
 	type StartupRunCommand,
 	shouldStartProviderOnboarding,
 } from "../src/provider-onboarding.ts";
-import type { StartupConfiguration } from "../src/startup.ts";
+import { loadStartupConfiguration, resolveStartupRuntime, type StartupConfiguration } from "../src/startup.ts";
 
 class TestTerminal implements Terminal {
 	readonly columns = 80;
@@ -78,11 +81,24 @@ describe("shouldStartProviderOnboarding", () => {
 });
 
 describe("runProviderOnboarding", () => {
+	let root: string;
+	let agentDir: string;
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), "di-code-provider-onboarding-"));
+		agentDir = join(root, "agent");
+	});
+
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
 	it("selects DeepSeek and keeps the entered API key out of terminal output", async () => {
 		const terminal = new TestTerminal();
 		const result = runProviderOnboarding({
 			configuration: configuration(),
 			terminal,
+			agentDir,
 		});
 
 		terminal.send("\x1b[B");
@@ -94,8 +110,24 @@ describe("runProviderOnboarding", () => {
 		const runtime = await result;
 		expect(runtime?.provider.id).toBe("deepseek");
 		expect(runtime?.model.id).toBe("deepseek-v4-flash");
+		expect(terminal.output).toContain("╭");
+		expect(terminal.output).toContain("╰");
 		expect(terminal.output).not.toContain("test-deepseek-secret");
 		expect(terminal.started).toBe(false);
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toEqual({
+			defaultProvider: "deepseek",
+			defaultModel: "deepseek-v4-flash",
+			providers: {
+				deepseek: {
+					api: "openai-chat-completions",
+					apiKey: "test-deepseek-secret",
+				},
+			},
+		});
+		const persisted = await loadStartupConfiguration(root, {}, agentDir);
+		expect(resolveStartupRuntime(persisted.environment, persisted.providers, persisted.defaults).provider.id).toBe(
+			"deepseek",
+		);
 	});
 
 	it("uses an existing OpenAI key without opening the credential step", async () => {
@@ -103,6 +135,7 @@ describe("runProviderOnboarding", () => {
 		const result = runProviderOnboarding({
 			configuration: configuration({ OPENAI_API_KEY: "existing-test-key" }),
 			terminal,
+			agentDir,
 		});
 
 		terminal.send("\r");
@@ -112,6 +145,7 @@ describe("runProviderOnboarding", () => {
 		expect(runtime?.provider.id).toBe("openai");
 		expect(runtime?.model.id).toBe("gpt-4o");
 		expect(terminal.output).not.toContain("existing-test-key");
+		await expect(access(join(agentDir, "settings.json"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("selects Faux without asking for an API key", async () => {
@@ -119,6 +153,7 @@ describe("runProviderOnboarding", () => {
 		const result = runProviderOnboarding({
 			configuration: configuration(),
 			terminal,
+			agentDir,
 		});
 
 		terminal.send("\x1b[B");
@@ -133,7 +168,7 @@ describe("runProviderOnboarding", () => {
 
 	it("selects Zhipu and keeps the entered API key out of terminal output", async () => {
 		const terminal = new TestTerminal();
-		const result = runProviderOnboarding({ configuration: configuration(), terminal });
+		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });
 
 		terminal.send("\x1b[B");
 		terminal.send("\x1b[B");
@@ -151,7 +186,7 @@ describe("runProviderOnboarding", () => {
 
 	it("selects Anthropic and keeps the entered API key out of terminal output", async () => {
 		const terminal = new TestTerminal();
-		const result = runProviderOnboarding({ configuration: configuration(), terminal });
+		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });
 
 		terminal.send("\x1b[B");
 		terminal.send("\x1b[B");
@@ -173,6 +208,7 @@ describe("runProviderOnboarding", () => {
 		const result = runProviderOnboarding({
 			configuration: configuration(),
 			terminal,
+			agentDir,
 		});
 
 		terminal.send("\r");
@@ -187,7 +223,7 @@ describe("runProviderOnboarding", () => {
 
 	it("treats Ctrl-D as cancellation while choosing a provider", async () => {
 		const terminal = new TestTerminal();
-		const result = runProviderOnboarding({ configuration: configuration(), terminal });
+		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });
 
 		terminal.send("\x04");
 

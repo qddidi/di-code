@@ -3,6 +3,7 @@ import { extname, resolve } from "node:path";
 import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
+	type Component,
 	Editor,
 	Key,
 	matchesKey,
@@ -22,6 +23,11 @@ import {
 import { extractImageAttachments } from "../core/image-input.ts";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
 import type { ExtensionHost } from "../extensions/runtime.ts";
+import {
+	type InteractiveProviderOnboardingOptions,
+	showInteractiveProviderOnboarding,
+} from "../provider-onboarding.ts";
+import { loadStartupConfiguration, removeGlobalProviderApiKey, resolveStartupRuntime } from "../startup.ts";
 import {
 	AutocompleteMenu,
 	InteractiveChat,
@@ -47,6 +53,8 @@ const BUILTIN_SLASH_COMMANDS: readonly SlashCommand[] = [
 	{ name: "session", description: "Open the session selector" },
 	{ name: "theme", description: "Open the theme selector" },
 	{ name: "settings", description: "Open the settings selector" },
+	{ name: "login", description: "Choose a Provider and save its global API key" },
+	{ name: "logout", description: "Remove the current Provider global API key" },
 	{ name: "compact", description: "Compact the persisted context now" },
 	{ name: "usage", description: "Show token and cost usage" },
 	{ name: "retry", description: "Retry the last failed prompt" },
@@ -87,6 +95,7 @@ export interface InteractiveModeOptions {
 	readonly onExit?: () => void;
 	readonly sessions?: readonly InteractiveSessionChoice[];
 	readonly extensionHost?: ExtensionHost;
+	readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	readonly readClipboardImagePath?: (directory?: string) => Promise<string | null>;
 }
 
@@ -105,6 +114,7 @@ export class InteractiveMode {
 	private readonly tui: TUI;
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
 	private readonly extensionHost?: ExtensionHost;
+	private readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	private readonly readClipboardImagePath: (directory?: string) => Promise<string | null>;
 	private clipboardDirectory: string;
 	private readonly clipboardFiles = new Set<string>();
@@ -132,6 +142,7 @@ export class InteractiveMode {
 		this.onExit = options.onExit;
 		this.sessionChoices = [...(options.sessions ?? [])];
 		this.extensionHost = options.extensionHost;
+		this.providerOnboarding = options.providerOnboarding;
 		this.readClipboardImagePath = options.readClipboardImagePath ?? readClipboardImagePath;
 		this.clipboardDirectory = clipboardImageDirectory(this.session.allowedRoot);
 		const autocomplete: AutocompleteProvider = {
@@ -383,7 +394,7 @@ export class InteractiveMode {
 		this.showOverlay(list);
 	}
 
-	private showOverlay(component: SelectList | SettingsList): void {
+	private showOverlay(component: Component): void {
 		this.editor.cancelAutocomplete();
 		this.closeAutocompleteOverlay();
 		this.closeOverlay();
@@ -642,6 +653,12 @@ export class InteractiveMode {
 			case "settings":
 				this.openSettingsSelector();
 				return;
+			case "login":
+				this.openProviderLogin();
+				return;
+			case "logout":
+				void this.logoutProvider();
+				return;
 			case "compact":
 				void this.runManualCompaction();
 				return;
@@ -662,6 +679,82 @@ export class InteractiveMode {
 				}
 				this.projection.setError(`Unknown command: /${command}`);
 			}
+		}
+		this.refresh();
+	}
+
+	private openProviderLogin(): void {
+		if (!this.providerOnboarding) {
+			this.projection.setError("Provider login is unavailable in this session.");
+			this.refresh();
+			return;
+		}
+		if (this.promptInFlight || this.sessionSwitching) {
+			this.projection.setError("Cannot change Provider while a prompt is running.");
+			this.refresh();
+			return;
+		}
+		this.editor.cancelAutocomplete();
+		this.closeAutocompleteOverlay();
+		void showInteractiveProviderOnboarding({ ...this.providerOnboarding, tui: this.tui })
+			.then((runtime) => {
+				if (!this.started) return;
+				this.tui.setFocus(this.editor);
+				if (!runtime) {
+					this.refresh();
+					return;
+				}
+				this.session.setRuntime(runtime.provider, runtime.model);
+				this.projection.setStatus(`provider=${runtime.provider.id} model=${runtime.model.id}`);
+				this.refresh();
+			})
+			.catch((cause) => {
+				if (this.started) this.tui.setFocus(this.editor);
+				this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+				this.refresh();
+			});
+	}
+
+	private async logoutProvider(): Promise<void> {
+		if (!this.providerOnboarding) {
+			this.projection.setError("Provider logout is unavailable in this session.");
+			this.refresh();
+			return;
+		}
+		if (this.promptInFlight || this.sessionSwitching) {
+			this.projection.setError("Cannot change Provider while a prompt is running.");
+			this.refresh();
+			return;
+		}
+		const providerId = this.session.providerId;
+		const modelId = this.session.modelId;
+		try {
+			const removed = await removeGlobalProviderApiKey(this.providerOnboarding.agentDir, providerId);
+			if (!removed) {
+				this.projection.setStatus(`no global API key stored for provider=${providerId}`);
+				this.refresh();
+				return;
+			}
+			const configuration = await loadStartupConfiguration(
+				this.session.allowedRoot,
+				this.providerOnboarding.configuration.environment,
+				this.providerOnboarding.agentDir,
+			);
+			const runtime = resolveStartupRuntime(
+				{
+					...configuration.environment,
+					DI_CODE_PROVIDER: providerId,
+					DI_CODE_MODEL: modelId,
+				},
+				configuration.providers,
+				configuration.defaults,
+			);
+			this.session.setRuntime(runtime.provider, runtime.model);
+			this.projection.setStatus(
+				`global API key removed for provider=${providerId}; environment variables may still apply`,
+			);
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
 		}
 		this.refresh();
 	}

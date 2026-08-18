@@ -87,7 +87,7 @@ export class AgentSession {
 	private readonly agent: Agent;
 	private readonly allowedRootValue: string;
 	private readonly sessionManager?: SessionManager;
-	private readonly provider: Provider;
+	private provider: Provider;
 	private readonly skills: readonly SkillResource[];
 	private readonly extensionHost?: ExtensionHost;
 	private model: Model;
@@ -210,6 +210,10 @@ export class AgentSession {
 		return this.model.id;
 	}
 
+	get providerId(): string {
+		return this.provider.id;
+	}
+
 	get thinkingLevel(): ThinkingLevel | undefined {
 		return this.thinkingLevelValue;
 	}
@@ -236,6 +240,25 @@ export class AgentSession {
 				? this.thinkingLevelValue
 				: defaultThinkingLevel(this.model);
 		this.agent.setModel(this.model);
+		this.agent.setThinkingLevel(this.thinkingLevelValue);
+		this.contextBudget = resolveContextBudget(this.model);
+		this.keepRecentTokens = Math.min(
+			this.keepRecentTokens,
+			Math.max(1, Math.min(20_000, Math.floor(this.contextBudget.triggerTokens / 2))),
+		);
+		return structuredClone(this.model);
+	}
+
+	setRuntime(provider: Provider, model: Model): Model {
+		if (this.promptActive) throw new Error("Cannot change runtime while AgentSession is processing a prompt.");
+		const configuredModel = provider.models.find((candidate) => candidate.id === model.id);
+		if (!configuredModel || configuredModel.provider !== provider.id || model.provider !== provider.id) {
+			throw new Error(`Model "${model.id}" does not belong to provider "${provider.id}".`);
+		}
+		this.provider = provider;
+		this.model = structuredClone(configuredModel);
+		this.thinkingLevelValue = defaultThinkingLevel(this.model);
+		this.agent.setRuntime(provider, this.model);
 		this.agent.setThinkingLevel(this.thinkingLevelValue);
 		this.contextBudget = resolveContextBudget(this.model);
 		this.keepRecentTokens = Math.min(

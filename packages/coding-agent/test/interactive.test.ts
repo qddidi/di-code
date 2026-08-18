@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider, type Message, type Provider } from "@di-code/ai";
@@ -11,6 +11,7 @@ import { AgentSession } from "../src/core/session.ts";
 import { ExtensionHost } from "../src/extensions/runtime.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
+import { resolveStartupRuntime } from "../src/startup.ts";
 
 const PASTE_IMAGE_INPUT = process.platform === "win32" ? "\x1bv" : "\x16";
 
@@ -1283,6 +1284,114 @@ describe("InteractiveMode", () => {
 		assert.deepEqual(streamedModels, ["alternate-model"]);
 		assert.equal(terminal.output.includes("MODEL  alternate-model"), true);
 		mode.stop();
+	});
+
+	it("uses /login to save a global key and switch the current session runtime without rendering the key", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-login-"));
+		try {
+			const faux = createFauxProvider({ responses: [] });
+			const session = new AgentSession({ allowedRoot: root, provider: faux.provider, model: faux.model });
+			const terminal = new TestTerminal();
+			const tui = new TUI(terminal);
+			const mode = new InteractiveMode({
+				session,
+				tui,
+				providerOnboarding: { configuration: { environment: {}, providers: [] }, agentDir: join(root, "agent") },
+			});
+			mode.start();
+
+			terminal.sendInput("/login");
+			terminal.sendInput("\r");
+			await waitFor(() => tui.hasOverlay());
+			terminal.sendInput("\x1b[B");
+			terminal.sendInput("\r");
+			terminal.sendInput("\r");
+			terminal.sendInput("interactive-login-secret");
+			terminal.sendInput("\r");
+			await waitFor(() => session.providerId === "deepseek");
+
+			assert.equal(session.modelId, "deepseek-v4-flash");
+			assert.equal(tui.render(terminal.columns).join("\n").includes(CURSOR_MARKER), true);
+			assert.equal(terminal.output.includes("interactive-login-secret"), false);
+			assert.deepEqual(JSON.parse(readFileSync(join(root, "agent", "settings.json"), "utf8")), {
+				defaultProvider: "deepseek",
+				defaultModel: "deepseek-v4-flash",
+				providers: { deepseek: { api: "openai-chat-completions", apiKey: "interactive-login-secret" } },
+			});
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses /logout to remove only the current global key and rebuild the session runtime", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-logout-"));
+		try {
+			const agentDir = join(root, "agent");
+			mkdirSync(agentDir);
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({
+					providers: {
+						deepseek: {
+							api: "openai-chat-completions",
+							apiKey: "stored-logout-secret",
+							baseUrl: "https://api.deepseek.example.test/v1",
+							models: [{ id: "deepseek-v4-flash" }],
+						},
+						other: { api: "openai-responses", apiKey: "other-secret", models: [{ id: "other-model" }] },
+					},
+				}),
+			);
+			const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "environment-secret" }, [
+				{
+					id: "deepseek",
+					api: "openai-chat-completions",
+					apiKey: "stored-logout-secret",
+					models: [
+						{
+							id: "deepseek-v4-flash",
+							name: "DeepSeek-V4 Flash",
+							provider: "deepseek",
+							api: "openai-chat-completions",
+							input: ["text"],
+							reasoning: false,
+							contextWindow: 128000,
+							maxOutputTokens: 16384,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						},
+					],
+				},
+			]);
+			const session = new AgentSession({ allowedRoot: root, provider: runtime.provider, model: runtime.model });
+			const terminal = new TestTerminal();
+			const mode = new InteractiveMode({
+				session,
+				tui: new TUI(terminal),
+				providerOnboarding: {
+					configuration: { environment: { DEEPSEEK_API_KEY: "environment-secret" }, providers: [] },
+					agentDir,
+				},
+			});
+			mode.start();
+
+			terminal.sendInput("/logout");
+			terminal.sendInput("\r");
+			await waitFor(() => terminal.output.includes("global API key removed"));
+
+			const settings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+			assert.deepEqual(settings.providers.deepseek, {
+				api: "openai-chat-completions",
+				baseUrl: "https://api.deepseek.example.test/v1",
+				models: [{ id: "deepseek-v4-flash" }],
+			});
+			assert.equal(settings.providers.other.apiKey, "other-secret");
+			assert.equal(terminal.output.includes("stored-logout-secret"), false);
+			assert.equal(terminal.output.includes("environment-secret"), false);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("cycles thinking level with Shift+Tab and shows it beside the model", async () => {

@@ -8,7 +8,7 @@ import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 try {
 	const allowedRoot = resolve(process.cwd());
 	const configuration = await loadStartupConfiguration(allowedRoot);
-	const runtime = resolveStartupRuntime(configuration.environment, configuration.providers);
+	const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
 	const session = new AgentSession({
 		allowedRoot,
 		provider: runtime.provider,

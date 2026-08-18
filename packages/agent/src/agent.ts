@@ -60,7 +60,7 @@ export class Agent {
 	private readonly steeringMessages: UserMessage[] = [];
 	private streaming = false;
 	private readonly listeners = new Set<AgentListener>();
-	private readonly provider: Provider;
+	private provider: Provider;
 	private model: Model;
 	private thinkingLevel?: ThinkingLevel;
 	private readonly sessionId?: string;
@@ -99,6 +99,12 @@ export class Agent {
 
 	setModel(model: Model): void {
 		if (this.streaming) throw new Error("Cannot change Agent model while processing a prompt.");
+		this.model = structuredClone(model);
+	}
+
+	setRuntime(provider: Provider, model: Model): void {
+		if (this.streaming) throw new Error("Cannot change Agent runtime while processing a prompt.");
+		this.provider = provider;
 		this.model = structuredClone(model);
 	}
 
