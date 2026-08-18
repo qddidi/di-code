@@ -1,13 +1,21 @@
 import { readFile as fsReadFile, writeFile as fsWriteFile } from "node:fs/promises";
-import type { AgentTool } from "@di-code/agent";
+import type { AgentTool, ToolExecutionResult } from "@di-code/agent";
 import { type Static, type ToolResultContent, Type } from "@di-code/ai";
+import { applyEditsToContent, type Edit, generateDiffString, generateUnifiedPatch } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveAllowedFilePath } from "./path-boundary.ts";
 
+const editItemParameters = Type.Object({
+	oldText: Type.String(),
+	newText: Type.String(),
+});
+
 export const editParameters = Type.Object({
 	path: Type.String({ minLength: 1 }),
-	oldText: Type.String({ minLength: 1 }),
-	newText: Type.String(),
+	edits: Type.Optional(Type.Array(editItemParameters, { minItems: 1 })),
+	// Compatibility with the original di-code single-edit contract.
+	oldText: Type.Optional(Type.String()),
+	newText: Type.Optional(Type.String()),
 });
 
 export type EditParameters = Static<typeof editParameters>;
@@ -21,7 +29,13 @@ export interface EditToolOptions {
 	readonly operations?: EditOperations;
 }
 
-export type EditTool = AgentTool<typeof editParameters>;
+export interface EditToolDetails {
+	readonly diff: string;
+	readonly patch: string;
+	readonly firstChangedLine?: number;
+}
+
+export type EditTool = AgentTool<typeof editParameters, ToolExecutionResult<EditToolDetails>>;
 
 const defaultEditOperations: EditOperations = {
 	async readFile(filePath) {
@@ -48,22 +62,6 @@ function detectLineEnding(text: string): "\n" | "\r\n" {
 	return text.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function countMatches(text: string, search: string): number {
-	let count = 0;
-	let offset = 0;
-	while (true) {
-		const index = text.indexOf(search, offset);
-		if (index === -1) return count;
-		count += 1;
-		offset = index + 1;
-	}
-}
-
-function replaceOnce(text: string, oldText: string, newText: string): string {
-	const index = text.indexOf(oldText);
-	return `${text.slice(0, index)}${newText}${text.slice(index + oldText.length)}`;
-}
-
 function hasUtf8Bom(bytes: Buffer): boolean {
 	return bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
 }
@@ -82,17 +80,42 @@ function decodeUtf8(bytes: Buffer, path: string): string {
 	return text;
 }
 
+function normalizeEdits(parameters: EditParameters, path: string): Edit[] {
+	if (parameters.edits) {
+		return parameters.edits.map((edit) => ({ oldText: edit.oldText, newText: edit.newText }));
+	}
+	if (typeof parameters.oldText === "string" && typeof parameters.newText === "string") {
+		return [{ oldText: parameters.oldText, newText: parameters.newText }];
+	}
+	throw new Error(`edit requires edits[] or oldText/newText in ${path}`);
+}
+
+function legacyError(cause: unknown, path: string, legacy: boolean): never {
+	if (!legacy || !(cause instanceof Error)) throw cause;
+	if (cause.message.includes("oldText must not be empty")) throw cause;
+	if (cause.message.includes("Could not find edits[0]")) {
+		throw new Error(`Text to replace was not found in ${path}`);
+	}
+	if (cause.message.includes("Found ") && cause.message.includes("occurrences of edits[0]")) {
+		throw new Error(`Text to replace is ambiguous in ${path}`);
+	}
+	throw cause;
+}
+
 export function createEditTool(allowedRoot: string, options: EditToolOptions = {}): EditTool {
 	const operations = options.operations ?? defaultEditOperations;
 
 	return {
 		name: "edit",
-		description: "Replace one unique exact text block in a UTF-8 text file inside the allowed root.",
+		description:
+			"Edit one UTF-8 text file using one or more unique exact replacements in edits[]. Legacy oldText/newText is also accepted.",
 		parameters: editParameters,
-		async execute(_toolCallId, parameters, signal): Promise<ToolResultContent[]> {
+		async execute(_toolCallId, parameters, signal): Promise<ToolExecutionResult<EditToolDetails>> {
 			throwIfAborted(signal);
 			if (parameters.path.length === 0) throw new Error("path must not be empty");
-			if (parameters.oldText.length === 0) throw new Error("oldText must not be empty");
+			if (parameters.edits === undefined && parameters.oldText === "") throw new Error("oldText must not be empty");
+			const edits = normalizeEdits(parameters, parameters.path);
+			const legacy = parameters.edits === undefined;
 			const absolutePath = await resolveAllowedFilePath(parameters.path, allowedRoot);
 
 			return withFileMutationQueue(absolutePath, async () => {
@@ -103,23 +126,41 @@ export function createEditTool(allowedRoot: string, options: EditToolOptions = {
 				const hasBom = hasUtf8Bom(originalBytes);
 				const originalText = decodeUtf8(originalBytes, parameters.path).replace(/^\uFEFF/, "");
 				const ending = detectLineEnding(originalText);
-				const content = normalizeLineEndings(originalText);
-				const oldText = normalizeLineEndings(parameters.oldText);
-				const newText = normalizeLineEndings(parameters.newText);
-				const matches = countMatches(content, oldText);
-				if (matches === 0) throw new Error(`Text to replace was not found in ${parameters.path}`);
-				if (matches > 1) throw new Error(`Text to replace is ambiguous in ${parameters.path}`);
-
-				const updatedText = restoreLineEndings(replaceOnce(content, oldText, newText), ending);
+				const baseContent = normalizeLineEndings(originalText);
+				const normalizedEdits = edits.map((edit) => ({
+					oldText: normalizeLineEndings(edit.oldText),
+					newText: normalizeLineEndings(edit.newText),
+				}));
+				let newContent: string;
+				try {
+					newContent = applyEditsToContent(baseContent, normalizedEdits, parameters.path).newContent;
+				} catch (cause) {
+					legacyError(cause, parameters.path, legacy);
+				}
 				throwIfAborted(signal);
 				const currentBytes = await operations.readFile(absolutePath);
 				throwIfAborted(signal);
 				if (!currentBytes.equals(originalBytes)) {
 					throw new Error(`File changed during edit: ${parameters.path}`);
 				}
-				await operations.writeFile(absolutePath, `${hasBom ? "\uFEFF" : ""}${updatedText}`);
+				await operations.writeFile(absolutePath, `${hasBom ? "\uFEFF" : ""}${restoreLineEndings(newContent, ending)}`);
 				throwIfAborted(signal);
-				return [{ type: "text", text: `Successfully replaced text in ${parameters.path}` }];
+				const display = generateDiffString(baseContent, newContent);
+				return {
+					content: [
+						{
+							type: "text",
+							text: legacy
+								? `Successfully replaced text in ${parameters.path}`
+								: `Successfully replaced ${normalizedEdits.length} block(s) in ${parameters.path}.`,
+						},
+					] satisfies ToolResultContent[],
+					details: {
+						diff: display.diff,
+						patch: generateUnifiedPatch(parameters.path, baseContent, newContent),
+						...(display.firstChangedLine === undefined ? {} : { firstChangedLine: display.firstChangedLine }),
+					},
+				};
 			});
 		},
 	};

@@ -19,7 +19,7 @@ export interface ReadToolOptions {
 	readonly maxBytes?: number;
 }
 
-export type ReadTool = AgentTool<typeof readParameters>;
+export type ReadTool = AgentTool<typeof readParameters, ToolResultContent[]>;
 
 interface TextWindow {
 	readonly content: string;

@@ -145,6 +145,7 @@ function isMessage(value: unknown): value is Message {
 				isNonEmptyString(value.toolName) &&
 				Array.isArray(value.content) &&
 				value.content.every(isToolResultContent) &&
+				(value.details === undefined || isJsonValue(value.details)) &&
 				typeof value.isError === "boolean"
 			);
 		default:

@@ -1,12 +1,21 @@
-import type { AssistantMessage, Message, Model, Provider, ThinkingLevel, UserContent, UserMessage } from "@di-code/ai";
+import type {
+	AssistantMessage,
+	Message,
+	Model,
+	Provider,
+	ThinkingLevel,
+	TSchema,
+	UserContent,
+	UserMessage,
+} from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
-import type { AgentContext, AgentEvent, AgentTool } from "./types.ts";
+import type { AgentContext, AgentEvent, AgentTool, AgentToolResult } from "./types.ts";
 
 export interface AgentOptions {
 	readonly provider: Provider;
 	readonly model: Model;
 	readonly sessionId?: string;
-	readonly tools?: readonly AgentTool[];
+	readonly tools?: readonly AgentTool<TSchema, AgentToolResult>[];
 	readonly systemPrompt?: string;
 	readonly now?: () => number;
 	readonly initialMessages?: readonly Message[];
@@ -57,7 +66,7 @@ export class Agent {
 	private readonly sessionId?: string;
 	private readonly systemPrompt?: string;
 	private readonly now: () => number;
-	private readonly tools: readonly AgentTool[];
+	private readonly tools: readonly AgentTool<TSchema, AgentToolResult>[];
 	constructor(options: AgentOptions) {
 		this.provider = options.provider;
 		this.model = options.model;

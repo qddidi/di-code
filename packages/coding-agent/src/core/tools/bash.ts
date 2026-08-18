@@ -37,7 +37,7 @@ export interface BashToolOptions {
 	readonly maxOutputBytes?: number;
 }
 
-export type BashTool = AgentTool<typeof bashParameters>;
+export type BashTool = AgentTool<typeof bashParameters, ToolResultContent[]>;
 
 export interface ShellRuntime {
 	readonly executable: string;

@@ -127,6 +127,7 @@ export class InteractiveMode {
 
 	constructor(options: InteractiveModeOptions) {
 		this.session = options.session;
+		this.projection.configureFilePreview(this.session.allowedRoot, () => this.refresh());
 		this.tui = options.tui;
 		this.onExit = options.onExit;
 		this.sessionChoices = [...(options.sessions ?? [])];
@@ -477,6 +478,7 @@ export class InteractiveMode {
 			if (!this.started) return;
 			this.unsubscribeSession?.();
 			this.session = next;
+			this.projection.configureFilePreview(next.allowedRoot, () => this.refresh());
 			this.clipboardDirectory = clipboardImageDirectory(next.allowedRoot);
 			void cleanupStaleClipboardImages(next.allowedRoot);
 			this.queuedPrompts = [];

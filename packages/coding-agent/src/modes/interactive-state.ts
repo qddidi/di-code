@@ -1,5 +1,6 @@
 import type { Message } from "@di-code/ai";
 import type { AgentSessionEvent, SessionUsage } from "../core/session.ts";
+import { computeEditsDiff, type Edit } from "../core/tools/edit-diff.ts";
 
 export type InteractiveMessage =
 	| { readonly role: "user" | "assistant"; readonly text: string }
@@ -10,6 +11,8 @@ export type InteractiveMessage =
 			readonly kind: "edit" | "write";
 			readonly removed: readonly string[];
 			readonly added: readonly string[];
+			readonly diff?: string;
+			readonly firstChangedLine?: number;
 	  };
 
 type FileChangeCandidate = Extract<InteractiveMessage, { role: "file_change" }>;
@@ -61,6 +64,8 @@ export class InteractiveProjection {
 	private status: string | undefined;
 	private compacting = false;
 	private retrying = false;
+	private previewRoot: string | undefined;
+	private previewChange: (() => void) | undefined;
 	private usage: SessionUsage = {
 		requestCount: 0,
 		inputTokens: 0,
@@ -76,9 +81,10 @@ export class InteractiveProjection {
 	};
 
 	get state(): InteractiveState {
+		const visibleMessageItems = [...this.messageItems, ...this.pendingFileChanges.values()];
 		return {
 			messages: [...this.messages],
-			messageItems: this.messageItems.map((message) =>
+			messageItems: visibleMessageItems.map((message) =>
 				message.role === "file_change"
 					? { ...message, removed: [...message.removed], added: [...message.added] }
 					: { ...message },
@@ -129,6 +135,11 @@ export class InteractiveProjection {
 
 	setUsage(usage: SessionUsage): void {
 		this.usage = structuredClone(usage);
+	}
+
+	configureFilePreview(root: string, onChange: () => void): void {
+		this.previewRoot = root;
+		this.previewChange = onChange;
 	}
 
 	advanceSpinner(): boolean {
@@ -202,7 +213,7 @@ export class InteractiveProjection {
 			case "tool_execution_end":
 				this.updateToolStatus(event.toolCallId, event.result.isError ? "error" : "done");
 				this.toolStatus.set(event.toolCallId, `${event.toolName}: ${event.result.isError ? "error" : "done"}`);
-				this.commitFileChange(event.toolCallId, event.result.isError);
+				this.commitFileChange(event.toolCallId, event.result.isError, event.result.details);
 				return;
 			case "message_end":
 				this.appendCompletedMessage(event.message);
@@ -210,6 +221,7 @@ export class InteractiveProjection {
 			case "agent_end":
 				this.busy = false;
 				this.retrying = false;
+				this.pendingFileChanges.clear();
 				this.processItems.length = 0;
 				this.toolStatus.clear();
 				this.spinnerFrame = 0;
@@ -239,7 +251,7 @@ export class InteractiveProjection {
 
 	private appendCompletedMessage(message: Message): void {
 		if (message.role === "tool_result") {
-			this.commitFileChange(message.toolCallId, message.isError);
+			this.commitFileChange(message.toolCallId, message.isError, message.details);
 			return;
 		}
 		const text = textOf(message);
@@ -264,19 +276,33 @@ export class InteractiveProjection {
 	private storeFileChange(id: string, toolName: string, argumentsValue: Record<string, unknown>): void {
 		const path = argumentsValue.path;
 		if (typeof path !== "string") return;
-		if (
-			toolName === "edit" &&
-			typeof argumentsValue.oldText === "string" &&
-			typeof argumentsValue.newText === "string"
-		) {
+		if (toolName === "edit") {
+			const edits = parseEditArguments(argumentsValue);
+			if (!edits) return;
+			const fallback = edits.flatMap((edit) => ({
+				removed: edit.oldText.replaceAll("\r\n", "\n").split("\n"),
+				added: edit.newText.replaceAll("\r\n", "\n").split("\n"),
+			}));
 			this.pendingFileChanges.set(id, {
 				role: "file_change",
 				id,
 				path,
 				kind: "edit",
-				removed: argumentsValue.oldText.replaceAll("\r\n", "\n").split("\n"),
-				added: argumentsValue.newText.replaceAll("\r\n", "\n").split("\n"),
+				removed: fallback.flatMap((edit) => edit.removed),
+				added: fallback.flatMap((edit) => edit.added),
 			});
+			if (this.previewRoot) {
+				void computeEditsDiff(path, edits, this.previewRoot).then((preview) => {
+					const current = this.pendingFileChanges.get(id);
+					if (!current || "error" in preview) return;
+					this.pendingFileChanges.set(id, {
+						...current,
+						diff: preview.diff,
+						firstChangedLine: preview.firstChangedLine,
+					});
+					this.previewChange?.();
+				});
+			}
 		}
 		if (toolName === "write" && typeof argumentsValue.content === "string") {
 			this.pendingFileChanges.set(id, {
@@ -290,12 +316,41 @@ export class InteractiveProjection {
 		}
 	}
 
-	private commitFileChange(id: string, isError: boolean): void {
+	private commitFileChange(id: string, isError: boolean, details: unknown = undefined): void {
 		const change = this.pendingFileChanges.get(id);
 		this.pendingFileChanges.delete(id);
 		if (!change || isError) return;
-		this.messageItems.push(change);
+		const metadata = isEditDetails(details) ? details : undefined;
+		this.messageItems.push(
+			metadata ? { ...change, diff: metadata.diff, firstChangedLine: metadata.firstChangedLine } : change,
+		);
 	}
+}
+
+function parseEditArguments(argumentsValue: Record<string, unknown>): Edit[] | undefined {
+	if (Array.isArray(argumentsValue.edits)) {
+		const edits: Edit[] = [];
+		for (const value of argumentsValue.edits) {
+			if (!isRecord(value) || typeof value.oldText !== "string" || typeof value.newText !== "string") return undefined;
+			edits.push({ oldText: value.oldText, newText: value.newText });
+		}
+		return edits.length > 0 ? edits : undefined;
+	}
+	return typeof argumentsValue.oldText === "string" && typeof argumentsValue.newText === "string"
+		? [{ oldText: argumentsValue.oldText, newText: argumentsValue.newText }]
+		: undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isEditDetails(value: unknown): value is { diff: string; firstChangedLine?: number } {
+	return (
+		isRecord(value) &&
+		typeof value.diff === "string" &&
+		(value.firstChangedLine === undefined || typeof value.firstChangedLine === "number")
+	);
 }
 
 function formatToolCommand(toolName: string, argumentsValue: Record<string, unknown>): string {

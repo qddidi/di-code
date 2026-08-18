@@ -121,6 +121,33 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("InteractiveProjection", () => {
+	it("previews edit changes from the real file with context and line numbers", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-edit-preview-"));
+		try {
+			writeFileSync(join(root, "notes.txt"), "first\nconst old = 1;\nlast", "utf8");
+			let changed = false;
+			const projection = new InteractiveProjection();
+			projection.configureFilePreview(root, () => {
+				changed = true;
+			});
+			projection.apply({
+				type: "tool_execution_start",
+				toolCallId: "edit-preview",
+				toolName: "edit",
+				arguments: { path: "notes.txt", oldText: "const old = 1;", newText: "const next = 2;" },
+			});
+			await waitFor(() => changed);
+			const change = projection.state.messageItems[0];
+			assert.equal(change?.role, "file_change");
+			if (change?.role !== "file_change") throw new Error("Expected file change preview");
+			assert.equal(change.diff?.includes(" 1 first"), true);
+			assert.equal(change.diff?.includes("-2 const old = 1;"), true);
+			assert.equal(change.diff?.includes("+2 const next = 2;"), true);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps successful edit changes as colored diff items after the agent turn ends", () => {
 		const projection = new InteractiveProjection();
 		projection.apply({
@@ -463,6 +490,42 @@ describe("InteractiveProjection", () => {
 });
 
 describe("InteractiveChat streaming layout", () => {
+	it("renders line-numbered context and intra-line edit changes", () => {
+		const usage = new InteractiveProjection().state.usage;
+		const lines = new InteractiveChat(() => ({
+			messages: [],
+			messageItems: [
+				{
+					role: "file_change",
+					id: "edit-diff",
+					path: "src/app.ts",
+					kind: "edit",
+					removed: [],
+					added: [],
+					diff: " 1 const value = 1;\n-2 const old = 1;\n+2 const next = 2;\n 3 return value;",
+				},
+			],
+			streamingText: "",
+			toolStatus: [],
+			processItems: [],
+			busy: false,
+			queue: [],
+			status: "",
+			error: "",
+			retrying: false,
+			compacting: false,
+			spinnerFrame: 0,
+			usage,
+			model: "faux-model",
+			theme: "dark",
+		})).render(80);
+		const output = lines.join("\n");
+		assert.equal(output.includes(" 1 const value = 1;"), true);
+		assert.equal(output.includes("-2 const "), true);
+		assert.equal(output.includes("+2 const "), true);
+		assert.equal(output.includes("\x1b[7m"), true);
+	});
+
 	it("renders persisted file changes as colored diffs without overflowing", () => {
 		const baseState = new InteractiveProjection().state;
 		const lines = new InteractiveChat(() => ({

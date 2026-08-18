@@ -111,7 +111,7 @@ export interface UserMessage {
 }
 
 /** 工具执行完成后返回给模型的一条结果消息。 */
-export interface ToolResultMessage {
+export interface ToolResultMessage<TDetails = JsonValue> {
 	/** 固定为 tool_result，用于区分消息角色。 */
 	role: "tool_result";
 	/** 对应 ToolCallContent.id 的工具调用标识。 */
@@ -120,6 +120,8 @@ export interface ToolResultMessage {
 	toolName: string;
 	/** 工具返回的文本或图片内容。 */
 	content: ToolResultContent[];
+	/** 工具实现提供给日志和 UI 的结构化元数据，不发送给模型。 */
+	details?: TDetails;
 	/** 表示该结果是否来自工具执行失败。 */
 	isError: boolean;
 	/** 结果消息创建时间，使用 Unix 毫秒时间戳。 */

@@ -1,6 +1,7 @@
 import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
 import { Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
 import { highlightCode } from "../utils/syntax-highlight.ts";
+import { renderDiff } from "./interactive-diff.ts";
 import type { InteractiveState } from "./interactive-state.ts";
 
 export interface InteractiveViewState extends InteractiveState {
@@ -140,8 +141,12 @@ export class InteractiveChat implements Component {
 						width,
 					),
 				);
-				for (const line of message.removed) lines.push(...renderLine(paint(colors.error, `- ${line}`), width));
-				for (const line of message.added) lines.push(...renderLine(paint(colors.success, `+ ${line}`), width));
+				if (message.diff) {
+					for (const line of renderDiff(message.diff, colors)) lines.push(...renderLine(line, width));
+				} else {
+					for (const line of message.removed) lines.push(...renderLine(paint(colors.error, `- ${line}`), width));
+					for (const line of message.added) lines.push(...renderLine(paint(colors.success, `+ ${line}`), width));
+				}
 			} else if (message.role === "user") {
 				lines.push(
 					...new Text(message.text, 2, 1).render(width).map((line) => paintBackground(colors.userBackground, line)),

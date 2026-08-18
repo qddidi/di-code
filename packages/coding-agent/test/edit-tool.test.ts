@@ -44,8 +44,30 @@ describe("createEditTool", () => {
 			oldText: "你好\n",
 			newText: "世界\n",
 		});
-		expect(result).toEqual([{ type: "text", text: "Successfully replaced text in notes.txt" }]);
+		expect(result.content).toEqual([{ type: "text", text: "Successfully replaced text in notes.txt" }]);
+		expect(result.details).toMatchObject({ firstChangedLine: 2 });
+		if (!result.details) throw new Error("Expected edit details");
+		expect(result.details.diff).toContain("-2 你好");
+		expect(result.details.diff).toContain("+2 世界");
+		expect(result.details.patch).toContain("@@");
 		expect((await fsReadFile(target)).toString("utf8")).toBe("\uFEFFfirst\r\n世界\r\nlast");
+	});
+
+	it("applies multiple non-overlapping edits against the original file", async () => {
+		const root = await createTempDir();
+		const target = join(root, "notes.txt");
+		await writeFile(target, "alpha\nbeta\ngamma", "utf8");
+		const result = await createEditTool(root).execute("edit-multi", {
+			path: "notes.txt",
+			edits: [
+				{ oldText: "alpha", newText: "ALPHA" },
+				{ oldText: "gamma", newText: "GAMMA" },
+			],
+		});
+		expect((await fsReadFile(target)).toString()).toBe("ALPHA\nbeta\nGAMMA");
+		if (!result.details) throw new Error("Expected edit details");
+		expect(result.details.diff).toContain("-1 alpha");
+		expect(result.details.diff).toContain("+3 GAMMA");
 	});
 
 	it("rejects a missing match without writing", async () => {
@@ -278,7 +300,11 @@ describe("AgentSession edit integration", () => {
 		await session.prompt("Edit notes");
 		expect((await fsReadFile(join(root, "notes.txt"))).toString()).toBe("after");
 		expect(requestedMessages[1]?.map((message) => message.role)).toEqual(["user", "assistant", "tool_result"]);
-		expect(findToolResult(session.transcript, "edit-session-1")).toMatchObject({ toolName: "edit", isError: false });
+		expect(findToolResult(session.transcript, "edit-session-1")).toMatchObject({
+			toolName: "edit",
+			isError: false,
+			details: { diff: expect.stringContaining("-1 before"), patch: expect.stringContaining("@@") },
+		});
 	});
 
 	it("returns an edit failure and lets the model recover", async () => {

@@ -1,6 +1,7 @@
 import {
 	type AssistantMessage,
 	EventStream,
+	type JsonValue,
 	type Message,
 	type ToolCallContent,
 	type ToolResultContent,
@@ -124,17 +125,29 @@ function errorMessage(cause: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(isJsonValue);
+	if (typeof value !== "object") return false;
+	const prototype = Object.getPrototypeOf(value);
+	if (prototype !== Object.prototype && prototype !== null) return false;
+	return Object.values(value).every(isJsonValue);
+}
+
 function createToolResult(
 	toolCall: ToolCallContent,
 	content: ToolResultContent[],
 	isError: boolean,
 	config: AgentLoopConfig,
+	details?: JsonValue,
 ): ToolResultMessage {
 	return {
 		role: "tool_result",
 		toolCallId: toolCall.id,
 		toolName: toolCall.name,
 		content,
+		details,
 		isError,
 		timestamp: (config.now ?? Date.now)(),
 	};
@@ -155,6 +168,7 @@ async function executeToolCall(
 	});
 
 	let content: ToolResultContent[];
+	let details: JsonValue | undefined;
 	let isError = false;
 	const tool = context.tools?.find((candidate) => candidate.name === toolCall.name);
 
@@ -167,7 +181,15 @@ async function executeToolCall(
 	} else {
 		try {
 			const parameters = validateToolArguments(tool, toolCall.arguments);
-			content = await tool.execute(toolCall.id, parameters, signal);
+			const execution = await tool.execute(toolCall.id, parameters, signal);
+			if (Array.isArray(execution)) content = execution;
+			else {
+				content = execution.content;
+				if (execution.details !== undefined && !isJsonValue(execution.details)) {
+					throw new Error("Tool details must be JSON serializable.");
+				}
+				details = execution.details;
+			}
 			if (signal?.aborted) {
 				content = [{ type: "text", text: "Tool execution aborted." }];
 				isError = true;
@@ -180,7 +202,7 @@ async function executeToolCall(
 		}
 	}
 
-	const result = createToolResult(toolCall, content, isError, config);
+	const result = createToolResult(toolCall, content, isError, config, details);
 	emit({
 		type: "tool_execution_end",
 		toolCallId: toolCall.id,

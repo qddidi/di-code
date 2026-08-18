@@ -21,7 +21,7 @@ export interface WriteToolOptions {
 	readonly operations?: WriteOperations;
 }
 
-export type WriteTool = AgentTool<typeof writeParameters>;
+export type WriteTool = AgentTool<typeof writeParameters, ToolResultContent[]>;
 
 const defaultWriteOperations: WriteOperations = {
 	async mkdir(directory) {

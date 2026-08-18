@@ -1,5 +1,6 @@
 import type {
 	AssistantMessage,
+	JsonValue,
 	Message,
 	Model,
 	Provider,
@@ -15,14 +16,23 @@ import type {
 
 export type AgentMessage = Message;
 
-export interface AgentTool<TParameters extends TSchema = TSchema> extends ToolDefinition<TParameters> {
-	execute(toolCallId: string, parameters: Static<TParameters>, signal?: AbortSignal): Promise<ToolResultContent[]>;
+export type AgentToolResult = ToolResultContent[] | ToolExecutionResult<unknown>;
+
+export interface AgentTool<TParameters extends TSchema = TSchema, TResult extends AgentToolResult = ToolResultContent[]>
+	extends ToolDefinition<TParameters> {
+	execute(toolCallId: string, parameters: Static<TParameters>, signal?: AbortSignal): Promise<TResult>;
+}
+
+/** 工具返回给 Agent Loop 的内容和仅供日志/UI 使用的结构化元数据。 */
+export interface ToolExecutionResult<TDetails = JsonValue> {
+	readonly content: ToolResultContent[];
+	readonly details?: TDetails;
 }
 
 export interface AgentContext {
 	systemPrompt?: string;
 	messages: Message[];
-	tools?: readonly AgentTool[];
+	tools?: readonly AgentTool<TSchema, AgentToolResult>[];
 }
 
 export interface AssistantMessagePreview {
