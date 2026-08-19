@@ -1458,7 +1458,11 @@ describe("InteractiveMode", () => {
 			terminal.sendInput("\x13");
 			assert.equal(tui.hasOverlay(), true);
 			assert.equal(
-				tui.render(terminal.columns).some((line) => line.includes("╭ Settings")),
+				tui.render(terminal.columns).some((line) => line.includes("Settings")),
+				true,
+			);
+			assert.equal(
+				tui.render(terminal.columns).some((line) => line.includes("›") && line.includes("Context compaction")),
 				true,
 			);
 			terminal.sendInput("\r");
@@ -1581,13 +1585,13 @@ describe("InteractiveMode", () => {
 			const editorBottom = frame.findIndex((line, index) => index > editorTop && line.startsWith("└"));
 			const menuRows = frame
 				.map((line, index) => ({ line, index }))
-				.filter(({ line }) => line.includes("╭") || line.includes("╰") || line.includes("alpha/"));
+				.filter(({ line }) => line.includes("Suggestions") || line.includes("›") || line.includes("alpha/"));
 			assert.equal(
-				frame.some((line) => line.includes("╭")),
+				frame.some((line) => line.includes("Suggestions")),
 				true,
 			);
 			assert.equal(
-				frame.some((line) => line.includes("╰")),
+				frame.some((line) => line.includes("›")),
 				true,
 			);
 			assert.equal(
@@ -1616,9 +1620,15 @@ describe("InteractiveMode", () => {
 		terminal.sendInput("\t");
 		await waitFor(() => tui.hasOverlay());
 		await waitFor(() => terminal.output.includes("Open the model selector"));
-		assert.equal(terminal.output.includes("╭"), true);
-		assert.equal(terminal.output.includes("╰"), true);
+		assert.equal(terminal.output.includes("Suggestions"), true);
+		assert.equal(terminal.output.includes("›"), true);
 		assert.equal(terminal.output.includes("Open the model selector"), true);
+		const frame = tui.render(terminal.columns);
+		const suggestionsRow = frame.findIndex((line) => line.includes("Suggestions"));
+		assert.equal(
+			frame.slice(suggestionsRow, suggestionsRow + 9).some((line) => line.includes("└")),
+			true,
+		);
 		terminal.sendInput("\r");
 		assert.equal(tui.hasOverlay(), false);
 		terminal.sendInput("\r");
@@ -1922,7 +1932,12 @@ describe("InteractiveMode", () => {
 			await waitFor(() => tui.hasOverlay());
 			await waitFor(() => {
 				const frame = tui.render(terminal.columns).join("\n");
-				return frame.includes("›") && frame.includes("question continued") && frame.includes("Summarize + branch");
+				return (
+					frame.includes("›") &&
+					frame.includes("question continued") &&
+					frame.includes("Summarize + branch") &&
+					frame.includes("└")
+				);
 			});
 			terminal.sendInput("\x1b[B");
 			terminal.sendInput("\x1b[B");

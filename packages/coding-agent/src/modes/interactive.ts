@@ -3,11 +3,9 @@ import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import {
 	type AutocompleteProvider,
-	Box,
 	CombinedAutocompleteProvider,
 	type Component,
 	Editor,
-	type Focusable,
 	Key,
 	matchesKey,
 	type OverlayHandle,
@@ -74,37 +72,6 @@ function builtinSlashCommands(locale: Locale): readonly SlashCommand[] {
 		{ name: "retry", description: t("retryPrompt") },
 		{ name: "steer", description: t("steerAgent") },
 	];
-}
-
-/** Adds a visual frame without taking keyboard handling away from SettingsList. */
-class SettingsPanel implements Component, Focusable {
-	private readonly box: Box;
-	private readonly list: SettingsList;
-
-	constructor(list: SettingsList, title: string) {
-		this.list = list;
-		this.box = new Box(list, { border: "rounded", padding: 1, title });
-	}
-
-	get focused(): boolean {
-		return this.list.focused;
-	}
-
-	set focused(value: boolean) {
-		this.list.focused = value;
-	}
-
-	invalidate(): void {
-		this.box.invalidate();
-	}
-
-	render(width: number): string[] {
-		return this.box.render(width);
-	}
-
-	handleInput(data: string): void {
-		this.list.handleInput(data);
-	}
 }
 
 function asImageAttachmentReference(pasted: string, cwd: string): string {
@@ -463,7 +430,7 @@ export class InteractiveMode {
 			},
 			onCancel: () => this.closeOverlay(),
 		});
-		this.showOverlay(selector);
+		this.showOverlay(selector, true, "80%");
 	}
 
 	private async navigateTreeEntry(entryId: string): Promise<boolean> {
@@ -509,20 +476,23 @@ export class InteractiveMode {
 
 	private openSettingsSelector(): void {
 		const t = (key: string) => translate(this.locale, key);
-		const list = new SettingsList([
-			{
-				id: "compaction",
-				label: t("contextCompaction"),
-				currentValue: this.session.compactionEnabled ? t("on") : t("off"),
-				values: [t("on"), t("off")],
-			},
-			{
-				id: "locale",
-				label: t("language"),
-				currentValue: this.locale,
-				values: ["en", "zh-CN"],
-			},
-		]);
+		const list = new SettingsList(
+			[
+				{
+					id: "compaction",
+					label: t("contextCompaction"),
+					currentValue: this.session.compactionEnabled ? t("on") : t("off"),
+					values: [t("on"), t("off")],
+				},
+				{
+					id: "locale",
+					label: t("language"),
+					currentValue: this.locale,
+					values: ["en", "zh-CN"],
+				},
+			],
+			{ title: t("settings") },
+		);
 		list.onChange = (id, value) => {
 			if (id === "locale") {
 				this.locale = value === "zh-CN" ? "zh-CN" : "en";
@@ -549,18 +519,19 @@ export class InteractiveMode {
 			this.refresh();
 		};
 		list.onCancel = () => this.closeOverlay();
-		this.showOverlay(new SettingsPanel(list, t("settings")));
+		this.showOverlay(list);
 	}
 
-	private showOverlay(component: Component): void {
+	private showOverlay(component: Component, preserveLastLine = false, maxHeight: "60%" | "80%" = "60%"): void {
 		this.editor.cancelAutocomplete();
 		this.closeAutocompleteOverlay();
 		this.closeOverlay();
 		this.overlay = this.tui.showOverlay(component, {
 			width: "70%",
-			maxHeight: "60%",
+			maxHeight,
 			anchor: "center",
 			margin: 1,
+			preserveLastLine,
 		});
 	}
 
@@ -582,7 +553,7 @@ export class InteractiveMode {
 		const editorBounds = this.root.getEditorBounds(this.tui.columns);
 		this.autocompleteOverlay = this.tui.showOverlay(menu, {
 			width: "55%",
-			maxHeight: 8,
+			maxHeight: 9,
 			anchor: "bottom-left",
 			placement: {
 				anchorRow: editorBounds.end - 1,
@@ -590,6 +561,7 @@ export class InteractiveMode {
 				preferred: "below",
 			},
 			margin: 1,
+			preserveLastLine: true,
 			nonCapturing: true,
 		});
 		this.refresh();

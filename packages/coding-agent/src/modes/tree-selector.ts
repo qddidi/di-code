@@ -1,15 +1,13 @@
-import { type Component, type Focusable, Key, matchesKey, truncateToWidth, visibleWidth } from "@di-code/tui";
+import { type Component, type Focusable, Key, matchesKey, SelectionPanel } from "@di-code/tui";
 import type { SessionEntry, SessionTreeNode } from "../core/session/types.ts";
 import { type Locale, translate } from "../i18n.ts";
 
-const RESET = "\x1b[0m";
 const RESET_FOREGROUND = "\x1b[39m";
 const CYAN = "\x1b[38;5;45m";
 const GREEN = "\x1b[38;5;114m";
 const YELLOW = "\x1b[38;5;222m";
 const RED = "\x1b[38;5;210m";
 const DIM = "\x1b[38;5;245m";
-const SELECTED_BACKGROUND = "\x1b[48;5;236m";
 const MAX_VISIBLE_NODES = 12;
 
 interface FlatTreeNode {
@@ -146,21 +144,25 @@ export class TreeSelector implements Component, Focusable {
 	render(width: number): string[] {
 		if (width <= 0) return [];
 		if (this.nodes.length === 0)
-			return [truncateToWidth(paint(DIM, translate(this.options.locale, "treeEmpty")), width, "")];
+			return new SelectionPanel({ emptyText: translate(this.options.locale, "treeEmpty"), total: 0 }).render(width);
 
 		const start = Math.max(
 			0,
 			Math.min(this.selectedIndex - Math.floor(MAX_VISIBLE_NODES / 2), this.nodes.length - MAX_VISIBLE_NODES),
 		);
 		const end = Math.min(this.nodes.length, start + MAX_VISIBLE_NODES);
-		const lines: string[] = [];
+		const rows: string[] = [];
 		for (let index = start; index < end; index += 1) {
 			const node = this.nodes[index];
-			if (node) lines.push(this.renderNode(node, index === this.selectedIndex, width));
+			if (node) rows.push(this.renderNode(node));
 		}
-		lines.push(truncateToWidth(paint(DIM, `  (${this.selectedIndex + 1}/${this.nodes.length})`), width, ""));
-		lines.push(truncateToWidth(paint(DIM, this.actionHint()), width, ""));
-		return lines;
+		return new SelectionPanel({
+			rows,
+			selectedIndex: this.selectedIndex - start,
+			position: this.selectedIndex + 1,
+			total: this.nodes.length,
+			hint: this.actionHint(),
+		}).render(width);
 	}
 
 	handleInput(data: string): void {
@@ -187,14 +189,11 @@ export class TreeSelector implements Component, Focusable {
 		if (matchesKey(data, "s")) this.select("summarize");
 	}
 
-	private renderNode(node: FlatTreeNode, selected: boolean, width: number): string {
-		const cursor = selected ? paint(CYAN, "› ") : "  ";
+	private renderNode(node: FlatTreeNode): string {
 		const prefix = this.renderPrefix(node);
 		const currentPath = node.isCurrentPath ? paint(CYAN, "• ") : "  ";
 		const content = this.entryDisplay(node.entry);
-		const row = truncateToWidth(`${cursor}${prefix}${currentPath}${content}`, width, "");
-		if (!selected) return `${row}${RESET}`;
-		return `${SELECTED_BACKGROUND}${row}${SELECTED_BACKGROUND}${" ".repeat(Math.max(0, width - visibleWidth(row)))}${RESET}`;
+		return `${prefix}${currentPath}${content}`;
 	}
 
 	private renderPrefix(node: FlatTreeNode): string {
@@ -226,7 +225,7 @@ export class TreeSelector implements Component, Focusable {
 	}
 
 	private actionHint(): string {
-		return `  Enter ${translate(this.options.locale, "treeContinue")}  ·  e ${translate(this.options.locale, "treeEdit")}  ·  s ${translate(this.options.locale, "treeSummarize")}  ·  Esc ${translate(this.options.locale, "treeCancel")}`;
+		return `Enter ${translate(this.options.locale, "treeContinue")}  ·  e ${translate(this.options.locale, "treeEdit")}  ·  s ${translate(this.options.locale, "treeSummarize")}  ·  Esc ${translate(this.options.locale, "treeCancel")}`;
 	}
 
 	private move(direction: -1 | 1): void {

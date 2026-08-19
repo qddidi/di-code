@@ -1,7 +1,8 @@
 import { KeybindingsManager } from "../keybindings.ts";
 import { Key, matchesKey } from "../keys.ts";
 import type { Component, Focusable } from "../tui.ts";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { visibleWidth } from "../utils.ts";
+import { SelectionPanel } from "./selection-panel.ts";
 
 export interface SettingItem {
 	readonly id: string;
@@ -14,6 +15,7 @@ export interface SettingItem {
 export interface SettingsListOptions {
 	readonly maxVisible?: number;
 	readonly keybindings?: KeybindingsManager;
+	readonly title?: string;
 }
 
 export class SettingsList implements Component, Focusable {
@@ -24,12 +26,14 @@ export class SettingsList implements Component, Focusable {
 	private readonly values = new Map<string, string>();
 	private readonly maxVisible: number;
 	private readonly keybindings: KeybindingsManager;
+	private readonly title: string | undefined;
 	private selectedIndex = 0;
 
 	constructor(items: readonly SettingItem[], options: SettingsListOptions = {}) {
 		this.items = items.map((item) => ({ ...item, values: [...item.values] }));
 		for (const item of this.items) this.values.set(item.id, item.currentValue);
 		this.maxVisible = options.maxVisible ?? 6;
+		this.title = options.title;
 		if (!Number.isInteger(this.maxVisible) || this.maxVisible <= 0)
 			throw new Error("SettingsList maxVisible must be a positive integer");
 		this.keybindings = options.keybindings ?? new KeybindingsManager();
@@ -51,29 +55,29 @@ export class SettingsList implements Component, Focusable {
 
 	render(width: number): string[] {
 		if (width <= 0) return [];
-		if (this.items.length === 0) return [truncateToWidth("No settings available", width, "")];
+		if (this.items.length === 0)
+			return new SelectionPanel({ title: this.title, emptyText: "No settings available", total: 0 }).render(width);
 		const start = Math.max(
 			0,
 			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.items.length - this.maxVisible),
 		);
 		const end = Math.min(start + this.maxVisible, this.items.length);
 		const labelWidth = Math.min(24, Math.max(...this.items.map((item) => visibleWidth(item.label))));
-		const lines: string[] = [];
+		const rows: string[] = [];
 		for (let index = start; index < end; index += 1) {
 			const item = this.items[index];
 			if (!item) continue;
-			const prefix = index === this.selectedIndex ? "> " : "  ";
 			const label = `${item.label}${" ".repeat(Math.max(0, labelWidth - visibleWidth(item.label)))}`;
-			lines.push(truncateToWidth(`${prefix}${label}  ${this.values.get(item.id) ?? ""}`, width, ""));
-			if (index === this.selectedIndex && item.description) {
-				for (const line of wrapTextWithAnsi(item.description, Math.max(1, width - 4))) {
-					lines.push(truncateToWidth(`  ${line}`, width, ""));
-				}
-			}
+			rows.push(`${label}  ${this.values.get(item.id) ?? ""}`);
 		}
-		if (start > 0 || end < this.items.length)
-			lines.push(truncateToWidth(`  (${this.selectedIndex + 1}/${this.items.length})`, width, ""));
-		return lines;
+		return new SelectionPanel({
+			title: this.title,
+			rows,
+			selectedIndex: this.selectedIndex - start,
+			position: this.selectedIndex + 1,
+			total: this.items.length,
+			hint: this.items[this.selectedIndex]?.description,
+		}).render(width);
 	}
 
 	handleInput(data: string): void {

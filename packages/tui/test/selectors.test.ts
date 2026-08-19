@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { type SelectItem, SelectList } from "../src/components/select-list.ts";
+import { SelectionPanel } from "../src/components/selection-panel.ts";
 import { type SettingItem, SettingsList } from "../src/components/settings-list.ts";
 import { fuzzyFilter, fuzzyMatch } from "../src/fuzzy.ts";
 import { visibleWidth } from "../src/utils.ts";
+
+function plainText(value: string): string {
+	return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"), "");
+}
 
 describe("fuzzy matching", () => {
 	it("matches an empty query with a neutral score", () => {
@@ -46,9 +51,16 @@ describe("SelectList", () => {
 
 		const lines = list.render(24);
 
-		assert.equal(lines[0]?.startsWith("> "), true);
+		assert.equal(
+			lines.map(plainText).some((line) => line.includes("› ")),
+			true,
+		);
 		assert.equal(
 			lines.some((line) => line.includes("red fruit")),
+			true,
+		);
+		assert.equal(
+			lines.some((line) => line.includes("(1/3)")),
 			true,
 		);
 		assert.ok(lines.every((line) => visibleWidth(line) <= 24));
@@ -96,7 +108,15 @@ describe("SelectList", () => {
 		const list = new SelectList(items);
 		list.setFilter("zzz");
 
-		assert.deepEqual(list.render(20), ["No matches for: zzz"]);
+		const lines = list.render(20).map(plainText);
+		assert.equal(
+			lines.some((line) => line.includes("No matches for:")),
+			true,
+		);
+		assert.equal(
+			lines.some((line) => line.includes("(0/0)")),
+			true,
+		);
 		assert.equal(list.getSelectedItem(), null);
 	});
 
@@ -126,7 +146,10 @@ describe("SettingsList", () => {
 
 		const lines = list.render(30);
 
-		assert.equal(lines[0]?.startsWith("> "), true);
+		assert.equal(
+			lines.map(plainText).some((line) => line.includes("› ")),
+			true,
+		);
 		assert.equal(
 			lines.some((line) => line.includes("dark")),
 			true,
@@ -186,5 +209,40 @@ describe("SettingsList", () => {
 	it("keeps the empty state within a narrow width", () => {
 		const list = new SettingsList([]);
 		assert.ok(list.render(1).every((line) => visibleWidth(line) <= 1));
+	});
+});
+
+describe("SelectionPanel", () => {
+	it("renders a full-width selected row with a compact counter and hint", () => {
+		const panel = new SelectionPanel({
+			title: "Choices",
+			rows: ["first", "second"],
+			selectedIndex: 1,
+			position: 4,
+			total: 9,
+			hint: "Enter select  Esc cancel",
+		});
+
+		const lines = panel.render(24);
+		assert.equal(plainText(lines[0] ?? "").includes("┌ Choices"), true);
+		assert.equal(lines[0]?.includes("38;5;117"), true);
+		assert.equal(plainText(lines[2] ?? "").includes("› second"), true);
+		assert.equal(visibleWidth(lines[2] ?? ""), 24);
+		assert.equal(lines[3]?.includes("(4/9)"), true);
+		assert.equal(lines[4]?.includes("Enter select"), true);
+		assert.equal(plainText(lines[5] ?? "").startsWith("└"), true);
+	});
+
+	it("keeps empty and narrow panels within their terminal width", () => {
+		const panel = new SelectionPanel({ emptyText: "No choices", total: 0, hint: "Esc cancel" });
+		const lines = panel.render(4);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 4));
+	});
+
+	it("normalizes line breaks in caller-supplied display text", () => {
+		const panel = new SelectionPanel({ title: "Select\none", rows: ["first\nchoice"], hint: "Esc\ncancel" });
+		const lines = panel.render(30);
+		assert.ok(lines.every((line) => !line.includes("\n")));
+		assert.equal(plainText(lines[1] ?? "").includes("first choice"), true);
 	});
 });

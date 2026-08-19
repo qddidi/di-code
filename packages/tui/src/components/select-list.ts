@@ -2,7 +2,7 @@ import { fuzzyFilter } from "../fuzzy.ts";
 import { KeybindingsManager } from "../keybindings.ts";
 import { Key, matchesKey } from "../keys.ts";
 import type { Component, Focusable } from "../tui.ts";
-import { truncateToWidth } from "../utils.ts";
+import { SelectionPanel } from "./selection-panel.ts";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -72,25 +72,27 @@ export class SelectList implements Component, Focusable {
 
 	render(width: number): string[] {
 		if (width <= 0) return [];
-		if (this.filteredItems.length === 0) return [truncateToWidth(`No matches for: ${this.filter}`, width, "")];
+		if (this.filteredItems.length === 0)
+			return new SelectionPanel({ emptyText: `No matches for: ${this.filter}`, total: 0 }).render(width);
 		const start = Math.max(
 			0,
 			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
 		);
 		const end = Math.min(start + this.maxVisible, this.filteredItems.length);
-		const lines: string[] = [];
+		const rows: string[] = [];
 		for (let index = start; index < end; index += 1) {
 			const item = this.filteredItems[index];
 			if (!item) continue;
-			const prefix = index === this.selectedIndex ? "> " : "  ";
 			const description = item.description?.replace(/[\r\n]+/g, " ").trim();
 			const suffix = description ? ` - ${description}` : "";
-			lines.push(truncateToWidth(`${prefix}${item.label}${suffix}`, width, ""));
+			rows.push(`${item.label}${suffix}`);
 		}
-		if (start > 0 || end < this.filteredItems.length) {
-			lines.push(truncateToWidth(`  (${this.selectedIndex + 1}/${this.filteredItems.length})`, width, ""));
-		}
-		return lines;
+		return new SelectionPanel({
+			rows,
+			selectedIndex: this.selectedIndex - start,
+			position: this.selectedIndex + 1,
+			total: this.filteredItems.length,
+		}).render(width);
 	}
 
 	handleInput(data: string): void {

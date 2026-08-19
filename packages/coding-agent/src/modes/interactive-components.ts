@@ -1,5 +1,5 @@
 import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
-import { Box, Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
+import { Markdown, SelectionPanel, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
 import { DEFAULT_LOCALE, type Locale, translate } from "../i18n.ts";
 import { highlightCode } from "../utils/syntax-highlight.ts";
 import { renderDiff } from "./interactive-diff.ts";
@@ -298,38 +298,27 @@ export interface AutocompleteMenuState {
 
 export class AutocompleteMenu implements Component {
 	private readonly readState: () => AutocompleteMenuState;
-	private readonly box: Box;
 
 	constructor(readState: () => AutocompleteMenuState) {
 		this.readState = readState;
-		this.box = new Box(
-			{
-				invalidate: () => {},
-				render: (width) => this.renderItems(width),
-			},
-			{ border: "rounded", padding: 1, title: "Suggestions" },
-		);
 	}
 
-	invalidate(): void {
-		this.box.invalidate();
-	}
+	invalidate(): void {}
 
 	render(width: number): string[] {
-		return this.box.render(width);
-	}
-
-	private renderItems(width: number): string[] {
 		const state = this.readState();
 		const maxVisible = 6;
 		const start = Math.min(
 			Math.max(0, state.index - Math.floor(maxVisible / 2)),
 			Math.max(0, state.items.length - maxVisible),
 		);
-		return state.items.slice(start, start + maxVisible).flatMap((item, offset) => {
-			const prefix = start + offset === state.index ? "> " : "  ";
-			const description = item.description ? ` - ${item.description}` : "";
-			return new Text(`${prefix}${item.label}${description}`).render(width);
-		});
+		const items = state.items.slice(start, start + maxVisible);
+		return new SelectionPanel({
+			title: "Suggestions",
+			rows: items.map((item) => `${item.label}${item.description ? ` - ${item.description}` : ""}`),
+			selectedIndex: state.index - start,
+			position: state.index + 1,
+			total: state.items.length,
+		}).render(width);
 	}
 }

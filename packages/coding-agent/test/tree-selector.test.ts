@@ -92,7 +92,10 @@ describe("TreeSelector", () => {
 			locale: "en",
 		});
 
-		const lines = selector.render(80).slice(0, 3).map(plainText);
+		const lines = selector
+			.render(80)
+			.map(plainText)
+			.filter((line) => line.includes("user:"));
 		expect(lines).toEqual([
 			expect.stringContaining("  • user: root"),
 			expect.stringContaining("  • user: reply"),

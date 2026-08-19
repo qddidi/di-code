@@ -11,6 +11,7 @@ export { Editor, type EditorOptions } from "./components/editor.ts";
 export { Input } from "./components/input.ts";
 export { Markdown, type MarkdownOptions, type MarkdownTheme } from "./components/markdown.ts";
 export { type SelectItem, SelectList, type SelectListOptions } from "./components/select-list.ts";
+export { SelectionPanel, type SelectionPanelOptions } from "./components/selection-panel.ts";
 export { type SettingItem, SettingsList, type SettingsListOptions } from "./components/settings-list.ts";
 export { Spacer } from "./components/spacer.ts";
 export { Text } from "./components/text.ts";

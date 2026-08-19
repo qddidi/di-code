@@ -120,6 +120,22 @@ describe("TUI overlay layout", () => {
 		);
 	});
 
+	it("preserves an opted-in overlay footer when maximum height truncates its content", () => {
+		const tui = new TUI(new VirtualTerminal(20, 6));
+		const overlay = new OverlayProbe(["┌────┐", "│ one│", "│ two│", "└────┘"]);
+		tui.showOverlay(overlay, { width: 8, maxHeight: 3, anchor: "top-left", preserveLastLine: true });
+
+		const lines = tui.render(20);
+
+		assert.equal(lines[0]?.includes("┌────┐"), true);
+		assert.equal(lines[1]?.includes("│ one│"), true);
+		assert.equal(lines[2]?.includes("└────┘"), true);
+		assert.equal(
+			lines.some((line) => line.includes("│ two│")),
+			false,
+		);
+	});
+
 	it("clamps an oversized overlay inside a narrow terminal", () => {
 		const tui = new TUI(new VirtualTerminal(6, 4));
 		tui.addChild(new OverlayProbe(["ab界cd"]));

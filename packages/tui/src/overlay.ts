@@ -27,6 +27,8 @@ export interface OverlayOptions {
 	/** Positions the overlay beside a logical line in the current terminal viewport. */
 	readonly placement?: OverlayPlacement;
 	readonly margin?: number;
+	/** When `maxHeight` truncates an overlay, retain its final line as well as the visible prefix. */
+	readonly preserveLastLine?: boolean;
 	readonly nonCapturing?: boolean;
 }
 
@@ -127,7 +129,10 @@ export function compositeOverlay(
 		1,
 		Math.min(availableHeight, resolveSize(options.maxHeight, terminalHeight, availableHeight)),
 	);
-	let overlayLines = component.render(width).slice(0, maxHeight);
+	const renderedOverlayLines = component.render(width);
+	let overlayLines = options.preserveLastLine
+		? clipPlacementLines(renderedOverlayLines, maxHeight)
+		: renderedOverlayLines.slice(0, maxHeight);
 	if (overlayLines.length === 0) return [...baseLines];
 
 	const anchor = options.anchor ?? "center";
