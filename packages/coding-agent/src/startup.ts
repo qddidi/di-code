@@ -475,7 +475,10 @@ export async function saveGlobalCustomProvider(
 	return configuration;
 }
 
-/** Removes only the persisted credential for one provider; environment variables remain untouched. */
+/**
+ * Removes one persisted credential and clears it as the default when applicable.
+ * Environment variables and other Provider configuration remain untouched.
+ */
 export async function removeGlobalProviderApiKey(agentDir: string, providerId: string): Promise<boolean> {
 	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
 	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
@@ -483,12 +486,19 @@ export async function removeGlobalProviderApiKey(agentDir: string, providerId: s
 	if (!provider || provider.apiKey === undefined) return false;
 
 	const { apiKey: _apiKey, ...providerWithoutApiKey } = provider;
+	const clearsDefault = existingSettings.defaultProvider === providerId;
 	const settings: SettingsFile = {
-		...existingSettings,
 		providers: {
 			...existingSettings.providers,
 			[providerId]: providerWithoutApiKey,
 		},
+		...(clearsDefault || existingSettings.defaultProvider === undefined
+			? {}
+			: { defaultProvider: existingSettings.defaultProvider }),
+		...(clearsDefault || existingSettings.defaultModel === undefined
+			? {}
+			: { defaultModel: existingSettings.defaultModel }),
+		...(existingSettings.locale === undefined ? {} : { locale: existingSettings.locale }),
 	};
 	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
 	return true;

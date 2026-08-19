@@ -358,8 +358,10 @@ describe("Pi-style startup configuration", () => {
 		expect(runtime.model.id).toBe("gpt-4o");
 	});
 
-	it("removes only one global provider API key while preserving its remaining configuration", async () => {
+	it("removes one global provider API key, clears its default, and preserves remaining configuration", async () => {
 		await writeGlobalSettings({
+			defaultProvider: "deepseek",
+			defaultModel: "deepseek-model",
 			providers: {
 				deepseek: {
 					api: "openai-chat-completions",

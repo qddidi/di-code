@@ -43,8 +43,9 @@ export function shouldStartProviderOnboarding(
 	return (
 		command.mode === "interactive" &&
 		isInteractiveTerminal &&
-		configuration.providers.length === 0 &&
-		!configuration.environment.DI_CODE_PROVIDER?.trim()
+		!configuration.environment.DI_CODE_PROVIDER?.trim() &&
+		!configuration.defaults?.providerId &&
+		configuration.providers.length !== 1
 	);
 }
 

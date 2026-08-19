@@ -1329,7 +1329,7 @@ describe("InteractiveMode", () => {
 		}
 	});
 
-	it("uses /logout to remove only the current global key and rebuild the session runtime", async () => {
+	it("uses /logout to remove the current global key without rebuilding the active session", async () => {
 		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-logout-"));
 		try {
 			const agentDir = join(root, "agent");
@@ -1337,6 +1337,8 @@ describe("InteractiveMode", () => {
 			writeFileSync(
 				join(agentDir, "settings.json"),
 				JSON.stringify({
+					defaultProvider: "deepseek",
+					defaultModel: "deepseek-v4-flash",
 					providers: {
 						deepseek: {
 							api: "openai-chat-completions",
@@ -1348,7 +1350,7 @@ describe("InteractiveMode", () => {
 					},
 				}),
 			);
-			const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "environment-secret" }, [
+			const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "deepseek" }, [
 				{
 					id: "deepseek",
 					api: "openai-chat-completions",
@@ -1374,7 +1376,7 @@ describe("InteractiveMode", () => {
 				session,
 				tui: new TUI(terminal),
 				providerOnboarding: {
-					configuration: { environment: { DEEPSEEK_API_KEY: "environment-secret" }, providers: [] },
+					configuration: { environment: {}, providers: [] },
 					agentDir,
 				},
 			});
@@ -1391,8 +1393,10 @@ describe("InteractiveMode", () => {
 				models: [{ id: "deepseek-v4-flash" }],
 			});
 			assert.equal(settings.providers.other.apiKey, "other-secret");
+			assert.equal(settings.defaultProvider, undefined);
+			assert.equal(settings.defaultModel, undefined);
+			assert.equal(session.providerId, "deepseek");
 			assert.equal(terminal.output.includes("stored-logout-secret"), false);
-			assert.equal(terminal.output.includes("environment-secret"), false);
 			mode.stop();
 		} finally {
 			rmSync(root, { recursive: true, force: true });

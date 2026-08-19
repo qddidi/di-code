@@ -67,7 +67,7 @@ describe("shouldStartProviderOnboarding", () => {
 		expect(shouldStartProviderOnboarding(command("json"), true, configuration())).toBe(false);
 	});
 
-	it("does not replace explicit or settings-based provider selection", () => {
+	it("does not replace explicit, default, or single-provider selection", () => {
 		expect(
 			shouldStartProviderOnboarding(command("interactive"), true, configuration({ DI_CODE_PROVIDER: "faux" })),
 		).toBe(false);
@@ -77,6 +77,28 @@ describe("shouldStartProviderOnboarding", () => {
 				providers: [{ id: "custom", api: "openai-responses", models: [] }],
 			}),
 		).toBe(false);
+		expect(
+			shouldStartProviderOnboarding(command("interactive"), true, {
+				environment: {},
+				providers: [
+					{ id: "openai", api: "openai-responses" },
+					{ id: "zhipu", api: "openai-chat-completions" },
+				],
+				defaults: { providerId: "zhipu" },
+			}),
+		).toBe(false);
+	});
+
+	it("starts the chooser when several Providers have no selected default", () => {
+		expect(
+			shouldStartProviderOnboarding(command("interactive"), true, {
+				environment: {},
+				providers: [
+					{ id: "openai", api: "openai-responses" },
+					{ id: "zhipu", api: "openai-chat-completions" },
+				],
+			}),
+		).toBe(true);
 	});
 });
 

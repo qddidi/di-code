@@ -29,12 +29,7 @@ import {
 	type InteractiveProviderOnboardingOptions,
 	showInteractiveProviderOnboarding,
 } from "../provider-onboarding.ts";
-import {
-	loadStartupConfiguration,
-	removeGlobalProviderApiKey,
-	resolveStartupRuntime,
-	saveGlobalLocale,
-} from "../startup.ts";
+import { removeGlobalProviderApiKey, saveGlobalLocale } from "../startup.ts";
 import {
 	AutocompleteMenu,
 	InteractiveChat,
@@ -891,7 +886,6 @@ export class InteractiveMode {
 			return;
 		}
 		const providerId = this.session.providerId;
-		const modelId = this.session.modelId;
 		try {
 			const removed = await removeGlobalProviderApiKey(this.providerOnboarding.agentDir, providerId);
 			if (!removed) {
@@ -899,23 +893,8 @@ export class InteractiveMode {
 				this.refresh();
 				return;
 			}
-			const configuration = await loadStartupConfiguration(
-				this.session.allowedRoot,
-				this.providerOnboarding.configuration.environment,
-				this.providerOnboarding.agentDir,
-			);
-			const runtime = resolveStartupRuntime(
-				{
-					...configuration.environment,
-					DI_CODE_PROVIDER: providerId,
-					DI_CODE_MODEL: modelId,
-				},
-				configuration.providers,
-				configuration.defaults,
-			);
-			this.session.setRuntime(runtime.provider, runtime.model);
 			this.projection.setStatus(
-				`global API key removed for provider=${providerId}; environment variables may still apply`,
+				`global API key removed for provider=${providerId}; it remains active until this session ends`,
 			);
 		} catch (cause) {
 			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
