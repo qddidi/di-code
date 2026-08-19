@@ -32,6 +32,10 @@ export interface MainOptions extends PrintIo {
 	readonly agentDir?: string;
 	readonly startupConfiguration?: StartupConfiguration;
 	readonly now?: () => number;
+	/** Whether stdin and stdout are interactive terminals. */
+	readonly isInteractiveTerminal?: boolean;
+	/** Ask whether project-local Skills, plugins, and extensions may be loaded. */
+	readonly promptProjectTrust?: (cwd: string) => Promise<boolean>;
 }
 
 const DEFAULT_SESSION_DIRECTORY = join(".di-code", "sessions");
@@ -77,6 +81,26 @@ async function mostRecentSessionPath(sessionDirectory: string): Promise<string |
 		.filter((candidate): candidate is { filePath: string; modifiedAt: number } => candidate !== undefined)
 		.sort((left, right) => right.modifiedAt - left.modifiedAt || right.filePath.localeCompare(left.filePath))[0]
 		?.filePath;
+}
+
+async function hasProjectLocalCapabilities(cwd: string): Promise<boolean> {
+	const directories = [
+		join(cwd, ".di-code", "skills"),
+		join(cwd, ".agents", "skills"),
+		join(cwd, ".di-code", "extensions"),
+		join(cwd, ".di-code", "plugins"),
+	];
+	const results = await Promise.all(
+		directories.map(async (directory) => {
+			try {
+				return (await stat(directory)).isDirectory();
+			} catch (cause) {
+				if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
+				return false;
+			}
+		}),
+	);
+	return results.some(Boolean);
 }
 
 async function selectStartupSession(
@@ -228,15 +252,33 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		run: async (command) => {
 			const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 			const now = options.now ?? Date.now;
-			const runtime = await options.createRuntime(command);
-			if (runtime === undefined) return 0;
 			const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 			const trustManager = new ProjectTrustManager(join(agentDir, "trust.json"));
 			if (command.projectTrust !== undefined) await trustManager.set(allowedRoot, command.projectTrust);
+			let persistedTrust = await trustManager.get(allowedRoot);
+			const shouldPromptForTrust =
+				command.mode === "interactive" &&
+				options.isInteractiveTerminal === true &&
+				command.projectTrust === undefined &&
+				persistedTrust === null &&
+				options.promptProjectTrust !== undefined &&
+				(await hasProjectLocalCapabilities(allowedRoot));
+			if (shouldPromptForTrust) {
+				let decision = false;
+				try {
+					decision = await options.promptProjectTrust(allowedRoot);
+				} catch {
+					// Fail closed when the prompt is interrupted or unavailable.
+				}
+				await trustManager.set(allowedRoot, decision);
+				persistedTrust = decision;
+			}
+			const runtime = await options.createRuntime(command);
+			if (runtime === undefined) return 0;
 			const resources = await loadResources({
 				cwd: allowedRoot,
 				agentDir,
-				projectTrusted: (await trustManager.get(allowedRoot)) === true,
+				projectTrusted: persistedTrust === true,
 				noSkills: command.noSkills,
 				noContextFiles: command.noContextFiles,
 				skillPaths: command.skillPaths,

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
@@ -317,6 +317,82 @@ describe("runMain", () => {
 		expect(exitCode).toBe(0);
 		expect(createRuntime).toHaveBeenCalledWith({ kind: "run", mode: "interactive", prompt: "" });
 		await expect(readdir(join(root, ".di-code", "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("asks once before loading project-local capabilities and persists trust", async () => {
+		const agentDir = join(root, "agent");
+		await mkdir(join(root, ".agents", "skills"), { recursive: true });
+		const promptProjectTrust = vi.fn().mockResolvedValue(true);
+		const createRuntime = vi.fn(async () => undefined);
+		const options = {
+			...createIo(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime,
+			isInteractiveTerminal: true,
+			promptProjectTrust,
+		};
+
+		expect(await runMain(["--interactive"], options)).toBe(0);
+		expect(promptProjectTrust).toHaveBeenCalledOnce();
+		expect(promptProjectTrust).toHaveBeenCalledWith(root);
+		expect(JSON.parse(await readFile(join(agentDir, "trust.json"), "utf8"))).toMatchObject({
+			projects: { [root]: true },
+		});
+
+		await runMain(["--interactive"], options);
+		expect(promptProjectTrust).toHaveBeenCalledOnce();
+	});
+
+	it("records a denial and does not prompt in non-interactive modes", async () => {
+		const agentDir = join(root, "agent");
+		await mkdir(join(root, ".di-code", "plugins"), { recursive: true });
+		const promptProjectTrust = vi.fn().mockResolvedValue(false);
+		const createRuntime = vi.fn(async () => undefined);
+
+		await runMain(["--interactive"], {
+			...createIo(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime,
+			isInteractiveTerminal: true,
+			promptProjectTrust,
+		});
+		expect(promptProjectTrust).toHaveBeenCalledOnce();
+		expect(JSON.parse(await readFile(join(agentDir, "trust.json"), "utf8"))).toMatchObject({
+			projects: { [root]: false },
+		});
+
+		const nonInteractivePrompt = vi.fn().mockResolvedValue(true);
+		await runMain(["--print", "hello"], {
+			...createIo(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir: join(root, "other-agent"),
+			createRuntime,
+			isInteractiveTerminal: false,
+			promptProjectTrust: nonInteractivePrompt,
+		});
+		expect(nonInteractivePrompt).not.toHaveBeenCalled();
+	});
+
+	it("does not prompt when an explicit trust flag is supplied", async () => {
+		const promptProjectTrust = vi.fn().mockResolvedValue(false);
+		await mkdir(join(root, ".di-code", "extensions"), { recursive: true });
+
+		await runMain(["--trust-project", "--interactive"], {
+			...createIo(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir: join(root, "agent"),
+			createRuntime: vi.fn(async () => undefined),
+			isInteractiveTerminal: true,
+			promptProjectTrust,
+		});
+
+		expect(promptProjectTrust).not.toHaveBeenCalled();
 	});
 
 	it("creates a new persistent session on each default launch", async () => {

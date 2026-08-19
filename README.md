@@ -495,7 +495,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 .di-code/plugins/<plugin-id>/
 ```
 
-项目插件只有在使用者明确授予项目可信状态后才会被 import：
+交互式 TTY 首次发现项目插件目录时会询问是否信任当前项目；也可以显式授予项目可信状态：
 
 ```powershell
 npm run dev -- --trust-project --interactive

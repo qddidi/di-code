@@ -383,14 +383,16 @@ description: Verify the release checklist before publishing a package.
 - 文件最大 256 KiB，首行和 frontmatter 结束行必须都是 `---`；
 - 可加 `disable-model-invocation: true` 隐藏该 Skill，使模型不自动选择它，但用户仍可手动调用。
 
-首次使用项目本地 Skill 或插件前，明确授予信任：
+交互式 TTY 首次发现项目本地 Skill、插件或扩展目录时，di-code 会询问是否信任当前项目。回答 `y`/`yes` 会加载这些项目资源，其他输入（包括直接回车）会拒绝加载；选择会保存到用户全局 Agent 目录，后续启动不再重复询问。非交互模式不会等待询问，默认不信任。
+
+也可以显式授予信任：
 
 ```powershell
 Set-Location D:\work\my-project
 di-code --trust-project --interactive
 ```
 
-该决定保存在用户全局 Agent 目录中，并按当前项目路径生效。撤销：
+撤销：
 
 ```powershell
 di-code --untrust-project --interactive
@@ -448,7 +450,7 @@ di-code --no-skills "不要加载任何 Skill"
 }
 ```
 
-入口必须默认导出一个 factory 函数。项目插件仅在运行过 `di-code --trust-project --interactive` 后导入。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
+入口必须默认导出一个 factory 函数。项目插件仅在当前项目已获信任后导入。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
 
 完整的 TypeBox schema、工具、slash command、生命周期事件及安全责任，请阅读仓库文档：[插件使用指南](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)。
 
@@ -559,14 +561,14 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 - 在可信项目根目录运行；`bash` 不是沙箱，插件也没有沙箱。
 - 向导会将输入的 API key 保存到用户全局 `~/.di-code/settings.json`；不要放入 prompt、Skill、插件源码、会话、图片、项目配置或 Git。
-- 项目 Skill 与插件默认不加载，直到执行 `--trust-project`；该开关是“是否导入项目本地代码/指令”的决定，不会赋予额外系统权限。
+- 项目 Skill、插件和扩展默认不加载；交互式 TTY 首次发现这些目录时会询问一次，`--trust-project` / `--untrust-project` 可显式控制。该决定是“是否导入项目本地代码/指令”的选择，不会赋予额外系统权限。
 - Provider、模型、图片、配置和工具参数都会校验；外部项目内容和模型输出仍应视作不可信输入。
 
 | 问题 | 优先检查 |
 | --- | --- |
 | `Provider is not configured` | 设置 `DI_CODE_PROVIDER` 及对应 API key；或在 TTY 中运行 `di-code` 使用向导；离线测试使用 `faux` |
 | `Unknown model` | 确认 `DI_CODE_MODEL` 属于当前 `DI_CODE_PROVIDER` |
-| 项目 Skill / 插件没有加载 | Skill 目录是否为 `.di-code/skills` 或 `.agents/skills`，插件目录是否为 `.di-code/plugins`，并运行 `di-code --trust-project --interactive` |
+| 项目 Skill / 插件没有加载 | Skill 目录是否为 `.di-code/skills` 或 `.agents/skills`，插件目录是否为 `.di-code/plugins`；交互式启动时确认 trust 提示，或运行 `di-code --trust-project --interactive` |
 | `Unknown skill` | Skill 是否有正确 `SKILL.md` frontmatter，名称是否匹配 `/skill:<name>`；检查是否被 `--no-skills` 禁用 |
 | `plugin_diagnostic` | 检查 `plugin.json`、默认导出、入口路径及 stderr 的 JSON 诊断；详见插件指南 |
 | 图片被拒绝 | 确认格式、4 张/5 MiB 限制，以及模型 `input` 包含 `image` |
