@@ -4,7 +4,7 @@
 
 - `di-code`：面向人的交互式、单次输出和 JSON 事件 CLI；
 - `di-code-rpc`：供 Node.js 宿主程序管理的 JSONL RPC 子进程入口；
-- 内置的 `read`、`write`、`edit`、`bash` 工具、JSONL 会话、图片输入、上下文压缩；
+- 内置的 `read`、`write`、`edit`、`glob`、`grep`、`bash` 工具、JSONL 会话、图片输入、上下文压缩；
 - 可复用的 **Skills（技能指令）**、`AGENTS.md` 项目说明，以及插件扩展机制。
 
 > **运行环境：**Node.js `>= 22.19.0`。真实 Provider 会产生网络请求和费用；首次体验可使用离线的 `faux` Provider。
@@ -47,7 +47,7 @@ di-code
 
 向导输入的 API key 会保存到用户全局 `~/.di-code/settings.json`，供之后启动复用；不会写入 `.env`、项目 `.di-code/settings.json`、会话文件或日志。请保护用户目录的访问权限，不要复制或提交该文件。
 
-已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。它总会要求真实 Provider 输入新的隐藏 key，写入用户全局 `settings.json` 成功后立即切换当前会话的 Provider 和模型。`/logout` 只移除当前 Provider 在该全局文件中的 `apiKey`，保留 `api`、`baseUrl`、`models` 及其他 Provider 配置；它不会也无法删除环境变量中的 key，因此环境变量仍可能继续生效。
+已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。它总会要求真实 Provider 输入新的隐藏 key，写入用户全局 `settings.json` 成功后立即切换当前会话的 Provider 和模型。`/logout` 会移除当前 Provider 在该全局文件中的 `apiKey`，并在它是默认 Provider 时清除 `defaultProvider` 与 `defaultModel`；`api`、`baseUrl`、`models` 和其他 Provider 配置仍会保留。为避免登出后因缺少 key 重新构建失败，当前会话会继续使用已加载的运行时直到退出；下次交互启动时，如没有明确的 Provider 选择，会显示选择/登录向导。它不会也无法删除环境变量中的 key，因此环境变量仍可能继续生效。
 
 `/login` 还会更新同一文件的 `defaultProvider` 和 `defaultModel`。当全局配置中有多个 Provider 时，下一次启动会使用这两个默认值；显式设置的 `DI_CODE_PROVIDER` 与 `DI_CODE_MODEL` 始终优先。
 
@@ -289,7 +289,7 @@ di-code --continue "继续上一次工作"
 | `/theme` | 选择 dark 或 light 主题 |
 | `/settings` | 配置上下文压缩开关和内置终端语言 |
 | `/login` | 打开 Provider、模型和隐藏 API key 向导；保存到用户全局配置并切换当前会话 |
-| `/logout` | 移除当前 Provider 的用户全局 `apiKey`，不改环境变量或其他配置字段 |
+| `/logout` | 移除当前 Provider 的用户全局 `apiKey`，并在适用时清除默认 Provider/模型；不改环境变量或其他 Provider 配置，当前会话保持可用至退出 |
 | `/compact` | 立即压缩当前持久化会话的旧上下文 |
 | `/usage` | 查看请求数、token、费用和上下文占用 |
 | `/retry` | 重新提交最近失败或取消的 prompt |
@@ -343,9 +343,11 @@ di-code --image .\before.png --image .\after.webp "比较两张图"
 | `read` | 读取工作根目录中的 UTF-8 文本文件 | 最多 2,000 行、50 KiB；支持 `offset`、`limit` |
 | `write` | 创建或完全覆盖 UTF-8 文件 | 自动创建父目录 |
 | `edit` | 对文件做一次唯一的精确文本替换 | 找不到或匹配多处时拒绝写入；保留 BOM 和换行风格 |
+| `glob` | 按 glob pattern 查找文件 | 返回排序后的相对路径；默认最多 200 个结果、50 KiB；跳过 symlink |
+| `grep` | 在 UTF-8 文本文件中查找字面量文本 | 返回 `path:line` 匹配；默认最多 200 个结果、50 KiB；跳过二进制文件、symlink 和超过 2 MiB 的单文件 |
 | `bash` | 在工作根目录执行本地命令 | 默认 30 秒、最大 5 分钟；stdout/stderr 各截断至 50 KiB |
 
-文件工具限制目标在工作根目录内并拒绝二进制文件。`bash` 在 Windows 使用 PowerShell，在其他平台使用 `/bin/sh`；它并不是操作系统级沙箱。模型和插件仍可能尝试执行危险操作，因此请审查任务和结果，并避免在包含无关敏感文件的目录运行。
+文件工具限制目标在工作根目录内并拒绝二进制文件。`glob` 和 `grep` 使用 Node 文件 API，不依赖系统安装的 `grep` 或 shell；它们不跟随 symlink，并支持取消信号。`grep` 的 `pattern` 是字面量匹配，不是正则表达式。`bash` 在 Windows 使用 PowerShell，在其他平台使用 `/bin/sh`；它并不是操作系统级沙箱。模型和插件仍可能尝试执行危险操作，因此请审查任务和结果，并避免在包含无关敏感文件的目录运行。
 
 ## MCP Server
 

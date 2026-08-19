@@ -53,6 +53,11 @@ export async function resolveAllowedMutationPath(inputPath: string, allowedRoot:
 }
 
 export async function resolveAllowedFilePath(inputPath: string, allowedRoot: string): Promise<string> {
+	return resolveAllowedExistingPath(inputPath, allowedRoot);
+}
+
+/** Resolve an existing file or directory while enforcing the realpath root boundary. */
+export async function resolveAllowedExistingPath(inputPath: string, allowedRoot: string): Promise<string> {
 	const rootReal = await realpath(allowedRoot);
 	const candidate = resolve(rootReal, inputPath);
 	assertInsideRoot(rootReal, candidate);

@@ -34,7 +34,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - OpenAI Responses API 与 DeepSeek、智谱 GLM 等 OpenAI Chat Completions 兼容 API 流式适配，包含文本、推理、工具调用和用量信息。
 - Provider 无关的消息、模型、工具与事件协议。
 - Agent 工具循环：模型请求工具后，执行工具并将结果回传给模型，直至任务结束。
-- 内置 `read`、`write`、`edit`、`bash` 编码工具。
+- 内置 `read`、`write`、`edit`、`glob`、`grep`、`bash` 编码工具。
 - 全屏交互终端 UI：多行编辑、补全、Markdown、工具状态、取消、重试、模型和主题选择。
 - `print`、`json`、`interactive` 三种 CLI 模式。
 - 可选 JSONL 会话持久化、并发追加保护和上下文压缩能力。
@@ -119,7 +119,7 @@ npm run dev
 - CLI 处于 `interactive` 模式；
 - stdin 和 stdout 都是 TTY；
 - 没有设置 `DI_CODE_PROVIDER`；
-- `.di-code/settings.json` 中没有 Provider。
+- 没有显式 Provider 选择（`DI_CODE_PROVIDER`、`defaultProvider` 或唯一的已配置 Provider）。
 
 向导依次选择 Provider 和模型。选择 OpenAI、Anthropic、DeepSeek 或 Zhipu AI 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。选择 `Custom` 时还会依次输入 API 协议、Base URL、隐藏 API key 和模型 ID，并将配置保存为用户级固定 `custom` Provider。向导输入的 key 仅写入用户级 `~/.di-code/settings.json`，不会写入 `.env`、项目 settings、Session 或日志。
 
@@ -343,9 +343,9 @@ ZAI_API_KEY=<your-zhipu-api-key>
 
 1. 设置了 `DI_CODE_PROVIDER` 时，始终选择该 ID。
 2. 没有设置 `DI_CODE_PROVIDER` 且 settings 中正好有一个 Provider 时，自动选择它。
-3. settings 中有两个或更多 Provider 时，必须设置 `DI_CODE_PROVIDER`。
-4. settings 中没有 Provider、没有 `DI_CODE_PROVIDER` 且处于交互 TTY 时，启动选择向导。
-5. 非交互模式没有明确 Provider 时立即报错，不会等待输入。
+3. 没有显式选择且 settings 中有两个或更多 Provider 时，交互 TTY 会启动选择向导；非交互模式必须设置 `DI_CODE_PROVIDER` 或 `defaultProvider`。
+4. settings 中没有 Provider、没有明确选择且处于交互 TTY 时，启动选择向导。
+5. 非交互模式有多个 Provider 但没有明确选择时立即报错，不会等待输入。
 
 模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。
 
@@ -520,7 +520,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | `/retry` | 重试最后一次失败或取消的提示。 |
 | `/steer` | 在当前提示词运行期间向 Agent 追加引导内容（例如 `/steer 简短回答`）。 |
 | `/login` | 重新打开 Provider、模型和隐藏 API key 向导；保存到用户全局配置并切换当前会话。 |
-| `/logout` | 移除当前 Provider 保存在用户全局配置中的 API key，不影响环境变量。 |
+| `/logout` | 移除当前 Provider 保存在用户全局配置中的 API key 和对应默认选择，不影响环境变量；当前会话保持可用至退出，下一次交互启动会要求重新选择或登录。 |
 | `/skill:<name>` | 手动调用一个已加载的 Skill，可附带具体请求，例如 `/skill:release-check 检查发布条件`；交互框中输入 `/skill:` 后可补全。 |
 
 输入 `/` 后按 `Tab` 可补全命令。常用按键：
@@ -547,9 +547,11 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | `read` | 读取工作根目录内的 UTF-8 文本文件。 | 最多 2,000 行、50 KiB；支持 `offset` 与 `limit`。 |
 | `write` | 创建或完全覆盖工作根目录内的 UTF-8 文件。 | 自动创建父目录。 |
 | `edit` | 对文件进行一次唯一的精确文本替换。 | 未找到或匹配多处时拒绝写入；保留 BOM 与换行风格。 |
+| `glob` | 按 glob pattern 查找工作根目录内的文件。 | 返回排序后的相对路径；默认最多 200 个结果、50 KiB；跳过 symlink。 |
+| `grep` | 在工作根目录内的 UTF-8 文本文件中查找字面量文本。 | 返回 `path:line` 匹配；默认最多 200 个结果、50 KiB；跳过二进制文件、symlink 和超过 2 MiB 的单文件。 |
 | `bash` | 在工作根目录运行本地命令。 | 默认 30 秒，最大 5 分钟；stdout/stderr 各最多 50 KiB。 |
 
-文件工具会限制路径在 `allowedRoot` 内，并拒绝二进制文件。`bash` 在 Windows 上使用 PowerShell，其他平台使用 `/bin/sh`；它以工作目录作为 `cwd`，但不是操作系统级沙箱。使用真实 Provider 前，应只在信任的项目目录中运行。
+文件工具会限制路径在 `allowedRoot` 内，并拒绝二进制文件。`glob` 和 `grep` 使用 Node 文件 API，不依赖系统安装的 `grep` 或 shell；它们不跟随 symlink，并支持取消信号。`grep` 的 `pattern` 是字面量匹配，不是正则表达式。`bash` 在 Windows 上使用 PowerShell，其他平台使用 `/bin/sh`；它以工作目录作为 `cwd`，但不是操作系统级沙箱。使用真实 Provider 前，应只在信任的项目目录中运行。
 
 ## 会话与插件
 

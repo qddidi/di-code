@@ -27,6 +27,8 @@ import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
 import { createBashTool } from "./tools/bash.ts";
 import { createEditTool } from "./tools/edit.ts";
+import { createGlobTool } from "./tools/glob.ts";
+import { createGrepTool } from "./tools/grep.ts";
 import { createLoadSkillTool } from "./tools/load-skill.ts";
 import { createReadTool } from "./tools/read.ts";
 import { createWriteTool } from "./tools/write.ts";
@@ -186,6 +188,8 @@ export class AgentSession {
 				createWriteTool(options.allowedRoot),
 				createEditTool(options.allowedRoot),
 				createBashTool(options.allowedRoot),
+				createGlobTool(options.allowedRoot),
+				createGrepTool(options.allowedRoot),
 				...(this.skillCatalog.listForModel().length > 0 ? [createLoadSkillTool(this.skillCatalog)] : []),
 				...(this.extensionHost?.listTools().map((tool) => ({
 					name: tool.name,
