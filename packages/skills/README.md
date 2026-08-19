@@ -1,15 +1,15 @@
 # @di-code/skills
 
-`@di-code/skills` provides the provider-neutral SKILL.md document format, bounded reading, recursive discovery, collision-aware catalogs, and `/skill:<name>` invocation expansion. It does not execute Markdown, grant permissions, or depend on an Agent, Provider, TUI, or coding-agent host.
+`@di-code/skills` 提供 Provider 无关的 SKILL.md 文档格式、带边界的内容读取、递归发现、带冲突检测的目录，以及 `/skill:<name>` 调用展开。它不执行 Markdown、不授予权限，也不依赖 Agent、Provider、TUI 或 coding-agent 宿主。
 
-Skill metadata uses YAML frontmatter with required `name` and `description` fields. Names are lowercase kebab-case up to 64 characters; documents are limited to 256 KiB. Invalid documents return diagnostics instead of becoming partially valid skills. `disable-model-invocation` and `user-invocable` default to `false` and `true` respectively.
+Skill 元数据使用 YAML frontmatter，`name` 和 `description` 为必填字段。名称为小写 kebab-case，最长 64 个字符；文档大小限制为 256 KiB。非法文档返回诊断信息，而不是变成部分有效的 skill。`disable-model-invocation` 和 `user-invocable` 的默认值分别为 `false` 和 `true`。
 
-The package root is the only public import:
+包根入口是唯一的公共导入方式：
 
 ```ts
 import { createSkillCatalog, discoverSkills, loadSkill, readSkillContent, resolveSkillInvocation } from "@di-code/skills";
 ```
 
-Skill content is untrusted prompt text. Hosts remain responsible for trust, filesystem roots, tools, and command or network policy.
+Skill 内容是不可信的提示词文本。信任判定、文件系统根目录、工具以及命令或网络策略仍由宿主负责。
 
-Source and issue tracker: <https://github.com/qddidi/di-code>.
+源码与 issue 跟踪：<https://github.com/qddidi/di-code>。
