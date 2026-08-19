@@ -121,7 +121,7 @@ npm run dev
 - 没有设置 `DI_CODE_PROVIDER`；
 - `.di-code/settings.json` 中没有 Provider。
 
-向导依次选择 Provider 和模型。选择 OpenAI、Anthropic、DeepSeek 或 Zhipu AI 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。向导输入的 key 只保存在本次进程内存中，退出后不会写入 `.env`、`settings.json`、Session 或日志，因此下次未配置环境变量时会再次询问。
+向导依次选择 Provider 和模型。选择 OpenAI、Anthropic、DeepSeek 或 Zhipu AI 且环境中没有对应 API key 时，会进入隐藏输入；选择 `Faux (offline)` 不需要凭据。选择 `Custom` 时还会依次输入 API 协议、Base URL、隐藏 API key 和模型 ID，并将配置保存为用户级固定 `custom` Provider。向导输入的 key 仅写入用户级 `~/.di-code/settings.json`，不会写入 `.env`、项目 settings、Session 或日志。
 
 `.di-code/settings.json` 不存在、文件为空或只有空白字符时，都按“没有 settings 配置”处理。非空文件必须是合法 JSON。
 
@@ -203,22 +203,26 @@ Anthropic 的请求格式与模型 API 以[官方 Messages API 文档](https://d
 | --- | --- | --- | --- |
 | `openai` | `gpt-4o` | 是 | 文本、图片 |
 | `openai` | `gpt-5.6-terra` | 否 | 文本、图片 |
-| `openai` | `o3-mini` | 否 | 文本 |
 | `deepseek` | `deepseek-v4-flash` | 是 | 文本 |
 | `deepseek` | `deepseek-v4-pro` | 否 | 文本 |
 | `anthropic` | `claude-sonnet-4-5` | 是 | 文本、图片 |
 | `anthropic` | `claude-haiku-4-5` | 否 | 文本、图片 |
 | `anthropic` | `claude-opus-4-5` | 否 | 文本、图片 |
+| `anthropic` | `claude-fable-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5` | 否 | 文本、图片 |
 | `zhipu` | `glm-5.3` | 是 | 文本，1M 上下文 |
 | `zhipu` | `glm-5-turbo` | 否 | 文本 |
 | `zhipu` | `glm-4.7` | 否 | 文本 |
 | `faux` | `faux-model` | 是 | 本地测试，不访问网络 |
+
+Custom 向导的模型目录还包含 `qwen3.7-plus`、`kimi-k3` 与 `MiniMax-M3` 的已验证 Chat Completions 元数据；它们需要通过 `Custom` 配置对应厂商或兼容网关，不是可直接用 `DI_CODE_PROVIDER` 选择的内建 Provider。
 
 `DI_CODE_MODEL` 省略时使用 Provider 的默认模型：OpenAI 为 `gpt-4o`，Anthropic 为 `claude-sonnet-4-5`，Zhipu 为 `glm-5.3`，其他内建 Provider 使用其模型列表首项。模型 ID 必须属于当前 Provider，否则启动会列出可用模型并报错。
 
 ### 使用 `.di-code/settings.json`
 
 `settings.json` 用于声明自定义 Provider、兼容网关和自定义模型。文件位置固定为项目工作目录下的 `.di-code/settings.json`，根节点必须包含 `providers` 对象。
+
+在 interactive TTY 的首次向导或 `/login` 中选择 `Custom`，可以不手写 JSON 完成同样的配置。向导支持 `openai-responses`、`openai-chat-completions` 和 `anthropic-messages`；Base URL 必须是绝对 `http`/`https` 地址，不能带凭据、query、hash 或尾随 `/`。模型 ID 可以是目录外的任意非空值：精确匹配内置目录时复用能力元数据，否则使用文本输入、128000 上下文和 16384 输出 token 的保守默认值。再次配置会覆盖用户级 `custom` Provider，但保留其他 Provider 和语言偏好。
 
 下面是一个包含完整模型字段的自定义 OpenAI Responses 兼容网关：
 

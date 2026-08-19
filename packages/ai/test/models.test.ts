@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkGeneratedModelCatalog, MODEL_SOURCE, renderModelCatalog } from "../src/models.ts";
+import { checkGeneratedModelCatalog, findBuiltinModel, MODEL_SOURCE, renderModelCatalog } from "../src/models.ts";
 
 const generatedCatalogPath = fileURLToPath(new URL("../src/models.generated.ts", import.meta.url));
 const temporaryDirectories: string[] = [];
@@ -19,21 +19,33 @@ afterEach(async () => {
 });
 
 describe("model catalog", () => {
-	it("advertises OpenAI image and reasoning capabilities", () => {
-		const imageModel = MODEL_SOURCE.find((model) => model.id === "gpt-4o");
-		const reasoningModel = MODEL_SOURCE.find((model) => model.id === "o3-mini");
+	it("finds an exact protocol and model ID match without lending catalog state", () => {
+		const known = findBuiltinModel("openai-responses", "gpt-4o");
+		const mismatchedProtocol = findBuiltinModel("openai-chat-completions", "gpt-4o");
+		if (known === undefined) throw new Error("Expected the OpenAI model");
 
-		expect(imageModel?.input).toContain("image");
-		expect(reasoningModel).toMatchObject({ reasoning: true, input: ["text"] });
-		expect(reasoningModel?.reasoningEfforts).toEqual(["low", "medium", "high"]);
+		known.input.push("text");
+		expect(mismatchedProtocol).toBeUndefined();
+		expect(MODEL_SOURCE.find((model) => model.id === "gpt-4o")?.input).toEqual(["text", "image"]);
 	});
 
-	it("renders declared reasoning efforts into the generated catalog", () => {
-		const reasoningModel = MODEL_SOURCE.find((entry) => entry.provider === "openai" && entry.id === "o3-mini");
-		if (reasoningModel === undefined) throw new Error("Expected the OpenAI reasoning source model");
-		const output = renderModelCatalog([reasoningModel]);
+	it("advertises only GPT-4 and GPT-5 OpenAI models", () => {
+		const imageModel = MODEL_SOURCE.find((model) => model.id === "gpt-4o");
 
-		expect(output).toContain('reasoningEfforts: ["low", "medium", "high"]');
+		expect(imageModel?.input).toContain("image");
+		expect(
+			MODEL_SOURCE.filter((model) => model.provider === "openai").every((model) => /^gpt-(4|5)/.test(model.id)),
+		).toBe(true);
+	});
+
+	it("advertises current Qwen, Kimi, and MiniMax catalog models through Chat Completions", () => {
+		const selectedModels = MODEL_SOURCE.filter((model) => ["qwen3.7-plus", "kimi-k3", "MiniMax-M3"].includes(model.id));
+
+		expect(selectedModels).toMatchObject([
+			{ provider: "qwen", api: "openai-chat-completions", input: ["text"] },
+			{ provider: "kimi", api: "openai-chat-completions", input: ["text", "image"], contextWindow: 1_000_000 },
+			{ provider: "minimax", api: "openai-chat-completions", input: ["text", "image"], contextWindow: 1_000_000 },
+		]);
 	});
 
 	it("advertises DeepSeek Chat Completions models as text-only reasoning models", () => {
@@ -61,6 +73,11 @@ describe("model catalog", () => {
 			"claude-sonnet-4-5",
 			"claude-haiku-4-5",
 			"claude-opus-4-5",
+			"claude-fable-5",
+			"claude-opus-4-6",
+			"claude-opus-4-7",
+			"claude-opus-4-8",
+			"claude-opus-5",
 		]);
 		for (const model of anthropicModels) {
 			expect(model).toMatchObject({

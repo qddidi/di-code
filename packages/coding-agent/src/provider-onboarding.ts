@@ -16,7 +16,9 @@ import {
 	resolveStartupRuntime,
 	type StartupConfiguration,
 	type StartupRuntime,
+	saveGlobalCustomProvider,
 	saveGlobalProviderApiKey,
+	validateCustomBaseUrl,
 } from "./startup.ts";
 
 export type StartupRunCommand = Extract<CliCommand, { kind: "run" }>;
@@ -47,7 +49,7 @@ export function shouldStartProviderOnboarding(
 }
 
 interface OnboardingChoice extends SelectItem {
-	readonly providerId: "openai" | "deepseek" | "zhipu" | "anthropic" | "faux";
+	readonly providerId: "openai" | "deepseek" | "zhipu" | "anthropic" | "faux" | "custom";
 }
 
 class OnboardingScreen {
@@ -89,10 +91,17 @@ function providerChoices(locale: Locale): OnboardingChoice[] {
 		{ value: "faux", providerId: "faux", label: "Faux (offline)", description: translate(locale, "fauxProvider") },
 		{ value: "zhipu", providerId: "zhipu", label: "Zhipu AI", description: "GLM Chat Completions API" },
 		{ value: "anthropic", providerId: "anthropic", label: "Anthropic", description: "Claude Messages API" },
+		{
+			value: "custom",
+			providerId: "custom",
+			label: translate(locale, "customProvider"),
+			description: translate(locale, "customProviderDescription"),
+		},
 	];
 }
 
 function modelsFor(providerId: OnboardingChoice["providerId"]): readonly Model[] {
+	if (providerId === "custom") return [];
 	if (providerId === "faux") return [createFauxProvider({ responses: [] }).model];
 	const models = MODELS.filter((model) => model.provider === providerId);
 	if (providerId === "openai") {
@@ -123,6 +132,18 @@ function providerApi(providerId: OnboardingChoice["providerId"]): Exclude<ModelA
 	if (providerId === "deepseek" || providerId === "zhipu") return "openai-chat-completions";
 	if (providerId === "anthropic") return "anthropic-messages";
 	return undefined;
+}
+
+function customApiChoices(): SelectItem[] {
+	return [
+		{ value: "openai-responses", label: "OpenAI Responses", description: "OpenAI Responses API" },
+		{
+			value: "openai-chat-completions",
+			label: "OpenAI Chat Completions",
+			description: "Chat Completions-compatible API",
+		},
+		{ value: "anthropic-messages", label: "Anthropic Messages", description: "Anthropic Messages API" },
+	];
 }
 
 function modelChoices(models: readonly Model[], locale: Locale): SelectItem[] {
@@ -222,10 +243,80 @@ function startProviderOnboarding(
 			tui.requestRender(true);
 		};
 
+		const showCustom = (): void => {
+			const protocolList = onboardingSelectList(customApiChoices());
+			protocolList.onSelect = (item) => {
+				const api = item.value as Exclude<ModelApi, "faux">;
+				const baseUrlInput = new Input({ cancelOnEndOfTransmission: true });
+				baseUrlInput.onSubmit = (value) => {
+					let baseUrl: string;
+					try {
+						baseUrl = validateCustomBaseUrl(value);
+					} catch (cause) {
+						screen.setError(cause instanceof Error ? cause.message : translate(locale, "customBaseUrlInvalid"));
+						tui.requestRender(true);
+						return;
+					}
+					const keyInput = new Input({ mask: "*", cancelOnEndOfTransmission: true });
+					keyInput.onSubmit = (keyValue) => {
+						const apiKey = keyValue.trim();
+						if (!apiKey) {
+							screen.setError(translate(locale, "apiKeyRequired"));
+							tui.requestRender(true);
+							return;
+						}
+						const modelInput = new Input({ cancelOnEndOfTransmission: true });
+						modelInput.onSubmit = (modelValue) => {
+							const modelId = modelValue.trim();
+							if (!modelId) {
+								screen.setError(translate(locale, "modelIdRequired"));
+								tui.requestRender(true);
+								return;
+							}
+							if (saving || settled) return;
+							saving = true;
+							void saveGlobalCustomProvider(options.agentDir, { api, baseUrl, apiKey, modelId })
+								.then((custom) => {
+									const providers = [
+										...options.configuration.providers.filter((provider) => provider.id !== "custom"),
+										custom,
+									];
+									finish(
+										resolveStartupRuntime(
+											{ ...options.configuration.environment, DI_CODE_PROVIDER: "custom", DI_CODE_MODEL: modelId },
+											providers,
+											{ providerId: "custom", modelId },
+										),
+									);
+								})
+								.catch(fail);
+						};
+						modelInput.onEscape = () => finish(undefined);
+						screen.setStep(translate(locale, "enterCustomModelId"), modelInput);
+						tui.setFocus(modelInput);
+						tui.requestRender(true);
+					};
+					keyInput.onEscape = () => finish(undefined);
+					screen.setStep(translate(locale, "enterCustomApiKey"), keyInput);
+					tui.setFocus(keyInput);
+					tui.requestRender(true);
+				};
+				baseUrlInput.onEscape = () => finish(undefined);
+				screen.setStep(translate(locale, "enterCustomBaseUrl"), baseUrlInput);
+				tui.setFocus(baseUrlInput);
+				tui.requestRender(true);
+			};
+			protocolList.onCancel = () => finish(undefined);
+			screen.setStep(translate(locale, "selectCustomApi"), protocolList);
+			tui.setFocus(protocolList);
+			tui.requestRender(true);
+		};
+
 		const providerList = onboardingSelectList(providerChoices(locale));
 		providerList.onSelect = (item) => {
 			const choice = providerChoices(locale).find((candidate) => candidate.value === item.value);
-			if (choice) showModels(choice);
+			if (choice?.providerId === "custom") showCustom();
+			else if (choice) showModels(choice);
 		};
 		providerList.onCancel = () => finish(undefined);
 		screen.setStep(translate(locale, "selectProvider"), providerList);

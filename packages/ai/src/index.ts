@@ -33,6 +33,7 @@ export type {
 } from "./api/openai-responses.ts";
 export { buildOpenAIResponsesRequest, OpenAIProviderError, streamOpenAIResponses } from "./api/openai-responses.ts";
 export { MODELS } from "./models.generated.ts";
+export { findBuiltinModel } from "./models.ts";
 export type { AnthropicProviderOptions } from "./providers/anthropic.ts";
 export { createAnthropicProvider } from "./providers/anthropic.ts";
 export type { DeepSeekProviderOptions } from "./providers/deepseek.ts";

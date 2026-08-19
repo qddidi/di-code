@@ -9,6 +9,7 @@ import {
 	createOpenAIProvider,
 	createZhipuProvider,
 	type FauxResponse,
+	findBuiltinModel,
 	type Model,
 	type ModelApi,
 	type Provider,
@@ -39,6 +40,13 @@ export interface StartupConfiguration {
 export interface StartupDefaults {
 	readonly providerId?: string;
 	readonly modelId?: string;
+}
+
+export interface CustomProviderInput {
+	readonly api: Exclude<ModelApi, "faux">;
+	readonly baseUrl: string;
+	readonly apiKey: string;
+	readonly modelId: string;
 }
 
 const FAUX_RESPONSES: readonly FauxResponse[] = [
@@ -107,6 +115,42 @@ function nonNegativeNumber(value: unknown, path: string, fallback: number, setti
 	return result;
 }
 
+function parseChatCompletionsCompat(
+	value: unknown,
+	path: string,
+	settingsPath: string,
+): Model["chatCompletionsCompat"] {
+	if (value === undefined) return undefined;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error(`${settingsPath}: ${path} must be an object`);
+	}
+	const compat = value as Record<string, unknown>;
+	const optionalBoolean = (field: string): boolean | undefined => {
+		const candidate = compat[field];
+		if (candidate === undefined) return undefined;
+		if (typeof candidate !== "boolean") throw new Error(`${settingsPath}: ${path}.${field} must be a boolean`);
+		return candidate;
+	};
+	const maxTokensField = compat.maxTokensField;
+	if (maxTokensField !== undefined && maxTokensField !== "max_tokens" && maxTokensField !== "max_completion_tokens") {
+		throw new Error(`${settingsPath}: ${path}.maxTokensField is invalid`);
+	}
+	const thinkingFormat = compat.thinkingFormat;
+	if (thinkingFormat !== undefined && thinkingFormat !== "zai" && thinkingFormat !== "deepseek") {
+		throw new Error(`${settingsPath}: ${path}.thinkingFormat is invalid`);
+	}
+	const supportsUsageInStreaming = optionalBoolean("supportsUsageInStreaming");
+	const supportsReasoningEffort = optionalBoolean("supportsReasoningEffort");
+	const zaiToolStream = optionalBoolean("zaiToolStream");
+	return {
+		...(maxTokensField === undefined ? {} : { maxTokensField }),
+		...(thinkingFormat === undefined ? {} : { thinkingFormat }),
+		...(supportsUsageInStreaming === undefined ? {} : { supportsUsageInStreaming }),
+		...(supportsReasoningEffort === undefined ? {} : { supportsReasoningEffort }),
+		...(zaiToolStream === undefined ? {} : { zaiToolStream }),
+	};
+}
+
 function parseModels(
 	value: unknown,
 	path: string,
@@ -171,6 +215,14 @@ function parseModels(
 					: ([...configuredReasoningEfforts] as Model["reasoningEfforts"]);
 		const baseUrl = optionalString(model.baseUrl, `${modelPath}.baseUrl`, settingsPath) ?? providerBaseUrl;
 		const id = requiredString(model.id, `${modelPath}.id`, settingsPath);
+		const chatCompletionsCompat = parseChatCompletionsCompat(
+			model.chatCompletionsCompat,
+			`${modelPath}.chatCompletionsCompat`,
+			settingsPath,
+		);
+		if (chatCompletionsCompat !== undefined && typedApi !== "openai-chat-completions") {
+			throw new Error(`${settingsPath}: ${modelPath}.chatCompletionsCompat requires api "openai-chat-completions"`);
+		}
 		return {
 			id,
 			name: requiredString(model.name ?? id, `${modelPath}.name`, settingsPath),
@@ -180,6 +232,7 @@ function parseModels(
 			input: [...input],
 			reasoning: model.reasoning ?? false,
 			...(reasoningEfforts ? { reasoningEfforts } : {}),
+			...(chatCompletionsCompat ? { chatCompletionsCompat } : {}),
 			...(model.cacheRetention === "long" ? { cacheRetention: "long" as const } : {}),
 			...(model.sessionAffinity === "codex" ? { sessionAffinity: "codex" as const } : {}),
 			contextWindow: positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000, settingsPath),
@@ -197,6 +250,75 @@ function parseModels(
 			},
 		};
 	});
+}
+
+/** Validates a Custom onboarding endpoint without issuing a network request. */
+export function validateCustomBaseUrl(value: string): string {
+	const baseUrl = value.trim();
+	if (!baseUrl) throw new Error("Base URL cannot be empty.");
+	let url: URL;
+	try {
+		url = new URL(baseUrl);
+	} catch {
+		throw new Error("Base URL must be an absolute http or https URL.");
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use http or https.");
+	if (url.username || url.password || url.search || url.hash) {
+		throw new Error("Base URL must not contain credentials, query, or hash.");
+	}
+	if (baseUrl.endsWith("/")) throw new Error("Base URL must not end with /.");
+	return baseUrl;
+}
+
+function requireCustomValue(value: string, field: "apiKey" | "modelId"): string {
+	const trimmed = value.trim();
+	if (!trimmed) throw new Error(`${field === "apiKey" ? "API key" : "Model ID"} cannot be empty.`);
+	return trimmed;
+}
+
+/** Builds the single user-managed Custom provider from validated onboarding input. */
+export function createCustomProviderConfiguration(input: CustomProviderInput): StartupProviderConfiguration {
+	const baseUrl = validateCustomBaseUrl(input.baseUrl);
+	const modelId = requireCustomValue(input.modelId, "modelId");
+	const apiKey = requireCustomValue(input.apiKey, "apiKey");
+	const known = findBuiltinModel(input.api, modelId);
+	const model: Model = known
+		? {
+				...known,
+				id: modelId,
+				provider: "custom",
+				api: input.api,
+				baseUrl,
+			}
+		: {
+				id: modelId,
+				name: modelId,
+				provider: "custom",
+				api: input.api,
+				baseUrl,
+				input: ["text"],
+				reasoning: false,
+				contextWindow: 128_000,
+				maxOutputTokens: 16_384,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			};
+	return { id: "custom", name: "Custom", api: input.api, apiKey, baseUrl, models: [model] };
+}
+
+function serializeModel(model: Model): Record<string, unknown> {
+	return {
+		id: model.id,
+		name: model.name,
+		input: model.input,
+		reasoning: model.reasoning,
+		...(model.reasoningEfforts ? { reasoningEfforts: model.reasoningEfforts } : {}),
+		...(model.chatCompletionsCompat ? { chatCompletionsCompat: model.chatCompletionsCompat } : {}),
+		...(model.cacheRetention ? { cacheRetention: model.cacheRetention } : {}),
+		...(model.sessionAffinity ? { sessionAffinity: model.sessionAffinity } : {}),
+		contextWindow: model.contextWindow,
+		maxTokens: model.maxOutputTokens,
+		cost: Object.fromEntries(Object.entries(model.cost).map(([key, value]) => [key, value * 1_000_000])),
+	};
 }
 
 function parseSettings(value: unknown, settingsPath: string): SettingsFile {
@@ -313,6 +435,36 @@ export async function saveGlobalProviderApiKey(
 	});
 	await mkdir(agentDir, { recursive: true, mode: 0o700 });
 	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+/**
+ * Replaces the user-managed `custom` provider while retaining other global
+ * providers and preferences. The key is intentionally stored only here, never
+ * in project settings or process environment.
+ */
+export async function saveGlobalCustomProvider(
+	agentDir: string,
+	input: CustomProviderInput,
+): Promise<StartupProviderConfiguration> {
+	const configuration = createCustomProviderConfiguration(input);
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	const settings = mergeSettings(existingSettings, {
+		providers: {
+			custom: {
+				name: configuration.name,
+				api: configuration.api,
+				baseUrl: configuration.baseUrl,
+				apiKey: configuration.apiKey,
+				models: configuration.models?.map(serializeModel),
+			},
+		},
+		defaultProvider: "custom",
+		defaultModel: configuration.models?.[0]?.id,
+	});
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	return configuration;
 }
 
 /** Removes only the persisted credential for one provider; environment variables remain untouched. */

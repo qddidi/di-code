@@ -40,8 +40,8 @@ di-code
 
 在向导中依次完成：
 
-1. **选择 Provider**：例如 `OpenAI`、`Anthropic`、`DeepSeek`、`Zhipu AI`；如果只想离线试用，选择 `Faux (offline)`。
-2. **选择模型**：向导会列出当前 Provider 支持的模型，选择你有权限使用的模型。
+1. **选择 Provider**：例如 `OpenAI`、`Anthropic`、`DeepSeek`、`Zhipu AI`；也可以选择 `Custom` 配置兼容网关；如果只想离线试用，选择 `Faux (offline)`。
+2. **选择模型**：内建 Provider 会列出当前支持的模型；Custom 会先选择 API 协议，再输入 Base URL、API key 和任意模型 ID。
 3. **填写 API key**：选择真实 Provider 时，在隐藏输入框中粘贴对应的 key；输入内容不会显示在终端中。
 4. **确认并开始对话**：向导完成后进入 interactive 模式，在底部输入框输入问题并按 `Enter`。
 
@@ -510,6 +510,8 @@ di-code plugin remove project-status
 安装过程固定使用 `npm --ignore-scripts`，但这并不使插件本身安全：插件在加载时仍是本机代码。`plugin` 管理命令不需要配置 Provider。
 
 ## 自定义 Provider
+
+在 interactive TTY 的首次向导或 `/login` 中选择 `Custom`，可以按协议、Base URL、API key 和模型 ID 的顺序配置一个用户级固定 `custom` Provider。支持 `openai-responses`、`openai-chat-completions` 和 `anthropic-messages`。Base URL 必须是绝对 `http`/`https` URL，不能包含凭据、query、hash 或尾随 `/`。如果模型 ID 与内置目录中的同协议模型精确匹配，向导会复制其能力元数据；否则使用保守的文本模型默认值。重新配置会覆盖 `custom`，但保留其他用户级 Provider。
 
 自定义 OpenAI Responses 兼容网关或私有模型时，可在用户全局 `~/.di-code/settings.json` 或工作根目录 `.di-code/settings.json` 中声明 Provider。两个文件同时存在时，项目配置覆盖全局配置中的同名 Provider 字段。`apiKey` 可以直接填写，或使用环境变量引用：
 

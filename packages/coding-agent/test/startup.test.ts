@@ -7,7 +7,9 @@ import {
 	removeGlobalProviderApiKey,
 	resolveStartupArgs,
 	resolveStartupRuntime,
+	saveGlobalCustomProvider,
 	saveGlobalLocale,
+	validateCustomBaseUrl,
 } from "../src/startup.ts";
 
 describe("resolveStartupArgs", () => {
@@ -81,6 +83,73 @@ describe("Pi-style startup configuration", () => {
 				},
 			],
 		});
+	});
+
+	it("saves a Custom provider with known model capabilities and preserves unrelated global settings", async () => {
+		await writeGlobalSettings({
+			locale: "zh-CN",
+			providers: { other: { api: "openai-responses", apiKey: "other-key", models: [{ id: "other-model" }] } },
+		});
+
+		await saveGlobalCustomProvider(globalDir, {
+			api: "openai-responses",
+			baseUrl: "https://gateway.example.test/v1",
+			apiKey: "custom-secret",
+			modelId: "gpt-4o",
+		});
+
+		const saved = JSON.parse(await readFile(join(globalDir, "settings.json"), "utf8"));
+		expect(saved).toMatchObject({
+			locale: "zh-CN",
+			defaultProvider: "custom",
+			defaultModel: "gpt-4o",
+			providers: {
+				other: { apiKey: "other-key" },
+				custom: {
+					api: "openai-responses",
+					baseUrl: "https://gateway.example.test/v1",
+					apiKey: "custom-secret",
+					models: [{ id: "gpt-4o", input: ["text", "image"], contextWindow: 128000 }],
+				},
+			},
+		});
+		const restored = await loadStartupConfiguration(root, {}, globalDir);
+		const runtime = resolveStartupRuntime(restored.environment, restored.providers, restored.defaults);
+		expect(runtime.model).toMatchObject({
+			id: "gpt-4o",
+			provider: "custom",
+			baseUrl: "https://gateway.example.test/v1",
+		});
+	});
+
+	it("uses conservative defaults for a Custom model not in the selected protocol catalog", async () => {
+		const custom = await saveGlobalCustomProvider(globalDir, {
+			api: "openai-chat-completions",
+			baseUrl: "https://gateway.example.test/v1",
+			apiKey: "custom-secret",
+			modelId: "gpt-4o",
+		});
+
+		expect(custom.models?.[0]).toEqual({
+			id: "gpt-4o",
+			name: "gpt-4o",
+			provider: "custom",
+			api: "openai-chat-completions",
+			baseUrl: "https://gateway.example.test/v1",
+			input: ["text"],
+			reasoning: false,
+			contextWindow: 128000,
+			maxOutputTokens: 16384,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		});
+	});
+
+	it("rejects unsafe Custom endpoints before writing settings", () => {
+		expect(() => validateCustomBaseUrl("https://gateway.example.test/v1/")).toThrow("must not end with /");
+		expect(() => validateCustomBaseUrl("https://user:secret@gateway.example.test/v1")).toThrow(
+			"must not contain credentials",
+		);
+		expect(() => validateCustomBaseUrl("file:///tmp/gateway")).toThrow("must use http or https");
 	});
 
 	it("maps maxTokens and per-million prices into the internal model contract", async () => {

@@ -203,6 +203,47 @@ describe("runProviderOnboarding", () => {
 		expect(terminal.output).not.toContain("test-anthropic-secret");
 	});
 
+	it("configures a Custom gateway without exposing its API key", async () => {
+		const terminal = new TestTerminal();
+		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });
+
+		for (let index = 0; index < 5; index += 1) terminal.send("\x1b[B");
+		terminal.send("\r");
+		terminal.send("\x1b[B");
+		terminal.send("\r");
+		terminal.send("https://gateway.example.test/v1");
+		terminal.send("\r");
+		terminal.send("custom-gateway-secret");
+		terminal.send("\r");
+		terminal.send("gpt-4o");
+		terminal.send("\r");
+
+		const runtime = await result;
+		expect(runtime?.provider.id).toBe("custom");
+		expect(runtime?.model).toMatchObject({ id: "gpt-4o", provider: "custom", input: ["text"] });
+		expect(terminal.output).not.toContain("custom-gateway-secret");
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "custom",
+			defaultModel: "gpt-4o",
+			providers: { custom: { apiKey: "custom-gateway-secret", baseUrl: "https://gateway.example.test/v1" } },
+		});
+	});
+
+	it("keeps Custom base URL input active after validation fails and cancels without persisting", async () => {
+		const terminal = new TestTerminal();
+		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });
+
+		for (let index = 0; index < 5; index += 1) terminal.send("\x1b[B");
+		terminal.send("\r");
+		terminal.send("\r");
+		terminal.send("https://gateway.example.test/v1/");
+		terminal.send("\r");
+		terminal.send("\x03");
+
+		await expect(result).resolves.toBeUndefined();
+		await expect(access(join(agentDir, "settings.json"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	it("rejects an empty key and lets Ctrl-C cancel without creating a runtime", async () => {
 		const terminal = new TestTerminal();
 		const result = runProviderOnboarding({

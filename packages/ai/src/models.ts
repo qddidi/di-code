@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Model } from "./types.ts";
+import type { Model, ModelApi } from "./types.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutputPath = resolve(packageRoot, "src", "models.generated.ts");
@@ -25,6 +25,30 @@ function openAiModel(id: string, name: string, options: OpenAiModelOptions): Mod
 		input: options.input ?? ["text", "image"],
 		reasoning: options.reasoning,
 		...(options.reasoning ? { reasoningEfforts: ["low", "medium", "high"] as const } : {}),
+		contextWindow: options.contextWindow,
+		maxOutputTokens: options.maxOutputTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+}
+
+interface ChatCompletionsModelOptions {
+	readonly provider: string;
+	readonly baseUrl: string;
+	readonly contextWindow: number;
+	readonly maxOutputTokens: number;
+	readonly reasoning?: boolean;
+	readonly input?: Model["input"];
+}
+
+function chatCompletionsModel(id: string, name: string, options: ChatCompletionsModelOptions): Model {
+	return {
+		id,
+		name,
+		provider: options.provider,
+		api: "openai-chat-completions",
+		baseUrl: options.baseUrl,
+		input: options.input ?? ["text"],
+		reasoning: options.reasoning ?? false,
 		contextWindow: options.contextWindow,
 		maxOutputTokens: options.maxOutputTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -68,6 +92,66 @@ export const MODEL_SOURCE: readonly Model[] = [
 		contextWindow: 200_000,
 		maxOutputTokens: 64_000,
 		cost: { input: 0.000005, output: 0.000025, cacheRead: 0.0000005, cacheWrite: 0.00000625 },
+	},
+	{
+		id: "claude-fable-5",
+		name: "Claude Fable 5",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "claude-opus-4-6",
+		name: "Claude Opus 4.6",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "claude-opus-4-7",
+		name: "Claude Opus 4.7",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "claude-opus-4-8",
+		name: "Claude Opus 4.8",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "claude-opus-5",
+		name: "Claude Opus 5",
+		provider: "anthropic",
+		api: "anthropic-messages",
+		baseUrl: ANTHROPIC_BASE_URL,
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxOutputTokens: 64_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
 	{
 		id: "glm-5.3",
@@ -164,6 +248,28 @@ export const MODEL_SOURCE: readonly Model[] = [
 		maxOutputTokens: 384_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
+	chatCompletionsModel("qwen3.7-plus", "Qwen3.7 Plus", {
+		provider: "qwen",
+		baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		contextWindow: 128_000,
+		maxOutputTokens: 16_384,
+	}),
+	chatCompletionsModel("kimi-k3", "Kimi K3", {
+		provider: "kimi",
+		baseUrl: "https://api.moonshot.ai/v1",
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 1_000_000,
+		maxOutputTokens: 32_768,
+	}),
+	chatCompletionsModel("MiniMax-M3", "MiniMax M3", {
+		provider: "minimax",
+		baseUrl: "https://api.minimax.io/v1",
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 1_000_000,
+		maxOutputTokens: 32_768,
+	}),
 	openAiModel("gpt-4", "GPT-4", { reasoning: false, input: ["text"], contextWindow: 8_192, maxOutputTokens: 8_192 }),
 	openAiModel("gpt-4-turbo", "GPT-4 Turbo", { reasoning: false, contextWindow: 128_000, maxOutputTokens: 4_096 }),
 	openAiModel("gpt-4.1", "GPT-4.1", { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 }),
@@ -241,33 +347,25 @@ export const MODEL_SOURCE: readonly Model[] = [
 	openAiModel("gpt-5.6-luna", "GPT-5.6 Luna", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
 	openAiModel("gpt-5.6-sol", "GPT-5.6 Sol", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
 	openAiModel("gpt-5.6-terra", "GPT-5.6 Terra", { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }),
-	openAiModel("gpt-realtime-2.1", "GPT-Realtime-2.1", {
-		reasoning: true,
-		contextWindow: 128_000,
-		maxOutputTokens: 32_000,
-	}),
-	openAiModel("o1", "o1", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
-	openAiModel("o1-pro", "o1-pro", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
-	openAiModel("o3", "o3", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
-	openAiModel("o3-deep-research", "o3-deep-research", {
-		reasoning: true,
-		contextWindow: 200_000,
-		maxOutputTokens: 100_000,
-	}),
-	openAiModel("o3-mini", "o3-mini", {
-		reasoning: true,
-		input: ["text"],
-		contextWindow: 200_000,
-		maxOutputTokens: 100_000,
-	}),
-	openAiModel("o3-pro", "o3-pro", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
-	openAiModel("o4-mini", "o4-mini", { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }),
-	openAiModel("o4-mini-deep-research", "o4-mini-deep-research", {
-		reasoning: true,
-		contextWindow: 200_000,
-		maxOutputTokens: 100_000,
-	}),
 ];
+
+/**
+ * Looks up a built-in model by its exact API protocol and ID.
+ *
+ * The returned value owns its mutable nested fields, so callers can tailor a
+ * model for a configured gateway without mutating the catalog.
+ */
+export function findBuiltinModel(api: ModelApi, modelId: string): Model | undefined {
+	const model = MODEL_SOURCE.find((candidate) => candidate.api === api && candidate.id === modelId);
+	if (model === undefined) return undefined;
+	return {
+		...model,
+		input: [...model.input],
+		...(model.reasoningEfforts ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+		...(model.chatCompletionsCompat ? { chatCompletionsCompat: { ...model.chatCompletionsCompat } } : {}),
+		cost: { ...model.cost },
+	};
+}
 
 function requireNonEmptyString(value: string | undefined, field: string, label: string): string {
 	if (value === undefined || value.trim().length === 0) throw new Error(`${label}.${field} must be a non-empty string`);
