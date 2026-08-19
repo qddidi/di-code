@@ -84,13 +84,18 @@ MCP Server 可以提供 `tools`、`resources` 和 `prompts`；Client 可以提�
 
 ### 4.3 第三阶段：resources/prompts 和高级能力
 
-只有在工具集成稳定后再评估：
+已实现：
 
-- `resources/list`、`resources/read` 的显式用户/模型访问方式。
-- `prompts/list`、`prompts/get` 的 slash command 或显式调用方式。
-- OAuth 和 URL elicitation。
-- progress、分页、通知和可恢复任务。
-- Server 级重连策略和连接池。
+- `resources/list`、`resources/read` 的显式模型工具访问方式，不自动注入上下文。
+- `prompts/list`、`prompts/get` 的显式模型工具访问方式。
+- resources/prompts/tools 的分页、列表变更、资源更新通知和请求进度回调。
+- Server 级显式重连，重连后刷新 tools/resources/prompts。
+
+仍待单独设计：
+
+- OAuth 和 URL elicitation 的交互授权体验。
+- 可恢复任务的持久化、恢复策略和用户可见状态。
+- Server 级自动重连策略和连接池。
 
 每项能力都必须先定义在 di-code 中的用户可见语义，不能因为 SDK 有 API 就自动暴露。
 
@@ -241,8 +246,11 @@ di-code mcp remove <server-id>
 目标调用形状：
 
 ```powershell
-# stdio：`--` 后的值原样保存为 command 和 args，不经 shell 拼接。
-di-code mcp add --scope project --transport stdio project-tools -- npx -y @example/project-mcp
+# stdio：默认 local scope；`--` 后的值原样保存为 command 和 args，不经 shell 拼接。
+di-code mcp add project-tools -- npx -y @example/project-mcp
+
+# 指定 project scope 时仍省略 --transport stdio。
+di-code mcp add --scope project project-tools -- npx -y @example/project-mcp
 
 # Streamable HTTP（第二阶段）。
 di-code mcp add --scope project --transport http company-api https://mcp.example.com/mcp

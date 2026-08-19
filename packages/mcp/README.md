@@ -1,8 +1,8 @@
 # @di-code/mcp
 
-`@di-code/mcp` is the MCP client lifecycle package used by di-code. It implements MCP SDK `1.30.0` over local `stdio` and remote Streamable HTTP transports.
+`@di-code/mcp` 是 di-code 使用的 MCP 客户端生命周期包。它基于 MCP SDK `1.30.0` 实现，支持本地 `stdio` 和远程 Streamable HTTP 两种传输方式。
 
-The package owns connection initialization, `tools/list`, `tools/call`, timeouts, cancellation propagation and idempotent cleanup. It does not implement an Agent loop or make tool authorization decisions. Hosts must validate project configuration and trust before constructing a manager.
+该包负责连接初始化、分页的 `tools/list`、`resources/list`、`resources/read`、`prompts/list`、`prompts/get`、进度传播、列表和资源通知、有界超时、取消传播以及幂等清理。它不实现 Agent 循环，也不做工具授权决策。宿主在构造 manager 之前必须校验项目配置和信任关系。
 
 ```ts
 import { McpManager } from "@di-code/mcp";
@@ -20,6 +20,12 @@ try {
 }
 ```
 
-`McpError` distinguishes connection, authentication, protocol, timeout, cancellation, tool and closed-client failures. Server output is untrusted; diagnostics are redacted and capped at 4 KiB.
+资源和提示词是显式能力。`McpClient.listResources()` 和 `listPrompts()` 会遍历服务器的每一页；`readResource()` 和 `getPrompt()` 绝不会自动把内容注入模型上下文。通过 `client.on(...)` 注册事件监听器，可以接收 `resources_changed`、`prompts_changed`、`tools_changed` 和 `resource_updated` 通知。请求方法接受 `AbortSignal`，或带 `onProgress`、`timeoutMs` 和 `maxTotalTimeoutMs` 的 `McpRequestOptions`。
 
-Streamable HTTP URLs must be absolute `http` or `https` URLs. Headers should use environment references in host configuration; the package never persists or logs them.
+`McpManager.reconnect(serverId)` 会重建单个失败的传输并刷新其能力。重连是显式操作，不会重试任意请求，也不会静默改变工具授权。
+
+`McpError` 区分连接、认证、协议、超时、取消、工具和客户端已关闭等失败类型。服务器输出是不可信数据；诊断信息会脱敏并截断到 4 KiB。
+
+Streamable HTTP 的 URL 必须是绝对的 `http` 或 `https` 地址。请求头应在宿主配置中使用环境变量引用；该包不会持久化或记录这些请求头。
+
+OAuth 和 URL elicitation 目前被宿主刻意保持未启用状态。

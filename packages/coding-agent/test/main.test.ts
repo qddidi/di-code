@@ -5,11 +5,36 @@ import type { AgentEvent } from "@di-code/agent";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
-import { formatSessionLabel, runMain } from "../src/main.ts";
+import { formatSessionLabel, runMain, StartupStatusRenderer } from "../src/main.ts";
 
 function createIo() {
 	return { stdout: vi.fn(), stderr: vi.fn() };
 }
+
+describe("StartupStatusRenderer", () => {
+	it("replaces a loading line with its final outcome in an interactive terminal", () => {
+		const output: string[] = [];
+		const renderer = new StartupStatusRenderer((text) => output.push(text), true, 80);
+
+		renderer.update("plugin:example", "Plugin [loading] example");
+		renderer.update("plugin:example", "Plugin [ok] example (1 tools, 0 commands)");
+
+		expect(output).toEqual([
+			"Plugin [loading] example\n",
+			"\x1b[1A\r\x1b[2KPlugin [ok] example (1 tools, 0 commands)\x1b[1B\r",
+		]);
+	});
+
+	it("keeps append-only status output when terminal cursor control is unavailable", () => {
+		const output: string[] = [];
+		const renderer = new StartupStatusRenderer((text) => output.push(text), false, 80);
+
+		renderer.update("mcp:example", "MCP [loading] example");
+		renderer.update("mcp:example", "MCP [ok] example (1 tools, 0 resources, 0 prompts)");
+
+		expect(output).toEqual(["MCP [loading] example\n", "MCP [ok] example (1 tools, 0 resources, 0 prompts)\n"]);
+	});
+});
 
 function createRuntime(responses: readonly FauxResponse[]) {
 	const faux = createFauxProvider({ responses });

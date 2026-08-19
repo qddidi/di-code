@@ -8,6 +8,14 @@ describe("parseCliArgs", () => {
 	});
 
 	it("parses MCP management commands without shell-joining stdio arguments", () => {
+		expect(parseCliArgs(["mcp", "add", "playwright", "--", "npx.cmd", "-y", "@playwright/mcp@latest"])).toEqual({
+			kind: "mcp",
+			action: "add",
+			transport: "stdio",
+			serverId: "playwright",
+			command: "npx.cmd",
+			args: ["-y", "@playwright/mcp@latest"],
+		});
 		expect(
 			parseCliArgs([
 				"mcp",
@@ -45,6 +53,9 @@ describe("parseCliArgs", () => {
 			scope: "user",
 		});
 		expect(() => parseCliArgs(["mcp", "add", "--transport", "stdio", "tools", "npx"])).toThrow(
+			"requires <server-id> -- <command>",
+		);
+		expect(() => parseCliArgs(["mcp", "add", "remote", "https://example.test/mcp"])).toThrow(
 			"requires <server-id> -- <command>",
 		);
 	});

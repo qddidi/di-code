@@ -341,19 +341,20 @@ di-code --image .\before.png --image .\after.webp "比较两张图"
 }
 ```
 
-HTTP 配置使用 `type: "http"`、绝对 `http`/`https` `url` 和可选 `headers`。Server ID 使用小写字母、数字、`-` 和 `_`；工具名会转换为 `mcp__project-tools__<tool-name>`。`env` 和 `headers` 中可使用 `${ENV_VAR}`，缺失变量会阻止该配置加载且不会泄露变量值。项目未获 trust 时不会启动 local/project Server；user scope 仍可使用。连接、schema、认证或工具调用错误会产生脱敏 `mcp_diagnostic` 或正常的工具错误。MCP Server 是外部代码，项目 trust 不是权限沙箱。
+HTTP 配置使用 `type: "http"`、绝对 `http`/`https` `url` 和可选 `headers`。Server ID 使用小写字母、数字、`-` 和 `_`；工具名会转换为 `mcp__project-tools__<tool-name>`。支持 resources/prompts 的 Server 还会显式注册 `mcp__project-tools__resources_list`、`resource_read`、`prompts_list` 和 `prompt_get`；资源和提示词不会自动注入模型上下文。`env` 和 `headers` 中可使用 `${ENV_VAR}`，缺失变量会阻止该配置加载且不会泄露变量值。项目未获 trust 时不会启动 local/project Server；user scope 仍可使用。连接、schema、认证或工具调用错误会产生脱敏 `mcp_diagnostic` 或正常的工具错误。MCP Server 是外部代码，项目 trust 不是权限沙箱。
 
 配置管理命令：
 
 ```powershell
-di-code mcp add --scope project --transport stdio project-tools -- npx -y @example/project-mcp
+di-code mcp add project-tools -- npx -y @example/project-mcp
+di-code mcp add --scope project project-tools -- npx -y @example/project-mcp
 di-code mcp add --scope project --transport http company-api https://mcp.example.com/mcp
 di-code mcp list --scope project
 di-code mcp get company-api
 di-code mcp remove company-api --scope project
 ```
 
-配置范围按 `local` > `project` > `user` 生效：local 写入 `<work-root>/.di-code/mcp.local.json`，project 写入 `<work-root>/.mcp.json`，user 写入 `~/.di-code/mcp.json`。同一 Server ID 整体覆盖，不做字段级合并。`list` 和 `get` 会脱敏 header、环境变量和其他凭据；`add` 不安装或下载 Server 软件，stdio 的命令仍由用户提供并在连接时执行。
+配置范围按 `local` > `project` > `user` 生效：local 写入 `<work-root>/.di-code/mcp.local.json`，project 写入 `<work-root>/.mcp.json`，user 写入 `~/.di-code/mcp.json`。同一 Server ID 整体覆盖，不做字段级合并。interactive 启动时，每个 MCP Server 会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功状态包含 tools、resources 和 prompts 数量，失败信息经过脱敏。`mcp add <id> -- <command> [args...]` 默认使用 local stdio；HTTP 必须显式指定 `--transport http`。`list` 和 `get` 会脱敏 header、环境变量和其他凭据；`add` 不安装或下载 Server 软件，stdio 的命令仍由用户提供并在连接时执行。
 
 ## 项目说明与 Skills
 
@@ -447,7 +448,7 @@ di-code --no-skills "不要加载任何 Skill"
 2. interactive 模式中的 slash command；
 3. Agent 与会话生命周期事件处理器。
 
-插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。
+插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。interactive 启动时，每个实际加载的插件会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出该插件新增的 tools 和 slash commands 数量。print 和 JSON 模式保持 `plugin_diagnostic` 输出。
 
 ### 使用项目本地插件
 

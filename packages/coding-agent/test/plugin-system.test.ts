@@ -128,6 +128,32 @@ describe("plugin manifests and loader", () => {
 		expect(loaded.host.listCommands().map((command) => command.name)).toEqual(["typed"]);
 	});
 
+	it("reports loading, success, and import failures without changing plugin isolation", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-status-"));
+		roots.push(root);
+		await plugin(
+			root,
+			"healthy",
+			"index.mjs",
+			"export default (api) => api.registerCommand({ name: 'healthy', description: 'healthy', handler: async () => {} });",
+		);
+		await plugin(root, "broken", "index.mjs", "export default () => { throw new Error('plugin failed'); };");
+		const statuses: unknown[] = [];
+
+		const result = await loadPlugins({
+			cwd: root,
+			agentDir: join(root, "agent"),
+			projectTrusted: true,
+			onPluginLoadStatus: (status) => statuses.push(status),
+		});
+
+		expect(result.loaded.map((entry) => entry.manifest.id)).toEqual(["healthy"]);
+		expect(statuses).toContainEqual({ state: "loading", pluginId: "healthy" });
+		expect(statuses).toContainEqual({ state: "loaded", pluginId: "healthy", tools: 0, commands: 1 });
+		expect(statuses).toContainEqual({ state: "loading", pluginId: "broken" });
+		expect(statuses).toContainEqual(expect.objectContaining({ state: "failed", pluginId: "broken", stage: "import" }));
+	});
+
 	it("rejects entries that escape a plugin root without importing them", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-"));
 		roots.push(root);

@@ -375,9 +375,9 @@ npm run dev -- --print "用一句话介绍这个项目"
 }
 ```
 
-Server ID 只能使用小写字母、数字、`-` 和 `_`。`command` 与 `args` 作为结构化子进程参数执行，不经过 shell；HTTP 使用绝对 `http`/`https` URL 和 headers。`${ENV_VAR}` 可出现在 env/header 值中，缺失时错误只显示变量名。MCP 工具向模型暴露为 `mcp__<server-id>__<tool-name>`，参数会在转发前按 Server JSON Schema 校验。连接失败只禁用对应 Server，不影响内置工具；会话结束时会关闭 Server 和 HTTP transport。
+Server ID 只能使用小写字母、数字、`-` 和 `_`。`command` 与 `args` 作为结构化子进程参数执行，不经过 shell；HTTP 使用绝对 `http`/`https` URL 和 headers。`${ENV_VAR}` 可出现在 env/header 值中，缺失时错误只显示变量名。MCP 工具向模型暴露为 `mcp__<server-id>__<tool-name>`，参数会在转发前按 Server JSON Schema 校验。支持 resources/prompts 的 Server 另显式提供 `resources_list`、`resource_read`、`prompts_list` 和 `prompt_get` 工具；外部内容不会自动注入上下文。连接失败只禁用对应 Server，不影响内置工具；会话结束时会关闭 Server 和 HTTP transport。
 
-当前不支持 MCP resources、prompts、OAuth、SSE fallback 或自动安装 Server。`di-code mcp add/list/get/remove` 管理三种配置 scope：`local`（默认）写入 `<work-root>/.di-code/mcp.local.json`，`project` 写入 `<work-root>/.mcp.json`，`user` 写入 `~/.di-code/mcp.json`；生效优先级为 local > project > user，配置整体覆盖。管理命令不会下载或安装 Server，list/get 会脱敏凭据。MCP Server 是外部代码而不是权限沙箱，trust 只决定是否加载项目定义，不能替代对工具调用和 Server 来源的审查。
+MCP Client 支持 resources/prompts 分页、列表/资源变更通知、进度回调和显式 Server 重连；OAuth、URL elicitation、SSE fallback 和自动安装 Server 仍不支持。interactive 模式连接 MCP Server 时会先显示黄色 `[loading]`，随后原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出 tools、resources 和 prompts 数量，错误内容会脱敏。`--print` 和 JSON 模式继续使用原有输出与 `mcp_diagnostic` 协议。`di-code mcp add/list/get/remove` 管理三种配置 scope：`local`（默认）写入 `<work-root>/.di-code/mcp.local.json`，project 写入 `<work-root>/.mcp.json`，user 写入 `~/.di-code/mcp.json`；生效优先级为 local > project > user，配置整体覆盖。常用 stdio 注册可简写为 `di-code mcp add <id> -- <command> [args...]`，HTTP 仍需显式指定 `--transport http`。管理命令不会下载或安装 Server，list/get 会脱敏凭据。MCP Server 是外部代码而不是权限沙箱，trust 只决定是否加载项目定义，不能替代对工具调用和 Server 来源的审查。
 
 ## 使用
 
@@ -524,7 +524,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 npm run dev -- --trust-project --interactive
 ```
 
-信任决定只控制是否加载项目中的 Node.js 代码，**不是权限沙箱**；manifest 中的 `permissions` 当前用于声明和审计，不会阻止插件自行访问文件、网络或子进程。只加载可信插件，并在插件实现中自行处理路径边界、输入校验、超时、取消和凭据保护。
+信任决定只控制是否加载项目中的 Node.js 代码，**不是权限沙箱**；manifest 中的 `permissions` 当前用于声明和审计，不会阻止插件自行访问文件、网络或子进程。interactive 模式加载插件时会显示黄色 `[loading]`、绿色 `[ok]` 或红色 `[error]` 状态；成功项会列出新增 tools 与 slash commands 数量。print 和 JSON 模式仍使用原有 `plugin_diagnostic`。只加载可信插件，并在插件实现中自行处理路径边界、输入校验、超时、取消和凭据保护。
 
 完整的目录结构、manifest、工具 schema、事件顺序和排查方法见 [插件使用指南](docs/插件使用指南.md)。
 

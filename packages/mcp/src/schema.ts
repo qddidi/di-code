@@ -1,7 +1,12 @@
 import type { ValidateFunction } from "ajv";
 import { Ajv } from "ajv";
+import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { McpError } from "./errors.ts";
+
+const Ajv2020Constructor = Ajv2020 as unknown as new (
+	options?: ConstructorParameters<typeof Ajv>[0],
+) => InstanceType<typeof Ajv>;
 
 /** Compiles an MCP JSON Schema at the external boundary and validates plain tool arguments. */
 export function compileMcpInputSchema(
@@ -11,7 +16,10 @@ export function compileMcpInputSchema(
 ): (value: unknown) => void {
 	let validate: ValidateFunction;
 	try {
-		const ajv = new Ajv({ allErrors: true, strict: false });
+		const dialect = typeof schema.$schema === "string" ? schema.$schema : "";
+		const ajv = dialect.includes("2020-12")
+			? new Ajv2020Constructor({ allErrors: true, strict: false })
+			: new Ajv({ allErrors: true, strict: false });
 		(addFormats as unknown as (instance: InstanceType<typeof Ajv>) => void)(ajv);
 		validate = ajv.compile(schema);
 	} catch (cause) {

@@ -7,7 +7,19 @@ import type { ProjectTrustManager } from "../extensions/trust.ts";
 import type { ExtensionFactory } from "../extensions/types.ts";
 import { PluginManager } from "./manager.ts";
 import { readPackagePluginManifest, readPluginManifest, resolvePluginEntry } from "./manifest.ts";
-import type { DiscoveredPlugin, PluginDiagnostic } from "./types.ts";
+import type { DiscoveredPlugin, PluginDiagnostic, PluginDiagnosticStage } from "./types.ts";
+
+/** A plugin loading transition emitted after its manifest is discovered. */
+export type PluginLoadStatus =
+	| { readonly state: "loading"; readonly pluginId: string }
+	| { readonly state: "loaded"; readonly pluginId: string; readonly tools: number; readonly commands: number }
+	| {
+			readonly state: "failed";
+			readonly pluginId?: string;
+			readonly sourcePath: string;
+			readonly stage: Extract<PluginDiagnosticStage, "manifest" | "import">;
+			readonly message: string;
+	  };
 
 export interface PluginLoadOptions {
 	readonly cwd: string;
@@ -16,6 +28,8 @@ export interface PluginLoadOptions {
 	readonly trustManager?: ProjectTrustManager;
 	readonly mode?: "interactive" | "print" | "json";
 	readonly explicitPaths?: readonly string[];
+	/** Observes packaged plugin import outcomes without affecting the loader. */
+	readonly onPluginLoadStatus?: (status: PluginLoadStatus) => void;
 }
 
 export interface PluginLoadResult {
@@ -78,29 +92,48 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 		try {
 			manifest = await readPluginManifest(manifestPath).catch(async () => readPackagePluginManifest(root));
 		} catch (cause) {
+			const message = cause instanceof Error ? cause.message : String(cause);
 			diagnostics.push({
 				sourcePath: manifestPath,
 				stage: "manifest",
 				severity: "error",
-				message: cause instanceof Error ? cause.message : String(cause),
+				message,
 			});
+			options.onPluginLoadStatus?.({ state: "failed", sourcePath: manifestPath, stage: "manifest", message });
 			continue;
 		}
 		const projectLocal = root.startsWith(resolve(cwd, ".di-code", "plugins"));
 		if (!projectLocal && !enabledGlobal.has(manifest.id)) continue;
+		options.onPluginLoadStatus?.({ state: "loading", pluginId: manifest.id });
+		const toolCount = extensionResult.host.listTools().length;
+		const commandCount = extensionResult.host.listCommands().length;
 		try {
 			const entry = await resolvePluginEntry(root, manifest.entry);
 			const module = await jiti.import<{ default?: unknown }>(entry);
 			if (typeof module.default !== "function") throw new Error("plugin entry must export a default factory function");
 			await extensionResult.host.registerExtension(entry, module.default as ExtensionFactory, manifest.id);
 			loaded.push({ manifest, root, sourcePath: manifestPath, projectLocal });
+			options.onPluginLoadStatus?.({
+				state: "loaded",
+				pluginId: manifest.id,
+				tools: extensionResult.host.listTools().length - toolCount,
+				commands: extensionResult.host.listCommands().length - commandCount,
+			});
 		} catch (cause) {
+			const message = cause instanceof Error ? cause.message : String(cause);
 			diagnostics.push({
 				pluginId: manifest.id,
 				sourcePath: manifestPath,
 				stage: "import",
 				severity: "error",
-				message: cause instanceof Error ? cause.message : String(cause),
+				message,
+			});
+			options.onPluginLoadStatus?.({
+				state: "failed",
+				pluginId: manifest.id,
+				sourcePath: manifestPath,
+				stage: "import",
+				message,
 			});
 		}
 	}

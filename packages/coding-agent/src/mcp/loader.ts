@@ -1,4 +1,10 @@
-import { type McpDiagnostic, McpManager, type McpServerConfig, redactMcpDiagnostic } from "@di-code/mcp";
+import {
+	type McpDiagnostic,
+	McpManager,
+	type McpServerConfig,
+	type McpServerConnectionStatus,
+	redactMcpDiagnostic,
+} from "@di-code/mcp";
 import { loadEffectiveMcpConfig, mcpConfigPath, readMcpConfigScope } from "./config.ts";
 import { createMcpAgentTools } from "./tool-adapter.ts";
 
@@ -20,8 +26,9 @@ export async function loadProjectMcp(options: {
 	readonly projectTrusted: boolean;
 	readonly reservedToolNames: Iterable<string>;
 	readonly homeDirectory?: string;
+	readonly onServerConnectionStatus?: (status: McpServerConnectionStatus) => void;
 }): Promise<McpLoadResult> {
-	const manager = new McpManager();
+	const manager = new McpManager({ onServerConnectionStatus: options.onServerConnectionStatus });
 	if (!options.projectTrusted) {
 		try {
 			const [local, project] = await Promise.all([

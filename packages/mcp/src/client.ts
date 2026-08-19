@@ -2,8 +2,21 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { McpError, redactMcpDiagnostic } from "./errors.ts";
-import type { McpClient, McpServerConfig, McpTool, McpToolResult } from "./types.ts";
+import type {
+	McpClient,
+	McpClientEventListener,
+	McpProgress,
+	McpPrompt,
+	McpPromptResult,
+	McpRequestOptions,
+	McpResource,
+	McpResourceContent,
+	McpServerConfig,
+	McpTool,
+	McpToolResult,
+} from "./types.ts";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
@@ -11,6 +24,10 @@ const MAX_STDERR_BYTES = 4 * 1024;
 
 function requestOptions(signal: AbortSignal | undefined, timeout: number): { signal?: AbortSignal; timeout: number } {
 	return signal ? { signal, timeout } : { timeout };
+}
+
+function normalizeOptions(options: AbortSignal | McpRequestOptions | undefined, timeout: number): McpRequestOptions {
+	return options instanceof AbortSignal ? { signal: options, timeoutMs: timeout } : { timeoutMs: timeout, ...options };
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -24,10 +41,36 @@ export class StdioMcpClient implements McpClient {
 	private readonly transport: Transport & { close?: () => Promise<void> };
 	private stderr = "";
 	private state: "new" | "connected" | "closed" = "new";
+	private readonly listeners = new Set<McpClientEventListener>();
 
 	constructor(config: McpServerConfig) {
 		this.config = config;
-		this.client = new Client({ name: "di-code", version: "0.1.4" }, { capabilities: {} });
+		this.client = new Client(
+			{ name: "di-code", version: "0.1.4" },
+			{
+				capabilities: {},
+				listChanged: {
+					tools: {
+						onChanged: (_error, tools) =>
+							this.emit({ type: "tools_changed", tools: (tools ?? []).map((tool) => this.toTool(tool)) }),
+					},
+					resources: {
+						onChanged: (_error, resources) =>
+							this.emit({
+								type: "resources_changed",
+								resources: (resources ?? []).map((resource) => this.toResource(resource)),
+							}),
+					},
+					prompts: {
+						onChanged: (_error, prompts) =>
+							this.emit({ type: "prompts_changed", prompts: (prompts ?? []).map((prompt) => this.toPrompt(prompt)) }),
+					},
+				},
+			},
+		);
+		this.client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => {
+			this.emit({ type: "resource_updated", uri: notification.params.uri });
+		});
 		if (config.transport.type === "stdio") {
 			const transport = new StdioClientTransport({
 				command: config.transport.command,
@@ -58,11 +101,11 @@ export class StdioMcpClient implements McpClient {
 			});
 		}
 		this.transport.onerror = (cause) => {
-			if (this.state !== "closed") this.state = "closed";
+			this.markClosed();
 			void cause;
 		};
 		this.transport.onclose = () => {
-			if (this.state !== "closed") this.state = "closed";
+			this.markClosed();
 		};
 	}
 
@@ -83,30 +126,38 @@ export class StdioMcpClient implements McpClient {
 
 	async listTools(signal?: AbortSignal): Promise<readonly McpTool[]> {
 		this.assertConnected();
+		if (!this.client.getServerCapabilities()?.tools) return [];
 		try {
-			const result = await this.client.listTools(
-				{},
-				requestOptions(signal, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS),
-			);
-			return result.tools.map((tool) => ({
-				name: tool.name,
-				...(tool.description === undefined ? {} : { description: tool.description }),
-				inputSchema: asObject(tool.inputSchema),
-				serverId: this.config.id,
-			}));
+			const tools: McpTool[] = [];
+			let cursor: string | undefined;
+			do {
+				const result = await this.client.listTools(
+					cursor ? { cursor } : {},
+					requestOptions(signal, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS),
+				);
+				tools.push(...result.tools.map((tool) => this.toTool(tool)));
+				cursor = result.nextCursor;
+			} while (cursor !== undefined);
+			return tools;
 		} catch (cause) {
 			throw this.error("protocol", cause);
 		}
 	}
 
-	async callTool(name: string, argumentsValue: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolResult> {
+	async callTool(
+		name: string,
+		argumentsValue: Record<string, unknown>,
+		options?: AbortSignal | McpRequestOptions,
+	): Promise<McpToolResult> {
 		this.assertConnected();
 		try {
-			const result = await this.client.callTool(
-				{ name, arguments: argumentsValue },
-				undefined,
-				requestOptions(signal, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS),
-			);
+			const request = normalizeOptions(options, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
+			const result = await this.client.callTool({ name, arguments: argumentsValue }, undefined, {
+				signal: request.signal,
+				timeout: request.timeoutMs,
+				maxTotalTimeout: request.maxTotalTimeoutMs,
+				onprogress: request.onProgress ? (progress) => request.onProgress?.(progress as McpProgress) : undefined,
+			});
 			return {
 				content: Array.isArray(result.content) ? result.content : [],
 				...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
@@ -117,10 +168,165 @@ export class StdioMcpClient implements McpClient {
 		}
 	}
 
+	async listResources(options?: McpRequestOptions): Promise<readonly McpResource[]> {
+		this.assertConnected();
+		if (!this.client.getServerCapabilities()?.resources) return [];
+		try {
+			const resources: McpResource[] = [];
+			let cursor: string | undefined;
+			do {
+				const request = normalizeOptions(options, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
+				const result = await this.client.listResources(cursor ? { cursor } : {}, {
+					signal: request.signal,
+					timeout: request.timeoutMs,
+					maxTotalTimeout: request.maxTotalTimeoutMs,
+					onprogress: request.onProgress ? (progress) => request.onProgress?.(progress as McpProgress) : undefined,
+				});
+				resources.push(...result.resources.map((resource) => this.toResource(resource)));
+				cursor = result.nextCursor;
+			} while (cursor !== undefined);
+			return resources;
+		} catch (cause) {
+			throw this.error("protocol", cause);
+		}
+	}
+
+	async readResource(uri: string, options?: McpRequestOptions): Promise<readonly McpResourceContent[]> {
+		this.assertConnected();
+		try {
+			const request = normalizeOptions(options, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
+			const result = await this.client.readResource(
+				{ uri },
+				{
+					signal: request.signal,
+					timeout: request.timeoutMs,
+					maxTotalTimeout: request.maxTotalTimeoutMs,
+					onprogress: request.onProgress ? (progress) => request.onProgress?.(progress as McpProgress) : undefined,
+				},
+			);
+			return result.contents.map((item) =>
+				"text" in item
+					? { uri: item.uri, text: item.text, ...(item.mimeType ? { mimeType: item.mimeType } : {}) }
+					: { uri: item.uri, blob: item.blob, ...(item.mimeType ? { mimeType: item.mimeType } : {}) },
+			);
+		} catch (cause) {
+			throw this.error("protocol", cause);
+		}
+	}
+
+	async listPrompts(options?: McpRequestOptions): Promise<readonly McpPrompt[]> {
+		this.assertConnected();
+		if (!this.client.getServerCapabilities()?.prompts) return [];
+		try {
+			const prompts: McpPrompt[] = [];
+			let cursor: string | undefined;
+			do {
+				const request = normalizeOptions(options, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
+				const result = await this.client.listPrompts(cursor ? { cursor } : {}, {
+					signal: request.signal,
+					timeout: request.timeoutMs,
+					maxTotalTimeout: request.maxTotalTimeoutMs,
+					onprogress: request.onProgress ? (progress) => request.onProgress?.(progress as McpProgress) : undefined,
+				});
+				prompts.push(...result.prompts.map((prompt) => this.toPrompt(prompt)));
+				cursor = result.nextCursor;
+			} while (cursor !== undefined);
+			return prompts;
+		} catch (cause) {
+			throw this.error("protocol", cause);
+		}
+	}
+
+	async getPrompt(
+		name: string,
+		argumentsValue: Record<string, string> = {},
+		options?: McpRequestOptions,
+	): Promise<McpPromptResult> {
+		this.assertConnected();
+		try {
+			const request = normalizeOptions(options, this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
+			const result = await this.client.getPrompt(
+				{ name, arguments: argumentsValue },
+				{
+					signal: request.signal,
+					timeout: request.timeoutMs,
+					maxTotalTimeout: request.maxTotalTimeoutMs,
+					onprogress: request.onProgress ? (progress) => request.onProgress?.(progress as McpProgress) : undefined,
+				},
+			);
+			return {
+				...(result.description ? { description: result.description } : {}),
+				messages: result.messages as McpPromptResult["messages"],
+			};
+		} catch (cause) {
+			throw this.error("protocol", cause);
+		}
+	}
+
+	on(listener: McpClientEventListener): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
 	async close(): Promise<void> {
 		if (this.state === "closed") return;
-		this.state = "closed";
+		this.markClosed();
 		await this.client.close().catch(() => this.transport.close().catch(() => undefined));
+	}
+
+	private emit(event: Parameters<McpClientEventListener>[0]): void {
+		for (const listener of this.listeners) {
+			try {
+				listener(event);
+			} catch {
+				/* observers must not break transport */
+			}
+		}
+	}
+
+	private markClosed(): void {
+		if (this.state === "closed") return;
+		this.state = "closed";
+		this.emit({ type: "closed" });
+	}
+
+	private toTool(tool: { name: string; description?: string; inputSchema?: unknown }): McpTool {
+		return {
+			name: tool.name,
+			...(tool.description === undefined ? {} : { description: tool.description }),
+			inputSchema: asObject(tool.inputSchema),
+			serverId: this.config.id,
+		};
+	}
+
+	private toResource(resource: {
+		uri: string;
+		name: string;
+		description?: string;
+		mimeType?: string;
+		size?: number;
+	}): McpResource {
+		return {
+			uri: resource.uri,
+			name: resource.name,
+			...(resource.description === undefined ? {} : { description: resource.description }),
+			...(resource.mimeType === undefined ? {} : { mimeType: resource.mimeType }),
+			...(resource.size === undefined ? {} : { size: resource.size }),
+			serverId: this.config.id,
+		};
+	}
+
+	private toPrompt(prompt: {
+		name: string;
+		description?: string;
+		arguments?: { name: string; description?: string; required?: boolean }[];
+	}): McpPrompt {
+		return {
+			name: prompt.name,
+			...(prompt.description === undefined ? {} : { description: prompt.description }),
+			...(prompt.arguments === undefined ? {} : { arguments: prompt.arguments }),
+			serverId: this.config.id,
+		};
 	}
 
 	private assertConnected(): void {

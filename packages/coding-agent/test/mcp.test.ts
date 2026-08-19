@@ -167,6 +167,39 @@ describe("project MCP integration", () => {
 		expect(stderr).not.toHaveBeenCalled();
 	});
 
+	it("exposes MCP resources and prompts only through explicit Agent tools", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-mcp-capabilities-"));
+		roots.push(root);
+		await writeFile(
+			join(root, ".mcp.json"),
+			JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixture] } } }),
+		);
+		const stdout = vi.fn();
+		const exitCode = await runMain(["--trust-project", "--print", "read MCP resource"], {
+			stdout,
+			stderr: vi.fn(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir: join(root, "agent"),
+			createRuntime: runtime([
+				{
+					type: "success",
+					content: [
+						{
+							type: "tool_call",
+							id: "resource-call",
+							name: "mcp__fixture__resource_read",
+							arguments: { uri: "fixture://hello" },
+						},
+					],
+				},
+				{ type: "success", content: [{ type: "text", text: "Resource completed." }] },
+			]),
+		});
+		expect(exitCode).toBe(0);
+		expect(stdout).toHaveBeenCalledWith("Resource completed.\n");
+	});
+
 	it("does not start project MCP servers without project trust", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-mcp-untrusted-"));
 		roots.push(root);

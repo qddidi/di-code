@@ -226,14 +226,18 @@ function parseMcpArgs(args: readonly string[]): Extract<CliCommand, { kind: "mcp
 			throw new CliUsageError(`MCP ${action} requires exactly one server id.`);
 		return { kind: "mcp", action, serverId: positional[0], ...(scope ? { scope } : {}) };
 	}
-	if (transport === undefined) throw new CliUsageError("MCP add requires --transport stdio or --transport http.");
-	if (transport === "stdio") {
+	const selectedTransport = transport ?? (separator >= 0 ? "stdio" : undefined);
+	if (selectedTransport === undefined)
+		throw new CliUsageError(
+			"MCP add requires <server-id> -- <command> [args...] or --transport http <server-id> <url>.",
+		);
+	if (selectedTransport === "stdio") {
 		if (positional.length < 2 || separator < 0)
 			throw new CliUsageError("MCP stdio add requires <server-id> -- <command> [args...].");
 		return {
 			kind: "mcp",
 			action,
-			transport,
+			transport: "stdio",
 			serverId: positional[0],
 			command: positional[1],
 			...(positional.length > 2 ? { args: positional.slice(2) } : {}),
@@ -259,7 +263,7 @@ Options:
   --trust-project    Persist trust for project-local Skill discovery
   --untrust-project  Persist denial for project-local Skill discovery
   plugin <action>    Install, list, enable, disable, update, or remove a plugin
-  mcp add|list|get|remove Manage external MCP Server configuration
+  mcp add|list|get|remove Manage MCP configuration (add <id> -- <command> defaults to local stdio)
   -h, --help         Show help
   -v, --version      Show version
 `;

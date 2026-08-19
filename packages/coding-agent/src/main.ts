@@ -3,7 +3,8 @@ import { access, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
-import { ProcessTerminal, TUI } from "@di-code/tui";
+import type { McpServerConnectionStatus } from "@di-code/mcp";
+import { ProcessTerminal, TUI, truncateToWidth } from "@di-code/tui";
 import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
 import { loadImageInputs } from "./core/image-input.ts";
 import { loadResources } from "./core/resources/loader.ts";
@@ -16,7 +17,7 @@ import { loadProjectMcp } from "./mcp/loader.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
-import { loadPlugins } from "./plugins/loader.ts";
+import { loadPlugins, type PluginLoadStatus } from "./plugins/loader.ts";
 import { PluginManager } from "./plugins/manager.ts";
 import type { StartupConfiguration } from "./startup.ts";
 
@@ -42,6 +43,82 @@ export interface MainOptions extends PrintIo {
 
 const DEFAULT_SESSION_DIRECTORY = join(".di-code", "sessions");
 const MAX_SESSION_QUESTION_LENGTH = 72;
+
+const STARTUP_STATUS_COLORS = {
+	error: "\x1b[31m",
+	success: "\x1b[32m",
+	warning: "\x1b[33m",
+	reset: "\x1b[0m",
+} as const;
+
+function formatMcpStatus(status: McpServerConnectionStatus): string {
+	switch (status.state) {
+		case "connecting":
+			return `${STARTUP_STATUS_COLORS.warning}MCP [loading]${STARTUP_STATUS_COLORS.reset} ${status.serverId}`;
+		case "connected":
+			return `${STARTUP_STATUS_COLORS.success}MCP [ok]${STARTUP_STATUS_COLORS.reset} ${status.serverId} (${status.tools} tools, ${status.resources} resources, ${status.prompts} prompts)`;
+		case "failed":
+			return `${STARTUP_STATUS_COLORS.error}MCP [error]${STARTUP_STATUS_COLORS.reset} ${status.serverId} (${status.stage}): ${status.message}`;
+	}
+}
+
+function formatMcpDiagnostic(serverId: string | undefined, stage: string, message: string): string {
+	return `${STARTUP_STATUS_COLORS.error}MCP [error]${STARTUP_STATUS_COLORS.reset} ${serverId ?? "configuration"} (${stage}): ${message}\n`;
+}
+
+function formatPluginStatus(status: PluginLoadStatus): string {
+	switch (status.state) {
+		case "loading":
+			return `${STARTUP_STATUS_COLORS.warning}Plugin [loading]${STARTUP_STATUS_COLORS.reset} ${status.pluginId}`;
+		case "loaded":
+			return `${STARTUP_STATUS_COLORS.success}Plugin [ok]${STARTUP_STATUS_COLORS.reset} ${status.pluginId} (${status.tools} tools, ${status.commands} commands)`;
+		case "failed":
+			return `${STARTUP_STATUS_COLORS.error}Plugin [error]${STARTUP_STATUS_COLORS.reset} ${status.pluginId ?? "plugin"} (${status.stage}): ${status.message}`;
+	}
+}
+
+function formatPluginDiagnostic(pluginId: string | undefined, stage: string, message: string): string {
+	return `${STARTUP_STATUS_COLORS.error}Plugin [error]${STARTUP_STATUS_COLORS.reset} ${pluginId ?? "plugin"} (${stage}): ${message}\n`;
+}
+
+function pluginStatusKey(status: PluginLoadStatus): string {
+	if (status.state === "failed" && status.pluginId === undefined) return `plugin:${status.sourcePath}`;
+	return `plugin:${status.pluginId}`;
+}
+
+/** Renders startup states in place so terminal history retains only their final outcome. */
+export class StartupStatusRenderer {
+	private readonly lines: string[] = [];
+	private readonly indexes = new Map<string, number>();
+	private readonly write: (text: string) => void;
+	private readonly replaceInPlace: boolean;
+	private readonly width: number;
+
+	constructor(write: (text: string) => void, replaceInPlace: boolean, width = 80) {
+		this.write = write;
+		this.replaceInPlace = replaceInPlace;
+		this.width = width;
+	}
+
+	update(key: string, text: string): void {
+		const line = truncateToWidth(text.replace(/[\r\n]+/g, " "), Math.max(1, this.width), "...");
+		const index = this.indexes.get(key);
+		if (index === undefined || !this.replaceInPlace) {
+			this.indexes.set(key, this.lines.length);
+			this.lines.push(line);
+			this.write(`${line}\n`);
+			return;
+		}
+		this.lines[index] = line;
+		const offset = this.lines.length - index;
+		this.write(`\x1b[${offset}A\r\x1b[2K${line}\x1b[${offset}B\r`);
+	}
+}
+
+function startupStatusRenderer(write: (text: string) => void, interactive: boolean): StartupStatusRenderer {
+	const width = typeof process.stderr.columns === "number" && process.stderr.columns > 0 ? process.stderr.columns : 80;
+	return new StartupStatusRenderer(write, interactive && process.stderr.isTTY === true, width);
+}
 
 async function openOrCreateSession(filePath: string, cwd: string, now: () => number): Promise<SessionManager> {
 	try {
@@ -345,17 +422,34 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					`${JSON.stringify({ type: "skill_diagnostic", path: diagnostic.path, stage: diagnostic.stage, severity: diagnostic.severity, message: diagnostic.message })}\n`,
 				);
 			}
+			const interactivePluginStatus = command.mode === "interactive";
+			const startupStatus = startupStatusRenderer(options.stderr, interactivePluginStatus);
+			const pluginStatusFailures = new Set<string>();
 			const extensions = await loadPlugins({
 				cwd: allowedRoot,
 				agentDir,
 				trustManager,
 				mode: command.mode,
+				...(interactivePluginStatus
+					? {
+							onPluginLoadStatus: (status) => {
+								if (status.state === "failed") pluginStatusFailures.add(status.sourcePath);
+								startupStatus.update(pluginStatusKey(status), formatPluginStatus(status));
+							},
+						}
+					: {}),
 			});
 			for (const diagnostic of extensions.diagnostics) {
+				if (interactivePluginStatus) {
+					if (pluginStatusFailures.has(diagnostic.sourcePath)) continue;
+					options.stderr(formatPluginDiagnostic(diagnostic.pluginId, diagnostic.stage, diagnostic.message));
+					continue;
+				}
 				options.stderr(
 					`${JSON.stringify({ type: "plugin_diagnostic", pluginId: diagnostic.pluginId, stage: diagnostic.stage, sourcePath: diagnostic.sourcePath, severity: diagnostic.severity, message: diagnostic.message })}\n`,
 				);
 			}
+			const interactiveMcpStatus = command.mode === "interactive";
 			const mcp = await loadProjectMcp({
 				cwd: allowedRoot,
 				projectTrusted: persistedTrust === true,
@@ -368,8 +462,19 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					"load_skill",
 					...extensions.host.listTools().map((tool) => tool.name),
 				],
+				...(interactiveMcpStatus
+					? {
+							onServerConnectionStatus: (status) =>
+								startupStatus.update(`mcp:${status.serverId}`, formatMcpStatus(status)),
+						}
+					: {}),
 			});
 			for (const diagnostic of mcp.diagnostics) {
+				if (interactiveMcpStatus) {
+					if (diagnostic.serverId && (diagnostic.stage === "connect" || diagnostic.stage === "list_tools")) continue;
+					options.stderr(formatMcpDiagnostic(diagnostic.serverId, diagnostic.stage, diagnostic.message));
+					continue;
+				}
 				options.stderr(
 					`${JSON.stringify({ type: "mcp_diagnostic", serverId: diagnostic.serverId, stage: diagnostic.stage, message: diagnostic.message })}\n`,
 				);
