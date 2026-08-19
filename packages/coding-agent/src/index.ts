@@ -7,4 +7,7 @@ export * from "./core/session/types.ts";
 export * from "./core/session.ts";
 export * from "./core/system-prompt.ts";
 export * from "./extensions/index.ts";
+export * from "./mcp/config.ts";
+export * from "./mcp/loader.ts";
+export * from "./mcp/tool-adapter.ts";
 export * from "./plugins/index.ts";

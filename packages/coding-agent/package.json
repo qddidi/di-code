@@ -54,6 +54,7 @@
 	"dependencies": {
 		"@di-code/agent": "0.1.4",
 		"@di-code/ai": "0.1.4",
+		"@di-code/mcp": "0.1.4",
 		"@di-code/skills": "0.1.4",
 		"@di-code/tui": "0.1.4",
 		"diff": "8.0.4",

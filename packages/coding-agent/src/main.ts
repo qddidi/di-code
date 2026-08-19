@@ -11,6 +11,7 @@ import { SessionManager } from "./core/session/session-manager.ts";
 import { AgentSession } from "./core/session.ts";
 import { buildSystemPrompt } from "./core/system-prompt.ts";
 import { ProjectTrustManager } from "./extensions/trust.ts";
+import { loadProjectMcp } from "./mcp/loader.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
@@ -89,11 +90,13 @@ async function hasProjectLocalCapabilities(cwd: string): Promise<boolean> {
 		join(cwd, ".agents", "skills"),
 		join(cwd, ".di-code", "extensions"),
 		join(cwd, ".di-code", "plugins"),
+		join(cwd, ".mcp.json"),
 	];
 	const results = await Promise.all(
 		directories.map(async (directory) => {
 			try {
-				return (await stat(directory)).isDirectory();
+				const metadata = await stat(directory);
+				return metadata.isDirectory() || metadata.isFile();
 			} catch (cause) {
 				if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
 				return false;
@@ -300,6 +303,23 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					`${JSON.stringify({ type: "plugin_diagnostic", pluginId: diagnostic.pluginId, stage: diagnostic.stage, sourcePath: diagnostic.sourcePath, severity: diagnostic.severity, message: diagnostic.message })}\n`,
 				);
 			}
+			const mcp = await loadProjectMcp({
+				cwd: allowedRoot,
+				projectTrusted: persistedTrust === true,
+				reservedToolNames: [
+					"read",
+					"write",
+					"edit",
+					"bash",
+					"load_skill",
+					...extensions.host.listTools().map((tool) => tool.name),
+				],
+			});
+			for (const diagnostic of mcp.diagnostics) {
+				options.stderr(
+					`${JSON.stringify({ type: "mcp_diagnostic", serverId: diagnostic.serverId, stage: diagnostic.stage, message: diagnostic.message })}\n`,
+				);
+			}
 			const systemPrompt = buildSystemPrompt({ cwd: allowedRoot, ...resources });
 			const manager = await selectStartupSession(command, allowedRoot, now);
 			const sessionFile = manager.filePath;
@@ -312,6 +332,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				now: options.now,
 				sessionManager: manager,
 				extensionHost: extensions.host,
+				externalTools: mcp.tools,
 			});
 			const imagePaths = command.imagePaths ?? [];
 			const promptRunner = {
@@ -324,6 +345,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					return await runJsonMode(command.prompt, promptRunner, options);
 				} finally {
 					await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+					await mcp.manager.close();
 				}
 			}
 			if (command.mode === "interactive") {
@@ -332,6 +354,9 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				const mode = new InteractiveMode({
 					session,
 					tui,
+					onExit: () => {
+						void mcp.manager.close();
+					},
 					extensionHost: extensions.host,
 					...(options.startupConfiguration
 						? { providerOnboarding: { configuration: options.startupConfiguration, agentDir } }
@@ -358,6 +383,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 									now: options.now,
 									sessionManager: nextManager,
 									extensionHost: extensions.host,
+									externalTools: mcp.tools,
 								});
 							},
 						},
@@ -372,6 +398,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								now: options.now,
 								sessionManager: nextManager,
 								extensionHost: extensions.host,
+								externalTools: mcp.tools,
 							});
 						})),
 					],
@@ -384,6 +411,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				return await runPrintMode(command.prompt, promptRunner, options);
 			} finally {
 				await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+				await mcp.manager.close();
 			}
 		},
 	};

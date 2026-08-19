@@ -329,6 +329,20 @@ di-code --image .\before.png --image .\after.webp "比较两张图"
 
 文件工具限制目标在工作根目录内并拒绝二进制文件。`bash` 在 Windows 使用 PowerShell，在其他平台使用 `/bin/sh`；它并不是操作系统级沙箱。模型和插件仍可能尝试执行危险操作，因此请审查任务和结果，并避免在包含无关敏感文件的目录运行。
 
+## MCP stdio Server
+
+受信任项目可在工作根目录创建 `.mcp.json` 来接入 MCP Server tools：
+
+```json
+{
+  "mcpServers": {
+    "project-tools": { "command": "npx", "args": ["-y", "@example/project-mcp"] }
+  }
+}
+```
+
+只支持 `stdio`。Server ID 使用小写字母、数字、`-` 和 `_`；工具名会转换为 `mcp__project-tools__<tool-name>`。`env` 中可使用 `${ENV_VAR}`，缺失变量会阻止该配置加载且不会泄露变量值。项目未获 trust 时不会启动 Server；连接、schema 或工具调用错误会产生脱敏 `mcp_diagnostic` 或正常的工具错误。MCP Server 是本地外部代码，项目 trust 不是权限沙箱。
+
 ## 项目说明与 Skills
 
 ### `AGENTS.md`：给 Agent 的项目规则

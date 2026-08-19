@@ -1,0 +1,41 @@
+{
+	"name": "@di-code/mcp",
+	"version": "0.1.4",
+	"description": "MCP stdio client lifecycle for di-code hosts",
+	"keywords": [
+		"mcp",
+		"model-context-protocol",
+		"di-code"
+	],
+	"private": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/qddidi/di-code.git",
+		"directory": "packages/mcp"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.30.0",
+		"ajv": "^8.17.1",
+		"ajv-formats": "^3.0.1"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

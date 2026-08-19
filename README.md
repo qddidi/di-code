@@ -39,6 +39,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - `print`、`json`、`interactive` 三种 CLI 模式。
 - 可选 JSONL 会话持久化、并发追加保护和上下文压缩能力。
 - 插件 API，可注册模型工具、interactive 模式 slash command 及 Agent 生命周期事件处理器。
+- 受项目 trust 保护的 MCP `stdio` Server tools，可接入现有 Agent 工具循环。
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
@@ -355,6 +356,26 @@ ZAI_API_KEY=<your-zhipu-api-key>
 ```powershell
 npm run dev -- --print "用一句话介绍这个项目"
 ```
+
+### MCP stdio Server
+
+第一阶段支持项目根目录的 `.mcp.json` 中声明本地 `stdio` MCP Server。项目必须已获 trust：interactive TTY 会在发现 `.mcp.json` 时询问，也可以显式使用 `--trust-project`。print 和 JSON 模式不会询问，未信任时跳过 Server 并向 stderr 输出 `mcp_diagnostic`。
+
+```json
+{
+  "mcpServers": {
+    "project-tools": {
+      "command": "npx",
+      "args": ["-y", "@example/project-mcp"],
+      "env": { "EXAMPLE_TOKEN": "${EXAMPLE_TOKEN}" }
+    }
+  }
+}
+```
+
+Server ID 只能使用小写字母、数字、`-` 和 `_`。`command` 与 `args` 作为结构化子进程参数执行，不经过 shell。`${ENV_VAR}` 必须存在；错误只显示变量名。MCP 工具向模型暴露为 `mcp__<server-id>__<tool-name>`，参数会在转发前按 Server JSON Schema 校验。连接失败只禁用对应 Server，不影响内置工具；会话结束时会关闭 Server 子进程。
+
+当前不支持 HTTP/Streamable HTTP、MCP resources、prompts、OAuth 或 `di-code mcp add/list/get/remove` 管理命令。MCP Server 是外部代码而不是权限沙箱，trust 只决定是否加载项目定义，不能替代对工具调用和 Server 来源的审查。
 
 ## 使用
 

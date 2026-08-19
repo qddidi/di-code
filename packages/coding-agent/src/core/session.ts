@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentTool } from "@di-code/agent";
 import {
 	Agent,
 	type AgentListener,
@@ -60,6 +61,8 @@ export interface AgentSessionOptions {
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
 	readonly extensionHost?: ExtensionHost;
+	/** External tools already validated by the product integration layer. */
+	readonly externalTools?: readonly AgentTool[];
 }
 
 export type AgentSessionEvent =
@@ -181,6 +184,7 @@ export class AgentSession {
 						return [...result];
 					},
 				})) ?? []),
+				...(options.externalTools ?? []),
 			],
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
