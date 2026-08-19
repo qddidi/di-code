@@ -2,6 +2,8 @@
 
 `@di-code/mcp` 是 di-code 使用的 MCP 客户端生命周期包。它基于 MCP SDK `1.30.0` 实现，支持本地 `stdio` 和远程 Streamable HTTP 两种传输方式。
 
+项目主页：[github.com/qddidi/di-code](https://github.com/qddidi/di-code)
+
 该包负责连接初始化、分页的 `tools/list`、`resources/list`、`resources/read`、`prompts/list`、`prompts/get`、进度传播、列表和资源通知、有界超时、取消传播以及幂等清理。它不实现 Agent 循环，也不做工具授权决策。宿主在构造 manager 之前必须校验项目配置和信任关系。
 
 ```ts

@@ -128,8 +128,12 @@ async function main() {
 		const binPath = join(installDirectory, "node_modules", ".bin", binName);
 		await access(binPath);
 		const installedMetadata = JSON.parse(await readFile(join(codingAgentPackage, "package.json"), "utf8"));
+		const smokeEnvironment = { ...process.env, DI_CODE_LOCALE: "en" };
 
-		const help = await runNpm(["exec", "--offline", "--", "di-code", "--help"], { cwd: installDirectory });
+		const help = await runNpm(["exec", "--offline", "--", "di-code", "--help"], {
+			cwd: installDirectory,
+			env: smokeEnvironment,
+		});
 		if (!help.stdout.startsWith("Usage: di-code")) throw new Error("Outside-install help smoke returned unexpected output.");
 		const version = await runNpm(["exec", "--offline", "--", "di-code", "--version"], { cwd: installDirectory });
 		if (version.stdout.trim() !== installedMetadata.version) {
@@ -137,7 +141,7 @@ async function main() {
 		}
 		const conversation = await runNpm(["exec", "--offline", "--", "di-code", "--print", "release smoke"], {
 			cwd: installDirectory,
-			env: { ...process.env, DI_CODE_PROVIDER: "faux" },
+			env: { ...smokeEnvironment, DI_CODE_PROVIDER: "faux" },
 		});
 		if (conversation.stdout.trim().length === 0) throw new Error("Outside-install conversation smoke returned no text.");
 

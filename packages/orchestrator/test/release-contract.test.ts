@@ -18,7 +18,7 @@ interface PackageMetadata {
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "coding-agent", "orchestrator"] as const;
+const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "orchestrator"] as const;
 const execFileAsync = promisify(execFile);
 
 async function readPackage(path: string): Promise<PackageMetadata> {
@@ -55,6 +55,8 @@ describe("release package contract", () => {
 		const root = await readPackage(join(repositoryRoot, "package.json"));
 		expect(root.scripts?.build).toContain("@di-code/orchestrator");
 		expect(root.scripts?.["release:dry-run"]).toBe("node scripts/release-dry-run.mjs");
+		const releaseDryRun = await readFile(join(repositoryRoot, "scripts", "release-dry-run.mjs"), "utf8");
+		expect(releaseDryRun).toContain('DI_CODE_LOCALE: "en"');
 	});
 
 	it("provides guarded version preparation and publishing commands", async () => {
@@ -69,7 +71,7 @@ describe("release package contract", () => {
 			"--dry-run",
 			targetVersion,
 		]);
-		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 6 packages`);
+		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 7 packages`);
 		await expect(
 			execFileAsync(process.execPath, [
 				join(repositoryRoot, "scripts", "version-packages.mjs"),
