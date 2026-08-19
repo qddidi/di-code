@@ -11,6 +11,7 @@ import { SessionManager } from "./core/session/session-manager.ts";
 import { AgentSession } from "./core/session.ts";
 import { buildSystemPrompt } from "./core/system-prompt.ts";
 import { ProjectTrustManager } from "./extensions/trust.ts";
+import { addMcpConfig, getMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "./mcp/config.ts";
 import { loadProjectMcp } from "./mcp/loader.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
@@ -90,6 +91,7 @@ async function hasProjectLocalCapabilities(cwd: string): Promise<boolean> {
 		join(cwd, ".agents", "skills"),
 		join(cwd, ".di-code", "extensions"),
 		join(cwd, ".di-code", "plugins"),
+		join(cwd, ".di-code", "mcp.local.json"),
 		join(cwd, ".mcp.json"),
 	];
 	const results = await Promise.all(
@@ -252,6 +254,57 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				return 1;
 			}
 		},
+		mcp: async (command) => {
+			const cwd = resolve(options.allowedRoot ?? process.cwd());
+			const scope = command.scope;
+			const trustManager = new ProjectTrustManager(join(options.agentDir ?? join(homedir(), ".di-code"), "trust.json"));
+			const requireProjectTrust = async (selected: McpConfigScope): Promise<void> => {
+				if ((selected === "local" || selected === "project") && (await trustManager.get(cwd)) !== true)
+					throw new Error(`Project trust is required to modify the ${selected} MCP scope.`);
+			};
+			try {
+				switch (command.action) {
+					case "add": {
+						const selected = scope ?? "local";
+						await requireProjectTrust(selected);
+						const config =
+							command.transport === "stdio"
+								? {
+										command: command.command,
+										...(command.args && command.args.length > 0 ? { args: command.args } : {}),
+									}
+								: { type: "http", url: command.url };
+						await addMcpConfig(cwd, selected, command.serverId as string, config);
+						options.stdout(`Added MCP server "${command.serverId}" to ${selected} scope.\n`);
+						return 0;
+					}
+					case "list": {
+						const scopes: readonly McpConfigScope[] = scope ? [scope] : ["local", "project", "user"];
+						for (const selected of scopes) {
+							for (const entry of await listMcpConfig(cwd, selected))
+								options.stdout(`${entry.id}\t${entry.scope}\t${JSON.stringify(entry.config)}\n`);
+						}
+						return 0;
+					}
+					case "get": {
+						const entry = await getMcpConfig(cwd, command.serverId as string, scope);
+						if (!entry) throw new Error(`MCP server "${command.serverId}" was not found.`);
+						options.stdout(`${JSON.stringify({ id: entry.id, scope: entry.scope, config: entry.config })}\n`);
+						return 0;
+					}
+					case "remove": {
+						const selected = scope ?? "local";
+						await requireProjectTrust(selected);
+						await removeMcpConfig(cwd, selected, command.serverId as string);
+						options.stdout(`Removed MCP server "${command.serverId}" from ${selected} scope.\n`);
+						return 0;
+					}
+				}
+			} catch (cause) {
+				options.stderr(`${cause instanceof Error ? cause.message : String(cause)}\n`);
+				return 1;
+			}
+		},
 		run: async (command) => {
 			const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 			const now = options.now ?? Date.now;
@@ -306,6 +359,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			const mcp = await loadProjectMcp({
 				cwd: allowedRoot,
 				projectTrusted: persistedTrust === true,
+				homeDirectory: homedir(),
 				reservedToolNames: [
 					"read",
 					"write",

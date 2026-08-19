@@ -4,8 +4,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProjectTrustManager } from "../src/extensions/trust.ts";
 import { runMain } from "../src/main.ts";
-import { loadMcpConfig } from "../src/mcp/config.ts";
+import {
+	addMcpConfig,
+	getMcpConfig,
+	listMcpConfig,
+	loadEffectiveMcpConfig,
+	loadMcpConfig,
+	removeMcpConfig,
+} from "../src/mcp/config.ts";
 
 const roots: string[] = [];
 const fixture = fileURLToPath(new URL("../../mcp/test/fixture-server.mjs", import.meta.url));
@@ -32,6 +40,103 @@ describe("project MCP integration", () => {
 			{ id: "fixture", transport: { command: "node", env: { FIXTURE_TOKEN: "secret-value" } } },
 		]);
 		await expect(loadMcpConfig(root, {})).rejects.toThrow('environment variable "TOKEN" is not set');
+	});
+
+	it("parses Streamable HTTP headers and rejects missing or non-http URLs", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-mcp-http-config-"));
+		roots.push(root);
+		const reference = "$" + "{MCP_TOKEN}";
+		await writeFile(
+			join(root, ".mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					remote: { type: "http", url: "https://example.test/mcp", headers: { Authorization: `Bearer ${reference}` } },
+				},
+			}),
+		);
+		await expect(loadMcpConfig(root, { MCP_TOKEN: "secret-value" })).resolves.toMatchObject([
+			{
+				id: "remote",
+				transport: {
+					type: "streamable-http",
+					url: "https://example.test/mcp",
+					headers: { Authorization: "Bearer secret-value" },
+				},
+			},
+		]);
+		await expect(loadMcpConfig(root, {})).rejects.toThrow('environment variable "MCP_TOKEN" is not set');
+		await writeFile(
+			join(root, ".mcp.json"),
+			JSON.stringify({ mcpServers: { remote: { type: "http", url: "ftp://example.test/mcp" } } }),
+		);
+		await expect(loadMcpConfig(root)).rejects.toThrow("must use http or https");
+	});
+
+	it("manages local, project, and user scopes with whole-entry precedence and redacted listings", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-mcp-scopes-"));
+		const home = await mkdtemp(join(tmpdir(), "di-code-mcp-home-"));
+		roots.push(root, home);
+		const token = "$" + "{TOKEN}";
+		await addMcpConfig(
+			root,
+			"user",
+			"shared",
+			{ type: "http", url: "https://user.example/mcp", headers: { Authorization: token } },
+			{ homeDirectory: home, environment: { TOKEN: "user-secret" } },
+		);
+		await addMcpConfig(root, "project", "shared", { command: process.execPath }, { homeDirectory: home });
+		await addMcpConfig(root, "local", "local-only", { command: process.execPath }, { homeDirectory: home });
+		await expect(
+			loadEffectiveMcpConfig({ cwd: root, homeDirectory: home, projectTrusted: true }),
+		).resolves.toMatchObject([
+			{ id: "local-only", transport: { type: "stdio" } },
+			{ id: "shared", transport: { type: "stdio" } },
+		]);
+		await expect(
+			loadEffectiveMcpConfig({
+				cwd: root,
+				homeDirectory: home,
+				projectTrusted: false,
+				environment: { TOKEN: "user-secret" },
+			}),
+		).resolves.toMatchObject([
+			{ id: "shared", transport: { type: "streamable-http", url: "https://user.example/mcp" } },
+		]);
+		await expect(listMcpConfig(root, "user", home)).resolves.toEqual([
+			{
+				id: "shared",
+				scope: "user",
+				config: { type: "http", url: "https://user.example/mcp", headers: { Authorization: token } },
+			},
+		]);
+		await expect(getMcpConfig(root, "shared", undefined, home)).resolves.toMatchObject({ scope: "project" });
+		await removeMcpConfig(root, "local", "local-only", home);
+		await expect(getMcpConfig(root, "local-only", undefined, home)).resolves.toBeUndefined();
+	});
+
+	it("runs mcp add/list/get/remove without requiring Provider configuration", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-mcp-cli-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-mcp-cli-agent-"));
+		roots.push(root, agentDir);
+		await new ProjectTrustManager(join(agentDir, "trust.json")).set(root, true);
+		const stdout = vi.fn();
+		const stderr = vi.fn();
+		const base = {
+			stdout,
+			stderr,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime: vi.fn(async () => undefined),
+		};
+		await expect(
+			runMain(["mcp", "add", "--scope", "project", "--transport", "http", "remote", "https://example.test/mcp"], base),
+		).resolves.toBe(0);
+		await expect(runMain(["mcp", "get", "remote"], base)).resolves.toBe(0);
+		await expect(runMain(["mcp", "list", "--scope", "project"], base)).resolves.toBe(0);
+		await expect(runMain(["mcp", "remove", "remote", "--scope", "project"], base)).resolves.toBe(0);
+		expect(stderr).not.toHaveBeenCalled();
+		expect(stdout.mock.calls.join("\n")).toContain('"scope":"project"');
 	});
 
 	it("connects a trusted stdio server and returns its tool result through the existing Agent loop", async () => {

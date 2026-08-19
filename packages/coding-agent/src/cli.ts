@@ -5,6 +5,16 @@ export type CliCommand =
 	| { kind: "version" }
 	| { kind: "plugin"; action: "install" | "list" | "enable" | "disable" | "update" | "remove"; argument?: string }
 	| {
+			kind: "mcp";
+			action: "add" | "list" | "get" | "remove";
+			scope?: "local" | "project" | "user";
+			serverId?: string;
+			transport?: "stdio" | "http";
+			command?: string;
+			args?: readonly string[];
+			url?: string;
+	  }
+	| {
 			kind: "run";
 			mode: OutputMode;
 			prompt: string;
@@ -45,6 +55,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			throw new CliUsageError("Plugin command has invalid arguments.");
 		return { kind: "plugin", action, ...(argument ? { argument } : {}) };
 	}
+	if (args[0] === "mcp") return parseMcpArgs(args.slice(1));
 	const staticOption = args.find((argument) => ["-h", "--help", "-v", "--version"].includes(argument));
 	if (staticOption !== undefined) {
 		const kind = staticOption === "-h" || staticOption === "--help" ? "help" : "version";
@@ -172,6 +183,67 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	};
 }
 
+function parseMcpArgs(args: readonly string[]): Extract<CliCommand, { kind: "mcp" }> {
+	const action = args[0];
+	if (action !== "add" && action !== "list" && action !== "get" && action !== "remove")
+		throw new CliUsageError("MCP command must be add, list, get, or remove.");
+	let scope: "local" | "project" | "user" | undefined;
+	let transport: "stdio" | "http" | undefined;
+	const positional: string[] = [];
+	let separator = -1;
+	for (let index = 1; index < args.length; index++) {
+		const argument = args[index];
+		if (argument === "--") {
+			separator = index;
+			break;
+		}
+		if (argument === "--scope") {
+			const value = args[++index];
+			if (value !== "local" && value !== "project" && value !== "user")
+				throw new CliUsageError("Option --scope expects local, project, or user.");
+			if (scope !== undefined) throw new CliUsageError("Option --scope may only be used once.");
+			scope = value;
+			continue;
+		}
+		if (argument === "--transport") {
+			const value = args[++index];
+			if (value !== "stdio" && value !== "http") throw new CliUsageError("Option --transport expects stdio or http.");
+			if (transport !== undefined) throw new CliUsageError("Option --transport may only be used once.");
+			transport = value;
+			continue;
+		}
+		if (argument.startsWith("-")) throw new CliUsageError(`Unknown MCP option "${argument}".`);
+		positional.push(argument);
+	}
+	if (separator >= 0) positional.push(...args.slice(separator + 1));
+	if (action === "list") {
+		if (transport !== undefined || positional.length > 0)
+			throw new CliUsageError("MCP list accepts only an optional --scope.");
+		return { kind: "mcp", action, ...(scope ? { scope } : {}) };
+	}
+	if (action === "get" || action === "remove") {
+		if (transport !== undefined || positional.length !== 1 || positional[0].trim() === "")
+			throw new CliUsageError(`MCP ${action} requires exactly one server id.`);
+		return { kind: "mcp", action, serverId: positional[0], ...(scope ? { scope } : {}) };
+	}
+	if (transport === undefined) throw new CliUsageError("MCP add requires --transport stdio or --transport http.");
+	if (transport === "stdio") {
+		if (positional.length < 2 || separator < 0)
+			throw new CliUsageError("MCP stdio add requires <server-id> -- <command> [args...].");
+		return {
+			kind: "mcp",
+			action,
+			transport,
+			serverId: positional[0],
+			command: positional[1],
+			...(positional.length > 2 ? { args: positional.slice(2) } : {}),
+			...(scope ? { scope } : {}),
+		};
+	}
+	if (separator >= 0 || positional.length !== 2) throw new CliUsageError("MCP HTTP add requires <server-id> <url>.");
+	return { kind: "mcp", action, transport, serverId: positional[0], url: positional[1], ...(scope ? { scope } : {}) };
+}
+
 const HELP_TEXT = `Usage: di-code [options] <prompt>
 
 Options:
@@ -187,6 +259,7 @@ Options:
   --trust-project    Persist trust for project-local Skill discovery
   --untrust-project  Persist denial for project-local Skill discovery
   plugin <action>    Install, list, enable, disable, update, or remove a plugin
+  mcp add|list|get|remove Manage external MCP Server configuration
   -h, --help         Show help
   -v, --version      Show version
 `;
@@ -196,6 +269,7 @@ export interface CliDependencies {
 	stderr(text: string): void;
 	run(command: Extract<CliCommand, { kind: "run" }>): Promise<number>;
 	plugin?(command: Extract<CliCommand, { kind: "plugin" }>): Promise<number>;
+	mcp?(command: Extract<CliCommand, { kind: "mcp" }>): Promise<number>;
 	readonly version: string;
 }
 
@@ -218,6 +292,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
 		case "plugin":
 			if (!dependencies.plugin) throw new Error("Plugin command handler is unavailable.");
 			return dependencies.plugin(command);
+		case "mcp":
+			if (!dependencies.mcp) throw new Error("MCP command handler is unavailable.");
+			return dependencies.mcp(command);
 		case "version":
 			dependencies.stdout(`${dependencies.version}\n`);
 			return 0;

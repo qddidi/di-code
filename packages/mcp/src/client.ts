@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError, redactMcpDiagnostic } from "./errors.ts";
 import type { McpClient, McpServerConfig, McpTool, McpToolResult } from "./types.ts";
 
@@ -19,27 +21,42 @@ function asObject(value: unknown): Record<string, unknown> {
 export class StdioMcpClient implements McpClient {
 	private readonly config: McpServerConfig;
 	private readonly client: Client;
-	private readonly transport: StdioClientTransport;
+	private readonly transport: Transport & { close?: () => Promise<void> };
 	private stderr = "";
 	private state: "new" | "connected" | "closed" = "new";
 
 	constructor(config: McpServerConfig) {
 		this.config = config;
-		if (config.transport.type !== "stdio")
-			throw new McpError("protocol", config.id, "only stdio transport is supported");
 		this.client = new Client({ name: "di-code", version: "0.1.4" }, { capabilities: {} });
-		this.transport = new StdioClientTransport({
-			command: config.transport.command,
-			args: config.transport.args ? [...config.transport.args] : undefined,
-			cwd: config.transport.cwd,
-			env: config.transport.env ? { ...config.transport.env } : undefined,
-			stderr: "pipe",
-			maxBufferSize: 1024 * 1024,
-		});
-		this.transport.stderr?.on("data", (chunk: Buffer) => {
-			const remaining = MAX_STDERR_BYTES - Buffer.byteLength(this.stderr, "utf8");
-			if (remaining > 0) this.stderr += chunk.subarray(0, remaining).toString("utf8");
-		});
+		if (config.transport.type === "stdio") {
+			const transport = new StdioClientTransport({
+				command: config.transport.command,
+				args: config.transport.args ? [...config.transport.args] : undefined,
+				cwd: config.transport.cwd,
+				env: config.transport.env ? { ...config.transport.env } : undefined,
+				stderr: "pipe",
+				maxBufferSize: 1024 * 1024,
+			});
+			this.transport = transport;
+			transport.stderr?.on("data", (chunk: Buffer) => {
+				const remaining = MAX_STDERR_BYTES - Buffer.byteLength(this.stderr, "utf8");
+				if (remaining > 0) this.stderr += chunk.subarray(0, remaining).toString("utf8");
+			});
+		} else {
+			let url: URL;
+			try {
+				url = new URL(config.transport.url);
+			} catch (cause) {
+				throw new McpError("protocol", config.id, "transport URL must be an absolute http or https URL", { cause });
+			}
+			if (url.protocol !== "http:" && url.protocol !== "https:")
+				throw new McpError("protocol", config.id, "transport URL must use http or https");
+			if (url.username || url.password)
+				throw new McpError("protocol", config.id, "transport URL must not contain credentials");
+			this.transport = new StreamableHTTPClientTransport(url, {
+				requestInit: config.transport.headers ? { headers: { ...config.transport.headers } } : undefined,
+			});
+		}
 		this.transport.onerror = (cause) => {
 			if (this.state !== "closed") this.state = "closed";
 			void cause;
@@ -117,7 +134,17 @@ export class StdioMcpClient implements McpClient {
 			return new McpError("cancelled", this.config.id, "request cancelled", { cause });
 		const message = redactMcpDiagnostic(cause instanceof Error ? cause.message : cause);
 		const stderr = this.stderr ? `; stderr: ${redactMcpDiagnostic(this.stderr)}` : "";
-		const kind = /timeout/i.test(message) ? "timeout" : fallback;
+		const status =
+			typeof cause === "object" && cause !== null && "code" in cause ? (cause as { code?: unknown }).code : undefined;
+		const kind =
+			status === 401 || status === 403 || /(?:unauthorized|forbidden|authentication)/i.test(message)
+				? "authentication"
+				: /timeout/i.test(message)
+					? "timeout"
+					: fallback;
 		return new McpError(kind, this.config.id, `${message || "request failed"}${stderr}`, { cause });
 	}
 }
+
+/** MCP client backed by Streamable HTTP. The transport is selected from the server config. */
+export class StreamableHttpMcpClient extends StdioMcpClient {}

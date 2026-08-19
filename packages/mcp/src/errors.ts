@@ -1,4 +1,4 @@
-export type McpErrorKind = "connection" | "timeout" | "cancelled" | "protocol" | "tool" | "closed";
+export type McpErrorKind = "connection" | "authentication" | "timeout" | "cancelled" | "protocol" | "tool" | "closed";
 
 /** A classified MCP boundary failure that never embeds raw server stderr or credentials. */
 export class McpError extends Error {

@@ -7,6 +7,48 @@ describe("parseCliArgs", () => {
 		expect(parseCliArgs(["-v"])).toEqual({ kind: "version" });
 	});
 
+	it("parses MCP management commands without shell-joining stdio arguments", () => {
+		expect(
+			parseCliArgs([
+				"mcp",
+				"add",
+				"--scope",
+				"project",
+				"--transport",
+				"stdio",
+				"tools",
+				"--",
+				"npx",
+				"-y",
+				"@example/server",
+			]),
+		).toEqual({
+			kind: "mcp",
+			action: "add",
+			scope: "project",
+			transport: "stdio",
+			serverId: "tools",
+			command: "npx",
+			args: ["-y", "@example/server"],
+		});
+		expect(parseCliArgs(["mcp", "add", "--transport", "http", "remote", "https://example.test/mcp"])).toEqual({
+			kind: "mcp",
+			action: "add",
+			transport: "http",
+			serverId: "remote",
+			url: "https://example.test/mcp",
+		});
+		expect(parseCliArgs(["mcp", "get", "remote", "--scope", "user"])).toEqual({
+			kind: "mcp",
+			action: "get",
+			serverId: "remote",
+			scope: "user",
+		});
+		expect(() => parseCliArgs(["mcp", "add", "--transport", "stdio", "tools", "npx"])).toThrow(
+			"requires <server-id> -- <command>",
+		);
+	});
+
 	it("defaults a plain prompt to print mode", () => {
 		expect(parseCliArgs(["explain", "this"])).toEqual({
 			kind: "run",

@@ -1,5 +1,5 @@
 import { type McpDiagnostic, McpManager, type McpServerConfig, redactMcpDiagnostic } from "@di-code/mcp";
-import { loadMcpConfig, mcpConfigPath } from "./config.ts";
+import { loadEffectiveMcpConfig, mcpConfigPath, readMcpConfigScope } from "./config.ts";
 import { createMcpAgentTools } from "./tool-adapter.ts";
 
 export interface McpLoadDiagnostic {
@@ -19,31 +19,45 @@ export async function loadProjectMcp(options: {
 	readonly cwd: string;
 	readonly projectTrusted: boolean;
 	readonly reservedToolNames: Iterable<string>;
+	readonly homeDirectory?: string;
 }): Promise<McpLoadResult> {
 	const manager = new McpManager();
 	if (!options.projectTrusted) {
 		try {
-			const configured = await loadMcpConfig(options.cwd);
-			if (configured.length > 0) {
-				return {
-					manager,
-					tools: [],
-					diagnostics: [
-						{
-							stage: "trust",
-							message: `${mcpConfigPath(options.cwd)} was skipped because project trust is not granted`,
-						},
-					],
-				};
-			}
+			const [local, project] = await Promise.all([
+				readMcpConfigScope(options.cwd, "local", options.homeDirectory),
+				readMcpConfigScope(options.cwd, "project", options.homeDirectory),
+			]);
+			const projectDiagnostic =
+				Object.keys(local.mcpServers).length > 0 || Object.keys(project.mcpServers).length > 0
+					? {
+							stage: "trust" as const,
+							message: `${mcpConfigPath(options.cwd, "project", options.homeDirectory)} was skipped because project trust is not granted`,
+						}
+					: undefined;
+			const userConfigurations = await loadEffectiveMcpConfig({
+				cwd: options.cwd,
+				projectTrusted: false,
+				homeDirectory: options.homeDirectory,
+			});
+			const connected = await manager.connect(userConfigurations);
+			return {
+				manager,
+				tools: createMcpAgentTools(connected.servers, options.reservedToolNames),
+				diagnostics: [...(projectDiagnostic ? [projectDiagnostic] : []), ...connected.diagnostics],
+			};
 		} catch (cause) {
+			await manager.close();
 			return { manager, tools: [], diagnostics: [{ stage: "config", message: redactMcpDiagnostic(cause) }] };
 		}
-		return { manager, tools: [], diagnostics: [] };
 	}
 	let configurations: readonly McpServerConfig[];
 	try {
-		configurations = await loadMcpConfig(options.cwd);
+		configurations = await loadEffectiveMcpConfig({
+			cwd: options.cwd,
+			projectTrusted: true,
+			homeDirectory: options.homeDirectory,
+		});
 	} catch (cause) {
 		return { manager, tools: [], diagnostics: [{ stage: "config", message: redactMcpDiagnostic(cause) }] };
 	}

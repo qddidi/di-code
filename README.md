@@ -39,7 +39,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - `print`、`json`、`interactive` 三种 CLI 模式。
 - 可选 JSONL 会话持久化、并发追加保护和上下文压缩能力。
 - 插件 API，可注册模型工具、interactive 模式 slash command 及 Agent 生命周期事件处理器。
-- 受项目 trust 保护的 MCP `stdio` Server tools，可接入现有 Agent 工具循环。
+- 受项目 trust 保护的 MCP `stdio` / Streamable HTTP Server tools，可接入现有 Agent 工具循环，并提供 `di-code mcp add/list/get/remove` 配置命令。
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
@@ -50,6 +50,7 @@ packages/
   ai/             Provider 无关的 AI 类型、事件流和 OpenAI/Chat Completions 适配器
   agent/          Agent 状态管理与工具调用循环
   coding-agent/   CLI、编码工具、会话、交互模式和扩展运行时
+  mcp/            MCP stdio / Streamable HTTP 客户端生命周期
   skills/         独立的 SKILL.md 解析、发现、目录和调用展开包
   orchestrator/   通过公开 RPC SDK 管理 Coding Agent 子进程生命周期
   tui/            自研 ANSI 终端 UI 组件库
@@ -78,6 +79,7 @@ Provider.stream() <----> Responses / Chat Completions Provider
 | `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、Anthropic、DeepSeek、智谱 GLM 与 Faux 测试 Provider。 |
 | `@di-code/agent` | 管理完整对话历史和模型上下文，执行模型-工具循环，并向订阅者按序发布事件。 |
 | `@di-code/coding-agent` | 可执行产品层，提供 CLI、文件与命令工具、会话存储、上下文压缩、交互界面和扩展契约。 |
+| `@di-code/mcp` | Provider 无关的 MCP Client、stdio / Streamable HTTP transport、tools/list、tools/call 和生命周期错误分类。 |
 | `@di-code/skills` | Provider 无关的 SKILL.md YAML frontmatter 解析、受限读取、递归发现、冲突目录和 `/skill:` 参数展开；不执行 Skill 内容。 |
 | `@di-code/orchestrator` | 监督 `di-code-rpc` 子进程，传播取消和崩溃，并保留有上限的 stderr 诊断。 |
 | `@di-code/tui` | ANSI 终端渲染、增量重绘、光标、焦点、Overlay、编辑器、Markdown、补全等基础组件。 |
@@ -357,9 +359,9 @@ ZAI_API_KEY=<your-zhipu-api-key>
 npm run dev -- --print "用一句话介绍这个项目"
 ```
 
-### MCP stdio Server
+### MCP Server
 
-第一阶段支持项目根目录的 `.mcp.json` 中声明本地 `stdio` MCP Server。项目必须已获 trust：interactive TTY 会在发现 `.mcp.json` 时询问，也可以显式使用 `--trust-project`。print 和 JSON 模式不会询问，未信任时跳过 Server 并向 stderr 输出 `mcp_diagnostic`。
+第二阶段支持本地 `stdio` 和远程 Streamable HTTP MCP Server。项目级定义默认需要 project trust：interactive TTY 会在发现 MCP 配置时询问，也可以显式使用 `--trust-project`。print 和 JSON 模式不会询问，未信任时跳过 local/project Server 并向 stderr 输出 `mcp_diagnostic`；user scope 可独立使用。
 
 ```json
 {
@@ -373,9 +375,9 @@ npm run dev -- --print "用一句话介绍这个项目"
 }
 ```
 
-Server ID 只能使用小写字母、数字、`-` 和 `_`。`command` 与 `args` 作为结构化子进程参数执行，不经过 shell。`${ENV_VAR}` 必须存在；错误只显示变量名。MCP 工具向模型暴露为 `mcp__<server-id>__<tool-name>`，参数会在转发前按 Server JSON Schema 校验。连接失败只禁用对应 Server，不影响内置工具；会话结束时会关闭 Server 子进程。
+Server ID 只能使用小写字母、数字、`-` 和 `_`。`command` 与 `args` 作为结构化子进程参数执行，不经过 shell；HTTP 使用绝对 `http`/`https` URL 和 headers。`${ENV_VAR}` 可出现在 env/header 值中，缺失时错误只显示变量名。MCP 工具向模型暴露为 `mcp__<server-id>__<tool-name>`，参数会在转发前按 Server JSON Schema 校验。连接失败只禁用对应 Server，不影响内置工具；会话结束时会关闭 Server 和 HTTP transport。
 
-当前不支持 HTTP/Streamable HTTP、MCP resources、prompts、OAuth 或 `di-code mcp add/list/get/remove` 管理命令。MCP Server 是外部代码而不是权限沙箱，trust 只决定是否加载项目定义，不能替代对工具调用和 Server 来源的审查。
+当前不支持 MCP resources、prompts、OAuth、SSE fallback 或自动安装 Server。`di-code mcp add/list/get/remove` 管理三种配置 scope：`local`（默认）写入 `<work-root>/.di-code/mcp.local.json`，`project` 写入 `<work-root>/.mcp.json`，`user` 写入 `~/.di-code/mcp.json`；生效优先级为 local > project > user，配置整体覆盖。管理命令不会下载或安装 Server，list/get 会脱敏凭据。MCP Server 是外部代码而不是权限沙箱，trust 只决定是否加载项目定义，不能替代对工具调用和 Server 来源的审查。
 
 ## 使用
 

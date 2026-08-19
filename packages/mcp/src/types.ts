@@ -6,7 +6,13 @@ export interface McpStdioTransportConfig {
 	readonly env?: Readonly<Record<string, string>>;
 }
 
-export type McpTransportConfig = McpStdioTransportConfig;
+export interface McpStreamableHttpTransportConfig {
+	readonly type: "streamable-http";
+	readonly url: string;
+	readonly headers?: Readonly<Record<string, string>>;
+}
+
+export type McpTransportConfig = McpStdioTransportConfig | McpStreamableHttpTransportConfig;
 
 export interface McpServerConfig {
 	readonly id: string;

@@ -1,4 +1,4 @@
-import { StdioMcpClient } from "./client.ts";
+import { StdioMcpClient, StreamableHttpMcpClient } from "./client.ts";
 import { redactMcpDiagnostic } from "./errors.ts";
 import type { McpClient, McpConnectedServer, McpDiagnostic, McpServerConfig } from "./types.ts";
 
@@ -12,7 +12,10 @@ export class McpManager {
 	private connected: McpConnectedServer[] = [];
 
 	constructor(options: McpManagerOptions = {}) {
-		this.createClient = options.createClient ?? ((config) => new StdioMcpClient(config));
+		this.createClient =
+			options.createClient ??
+			((config) =>
+				config.transport.type === "streamable-http" ? new StreamableHttpMcpClient(config) : new StdioMcpClient(config));
 	}
 
 	async connect(
