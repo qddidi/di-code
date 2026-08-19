@@ -202,7 +202,7 @@ Read the release checklist before taking any publishing action.
 
 `coding-agent` 保留 `ResourceSnapshot`，但不再实现 Skill 解析。新的资源加载流程为：
 
-1. 加载全局和祖先目录中的 `AGENTS.md`。
+1. 加载全局目录和当前工作目录中的 `AGENTS.md`。
 2. 根据 CLI 和 trust 状态生成 Skill 搜索根目录。
 3. 调用 `@di-code/skills` 的 `discoverSkills()`。
 4. 按明确的根目录顺序加入 catalog，产生冲突诊断。

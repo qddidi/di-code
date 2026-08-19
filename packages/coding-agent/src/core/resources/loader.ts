@@ -1,5 +1,5 @@
 import { access, readFile, stat } from "node:fs/promises";
-import { dirname, join, parse, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createSkillCatalog, discoverSkills, loadSkill, type SkillLoadResult } from "@di-code/skills";
 import type {
 	ContextFile,
@@ -76,15 +76,7 @@ async function loadContextFiles(options: ResourceLoaderOptions): Promise<{
 	};
 
 	await add(resolve(options.agentDir), "global");
-	const ancestors: string[] = [];
-	let current = resolve(options.cwd);
-	while (true) {
-		ancestors.unshift(current);
-		const parent = dirname(current);
-		if (parent === current || parse(current).root === current) break;
-		current = parent;
-	}
-	for (const directory of ancestors) await add(directory, directory === resolve(options.cwd) ? "project" : "ancestor");
+	await add(resolve(options.cwd), "project");
 	return { contextFiles, diagnostics };
 }
 

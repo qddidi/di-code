@@ -1,6 +1,6 @@
 import type { SkillDescriptor, SkillSource } from "@di-code/skills";
 
-export type ResourceScope = "global" | "ancestor" | "project" | "explicit";
+export type ResourceScope = "global" | "project" | "explicit";
 
 export type ResourceDiagnosticStage = "discover" | "read" | "parse" | "collision" | "trust";
 

@@ -31,7 +31,7 @@ async function writeSkill(
 }
 
 describe("resource discovery", () => {
-	it("loads AGENTS files from global through the current directory", async () => {
+	it("loads only global and current-directory AGENTS files", async () => {
 		const root = await temporaryRoot();
 		const agentDir = join(root, "agent");
 		const project = join(root, "project");
@@ -43,7 +43,7 @@ describe("resource discovery", () => {
 
 		const resources = await loadResources({ cwd: nested, agentDir, noSkills: true });
 
-		expect(resources.contextFiles.map((file) => file.content)).toEqual(["global", "project", "nested"]);
+		expect(resources.contextFiles.map((file) => file.content)).toEqual(["global", "nested"]);
 	});
 
 	it("prefers explicit skills and omits their bodies from the prompt inventory", async () => {
