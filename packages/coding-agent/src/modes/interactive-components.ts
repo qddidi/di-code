@@ -1,5 +1,6 @@
 import type { AutocompleteItem, Component, MarkdownTheme } from "@di-code/tui";
 import { Box, Markdown, Text, truncateToWidth, visibleWidth } from "@di-code/tui";
+import { DEFAULT_LOCALE, type Locale, translate } from "../i18n.ts";
 import { highlightCode } from "../utils/syntax-highlight.ts";
 import { renderDiff } from "./interactive-diff.ts";
 import type { InteractiveState } from "./interactive-state.ts";
@@ -7,6 +8,7 @@ import type { InteractiveState } from "./interactive-state.ts";
 export interface InteractiveViewState extends InteractiveState {
 	readonly model: string;
 	readonly theme: "dark" | "light";
+	readonly locale?: Locale;
 	readonly pasteImageShortcut?: string;
 }
 
@@ -89,11 +91,11 @@ function alignEnds(left: string, right: string, width: number): string {
 
 function activityLabel(state: InteractiveViewState): { readonly text: string; readonly color: string } {
 	const colors = paletteFor(state.theme);
-	if (state.error) return { text: "ERROR", color: colors.error };
-	if (state.compacting) return { text: "COMPACTING", color: colors.warning };
-	if (state.retrying) return { text: "RETRYING", color: colors.warning };
-	if (state.busy) return { text: "WORKING", color: colors.accent };
-	return { text: "READY", color: colors.success };
+	if (state.error) return { text: translate(state.locale ?? DEFAULT_LOCALE, "error"), color: colors.error };
+	if (state.compacting) return { text: translate(state.locale ?? DEFAULT_LOCALE, "compacting"), color: colors.warning };
+	if (state.retrying) return { text: translate(state.locale ?? DEFAULT_LOCALE, "retrying"), color: colors.warning };
+	if (state.busy) return { text: translate(state.locale ?? DEFAULT_LOCALE, "working"), color: colors.accent };
+	return { text: translate(state.locale ?? DEFAULT_LOCALE, "ready"), color: colors.success };
 }
 
 export class InteractiveHeader implements Component {
@@ -137,7 +139,11 @@ export class InteractiveChat implements Component {
 			if (message.role === "file_change") {
 				lines.push(
 					...renderLine(
-						paint(colors.dim, `${message.kind === "edit" ? "Edited" : "Wrote"} ${message.path}`, true),
+						paint(
+							colors.dim,
+							`${translate(state.locale ?? DEFAULT_LOCALE, message.kind === "edit" ? "edited" : "wrote")} ${message.path}`,
+							true,
+						),
 						width,
 					),
 				);
@@ -166,12 +172,22 @@ export class InteractiveChat implements Component {
 				continue;
 			}
 			if (item.type === "tool" && skippedToolItems === hiddenToolItems && hiddenToolItems > 0) {
-				lines.push(...renderLine(`    ${paint(colors.dim, `${hiddenToolItems} earlier tool updates`)}`, width));
+				lines.push(
+					...renderLine(
+						`    ${paint(colors.dim, translate(state.locale ?? DEFAULT_LOCALE, "earlierToolUpdates", String(hiddenToolItems)))}`,
+						width,
+					),
+				);
 				skippedToolItems += 1;
 			}
 			if (item.type === "thinking") {
 				const frame = SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length] ?? SPINNER_FRAMES[0];
-				lines.push(...renderLine(`    ${paint(colors.accent, `${frame} Thinking`)}`, width));
+				lines.push(
+					...renderLine(
+						`    ${paint(colors.accent, `${frame} ${translate(state.locale ?? DEFAULT_LOCALE, "thinking")}`)}`,
+						width,
+					),
+				);
 				continue;
 			}
 			const marker = item.status === "running" ? ">" : item.status === "error" ? "!" : "+";
@@ -181,7 +197,12 @@ export class InteractiveChat implements Component {
 		}
 		if (state.busy && !state.streamingText && !state.processItems.some((item) => item.type === "thinking")) {
 			const frame = SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length] ?? SPINNER_FRAMES[0];
-			lines.push(...renderLine(`    ${paint(colors.accent, `${frame} Thinking`)}`, width));
+			lines.push(
+				...renderLine(
+					`    ${paint(colors.accent, `${frame} ${translate(state.locale ?? DEFAULT_LOCALE, "thinking")}`)}`,
+					width,
+				),
+			);
 		}
 		if (hasProcess) lines.push(" ");
 		if (state.streamingText) {
@@ -191,14 +212,23 @@ export class InteractiveChat implements Component {
 		const hasActivity = state.status || state.queue.length > 0 || state.error;
 		if (hasActivity) {
 			if (lines.length > 0) lines.push(" ");
-			lines.push(...renderLine(paint(colors.dim, "Activity", true), width));
+			lines.push(...renderLine(paint(colors.dim, translate(state.locale ?? DEFAULT_LOCALE, "activity"), true), width));
 			if (state.status) lines.push(...renderLine(`    ${paint(colors.dim, state.status)}`, width));
 			if (state.queue.length > 0) {
-				lines.push(...renderLine(`    ${paint(colors.dim, `Queue (${state.queue.length})`)}`, width));
+				lines.push(
+					...renderLine(
+						`    ${paint(colors.dim, translate(state.locale ?? DEFAULT_LOCALE, "queue", String(state.queue.length)))}`,
+						width,
+					),
+				);
 				for (const prompt of state.queue) lines.push(...new Text(`      ${prompt}`).render(width));
 			}
 			if (state.error)
-				lines.push(...new Text(`    ${paint(colors.error, `Error: ${state.error}`, true)}`).render(width));
+				lines.push(
+					...new Text(
+						`    ${paint(colors.error, `${translate(state.locale ?? DEFAULT_LOCALE, "errorPrefix")}: ${state.error}`, true)}`,
+					).render(width),
+				);
 		}
 		const rendered = lines.flatMap((line) => new Text(line).render(width));
 		return rendered.length > 0 ? rendered : [""];
@@ -217,7 +247,11 @@ export class InteractiveComposer implements Component {
 	render(width: number): string[] {
 		const state = this.readState();
 		const colors = paletteFor(state.theme);
-		const copy = width >= 56 ? "/ commands  Tab complete" : "/ commands";
+		const locale = state.locale ?? DEFAULT_LOCALE;
+		const copy =
+			width >= 56
+				? `/ ${translate(locale, "commands")}  Tab ${translate(locale, "complete")}`
+				: `/ ${translate(locale, "commands")}`;
 		return renderLine(paint(colors.dim, copy), width);
 	}
 }
@@ -238,15 +272,15 @@ export class InteractiveFooter implements Component {
 		const left = paint(activity.color, `* ${activity.text}`, true);
 		const context = paint(
 			colors.dim,
-			`${state.messageItems.length} messages  ctx ${formatTokenCount(state.usage.estimatedContextTokens)}/${formatTokenCount(state.usage.contextWindow)}  total ${formatTokenCount(state.usage.totalTokens)} tok`,
+			`${translate(state.locale ?? DEFAULT_LOCALE, "messages", String(state.messageItems.length))}  ${translate(state.locale ?? DEFAULT_LOCALE, "context")} ${formatTokenCount(state.usage.estimatedContextTokens)}/${formatTokenCount(state.usage.contextWindow)}  ${translate(state.locale ?? DEFAULT_LOCALE, "total")} ${formatTokenCount(state.usage.totalTokens)} ${translate(state.locale ?? DEFAULT_LOCALE, "tokens")}`,
 		);
 		const right = paint(colors.dim, `${state.model}  ${state.theme}`);
 		const status = width >= 60 ? alignEnds(`${left}  ${context}`, right, width) : `${left}  ${right}`;
 		const pasteImageShortcut = state.pasteImageShortcut ?? (process.platform === "win32" ? "Alt+V" : "Ctrl+V");
 		const hints =
 			width >= 60
-				? `Enter send   ${pasteImageShortcut} paste image   Shift+Tab thinking   Esc cancel   Ctrl+O model`
-				: `Enter send  ${pasteImageShortcut} image`;
+				? `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}   ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "pasteImage")}   Shift+Tab ${translate(state.locale ?? DEFAULT_LOCALE, "thinkingShortcut")}   Esc ${translate(state.locale ?? DEFAULT_LOCALE, "cancel")}   Ctrl+O ${translate(state.locale ?? DEFAULT_LOCALE, "model")}`
+				: `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}  ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "imageShortcut")}`;
 		return [...renderLine(status, width), ...renderLine(paint(colors.dim, hints), width)];
 	}
 }

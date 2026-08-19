@@ -137,6 +137,7 @@ npm run dev
 | --- | --- | --- |
 | `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`anthropic`、`deepseek`、`zhipu`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
 | `DI_CODE_MODEL` | 选择所选 Provider 的模型 ID | 可选；OpenAI/Anthropic/Zhipu 使用内建默认模型，其他 Provider 使用模型列表首项 |
+| `DI_CODE_LOCALE` | 选择内置 CLI 和交互终端文案语言：`en` 或 `zh-CN` | 可选；优先于用户全局 settings 中的 `locale` |
 | `OPENAI_API_KEY` | OpenAI 凭据 | 使用 OpenAI 时必需，向导临时输入除外 |
 | `OPENAI_BASE_URL` | 覆盖内建 OpenAI endpoint | 可选，默认 `https://api.openai.com/v1` |
 | `ANTHROPIC_API_KEY` | Anthropic 凭据 | 使用 Anthropic 时必需，向导临时输入除外 |
@@ -332,6 +333,12 @@ ZAI_API_KEY=<your-zhipu-api-key>
 
 模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。
 
+### 终端语言
+
+内置 CLI 帮助、交互终端状态、选择器和内置 slash command 描述支持英文与简体中文。通过 `DI_CODE_LOCALE=zh-CN` 临时切换；不设置时读取用户全局 `~/.di-code/settings.json` 的 `locale`，默认英文。项目 `.di-code/settings.json` 不控制语言，避免项目配置改变每位开发者的终端偏好。
+
+进入 interactive 模式后，使用 `/settings` 也可切换语言，选择会保存到用户全局 settings。JSON/RPC 字段、slash command 名称、工具名、Provider 和模型 ID、插件文案保持原样。
+
 ### 凭据和 endpoint 规则
 
 - 内建 OpenAI 默认读取 `OPENAI_API_KEY`，内建 DeepSeek 默认读取 `DEEPSEEK_API_KEY`，内建 Zhipu 默认读取 `ZAI_API_KEY`。
@@ -490,7 +497,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | `/model` | 打开模型选择器。 |
 | `/session` | 打开会话选择器。 |
 | `/theme` | 切换深色或浅色终端主题。 |
-| `/settings` | 配置上下文压缩。 |
+| `/settings` | 配置上下文压缩和内置终端语言。 |
 | `/compact` | 立即压缩当前持久化会话的旧上下文。 |
 | `/usage` | 查看请求数、token、费用和当前上下文占用。 |
 | `/retry` | 重试最后一次失败或取消的提示。 |

@@ -11,6 +11,7 @@ import {
 	TUI,
 } from "@di-code/tui";
 import type { CliCommand } from "./cli.ts";
+import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
 import {
 	resolveStartupRuntime,
 	type StartupConfiguration,
@@ -64,8 +65,8 @@ class OnboardingScreen {
 		this.error.setText(message);
 	}
 
-	setCancelled(): void {
-		this.prompt.setText("Provider setup cancelled.");
+	setCancelled(locale: Locale): void {
+		this.prompt.setText(translate(locale, "providerSetupCancelled"));
 		this.error.setText("");
 		this.active = null;
 	}
@@ -81,11 +82,11 @@ class OnboardingScreen {
 	}
 }
 
-function providerChoices(): OnboardingChoice[] {
+function providerChoices(locale: Locale): OnboardingChoice[] {
 	return [
 		{ value: "openai", providerId: "openai", label: "OpenAI", description: "OpenAI Responses API" },
 		{ value: "deepseek", providerId: "deepseek", label: "DeepSeek", description: "DeepSeek Chat Completions API" },
-		{ value: "faux", providerId: "faux", label: "Faux (offline)", description: "Deterministic local provider" },
+		{ value: "faux", providerId: "faux", label: "Faux (offline)", description: translate(locale, "fauxProvider") },
 		{ value: "zhipu", providerId: "zhipu", label: "Zhipu AI", description: "GLM Chat Completions API" },
 		{ value: "anthropic", providerId: "anthropic", label: "Anthropic", description: "Claude Messages API" },
 	];
@@ -124,11 +125,11 @@ function providerApi(providerId: OnboardingChoice["providerId"]): Exclude<ModelA
 	return undefined;
 }
 
-function modelChoices(models: readonly Model[]): SelectItem[] {
+function modelChoices(models: readonly Model[], locale: Locale): SelectItem[] {
 	return models.map((model) => ({
 		value: model.id,
 		label: model.name,
-		description: `${model.id}${model.reasoning ? " - reasoning" : ""}`,
+		description: `${model.id}${model.reasoning ? ` - ${translate(locale, "reasoning")}` : ""}`,
 	}));
 }
 
@@ -149,6 +150,7 @@ function startProviderOnboarding(
 	forceApiKey: boolean,
 ): Promise<StartupRuntime | undefined> {
 	return new Promise((resolve, reject) => {
+		const locale = options.configuration.locale ?? DEFAULT_LOCALE;
 		let settled = false;
 		let saving = false;
 		let selectedProvider: OnboardingChoice["providerId"] | undefined;
@@ -156,7 +158,7 @@ function startProviderOnboarding(
 		const finish = (runtime: StartupRuntime | undefined): void => {
 			if (settled) return;
 			settled = true;
-			if (runtime === undefined) screen.setCancelled();
+			if (runtime === undefined) screen.setCancelled(locale);
 			complete(runtime);
 			resolve(runtime);
 		};
@@ -192,14 +194,14 @@ function startProviderOnboarding(
 			input.onSubmit = (value) => {
 				const key = value.trim();
 				if (key.length === 0) {
-					screen.setError("API key cannot be empty. Press Escape to cancel.");
+					screen.setError(translate(locale, "apiKeyRequired"));
 					tui.requestRender(true);
 					return;
 				}
 				void finishSelection(modelId, key);
 			};
 			input.onEscape = () => finish(undefined);
-			screen.setStep(`Enter ${keyVariable} (input is hidden):`, input);
+			screen.setStep(translate(locale, "enterApiKey", keyVariable), input);
 			tui.setFocus(input);
 			tui.requestRender(true);
 		};
@@ -207,7 +209,7 @@ function startProviderOnboarding(
 		const showModels = (choice: OnboardingChoice): void => {
 			selectedProvider = choice.providerId;
 			const models = modelsFor(choice.providerId);
-			const modelList = onboardingSelectList(modelChoices(models));
+			const modelList = onboardingSelectList(modelChoices(models, locale));
 			modelList.onSelect = (item) => {
 				const keyVariable = apiKeyEnvironmentVariable(choice.providerId);
 				const existingKey = keyVariable ? options.configuration.environment[keyVariable]?.trim() : undefined;
@@ -215,18 +217,18 @@ function startProviderOnboarding(
 				else void finishSelection(item.value);
 			};
 			modelList.onCancel = () => finish(undefined);
-			screen.setStep(`Select a ${choice.label} model:`, modelList);
+			screen.setStep(translate(locale, "selectProviderModel", choice.label), modelList);
 			tui.setFocus(modelList);
 			tui.requestRender(true);
 		};
 
-		const providerList = onboardingSelectList(providerChoices());
+		const providerList = onboardingSelectList(providerChoices(locale));
 		providerList.onSelect = (item) => {
-			const choice = providerChoices().find((candidate) => candidate.value === item.value);
+			const choice = providerChoices(locale).find((candidate) => candidate.value === item.value);
 			if (choice) showModels(choice);
 		};
 		providerList.onCancel = () => finish(undefined);
-		screen.setStep("Select a provider:", providerList);
+		screen.setStep(translate(locale, "selectProvider"), providerList);
 		tui.setFocus(providerList);
 		tui.requestRender(true);
 	});
@@ -235,16 +237,19 @@ function startProviderOnboarding(
 export function runProviderOnboarding(options: ProviderOnboardingOptions): Promise<StartupRuntime | undefined> {
 	const tui = new TUI(options.terminal);
 	const screen = new OnboardingScreen();
-	tui.addChild(new Box(screen, { border: "rounded", padding: 1, title: "di-code provider setup" }));
+	const locale = options.configuration.locale ?? DEFAULT_LOCALE;
+	tui.addChild(new Box(screen, { border: "rounded", padding: 1, title: translate(locale, "providerSetup") }));
 	tui.start();
 	return startProviderOnboarding(
 		options,
 		tui,
 		screen,
 		(runtime) => {
-			tui.stop({ finalLines: runtime ? ["Provider configured for this run."] : ["Provider setup cancelled."] });
+			tui.stop({
+				finalLines: [translate(locale, runtime ? "providerConfigured" : "providerSetupCancelled")],
+			});
 		},
-		() => tui.stop({ finalLines: ["Provider setup failed."] }),
+		() => tui.stop({ finalLines: [translate(locale, "providerSetupFailed")] }),
 		false,
 	);
 }
@@ -253,7 +258,8 @@ export function showInteractiveProviderOnboarding(
 	options: InteractiveProviderOnboardingOptions,
 ): Promise<StartupRuntime | undefined> {
 	const screen = new OnboardingScreen();
-	const panel = new Box(screen, { border: "rounded", padding: 1, title: "di-code login" });
+	const locale = options.configuration.locale ?? DEFAULT_LOCALE;
+	const panel = new Box(screen, { border: "rounded", padding: 1, title: translate(locale, "login") });
 	const overlay = options.tui.showOverlay(panel, {
 		width: "70%",
 		maxHeight: "60%",

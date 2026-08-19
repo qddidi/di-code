@@ -134,16 +134,21 @@ describe("SettingsList", () => {
 		assert.ok(lines.every((line) => visibleWidth(line) <= 30));
 	});
 
-	it("cycles values forward and backward with callbacks", () => {
+	it("cycles values with arrow keys and closes on Enter", () => {
 		const list = new SettingsList(settings);
 		const changes: string[] = [];
+		let cancelled = 0;
 		list.onChange = (id, value) => changes.push(`${id}:${value}`);
+		list.onCancel = () => {
+			cancelled += 1;
+		};
 
-		list.handleInput("\r");
 		list.handleInput("\x1b[C");
 		list.handleInput("\x1b[D");
+		list.handleInput("\r");
 
-		assert.deepEqual(changes, ["theme:light", "theme:dark", "theme:light"]);
+		assert.deepEqual(changes, ["theme:light", "theme:dark"]);
+		assert.equal(cancelled, 1);
 		assert.equal(list.getSelectedItem()?.id, "theme");
 	});
 
@@ -164,13 +169,18 @@ describe("SettingsList", () => {
 	it("does not emit changes for an empty values list", () => {
 		const list = new SettingsList([{ id: "empty", label: "Empty", currentValue: "", values: [] }]);
 		let changed = false;
+		let cancelled = false;
 		list.onChange = () => {
 			changed = true;
+		};
+		list.onCancel = () => {
+			cancelled = true;
 		};
 
 		list.handleInput("\r");
 
 		assert.equal(changed, false);
+		assert.equal(cancelled, true);
 	});
 
 	it("keeps the empty state within a narrow width", () => {

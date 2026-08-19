@@ -13,6 +13,7 @@ import {
 	type ModelApi,
 	type Provider,
 } from "@di-code/ai";
+import { isLocale, type Locale } from "./i18n.ts";
 
 export interface StartupRuntime {
 	readonly provider: Provider;
@@ -32,6 +33,7 @@ export interface StartupConfiguration {
 	readonly environment: Environment;
 	readonly providers: readonly StartupProviderConfiguration[];
 	readonly defaults?: StartupDefaults;
+	readonly locale?: Locale;
 }
 
 export interface StartupDefaults {
@@ -60,6 +62,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 interface SettingsFile {
 	readonly defaultProvider?: string;
 	readonly defaultModel?: string;
+	readonly locale?: Locale;
 	readonly providers: Record<
 		string,
 		{
@@ -225,10 +228,14 @@ function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 			: requiredString(record.defaultProvider, "defaultProvider", settingsPath);
 	const defaultModel =
 		record.defaultModel === undefined ? undefined : requiredString(record.defaultModel, "defaultModel", settingsPath);
+	if (record.locale !== undefined && !isLocale(record.locale)) {
+		throw new Error(`${settingsPath}: locale must be "en" or "zh-CN"`);
+	}
 	return {
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
+		...(record.locale === undefined ? {} : { locale: record.locale }),
 	};
 }
 
@@ -265,11 +272,27 @@ function mergeSettings(
 	const defaultModel =
 		projectSettings?.defaultModel ??
 		(projectSettings?.defaultProvider === undefined ? globalSettings?.defaultModel : undefined);
+	const locale = globalSettings?.locale;
 	return {
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
+		...(locale === undefined ? {} : { locale }),
 	};
+}
+
+/** Persists a user-level terminal language preference without changing project settings. */
+export async function saveGlobalLocale(agentDir: string, locale: Locale): Promise<void> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	const settings: SettingsFile = {
+		providers: existingSettings?.providers ?? {},
+		...(existingSettings?.defaultProvider === undefined ? {} : { defaultProvider: existingSettings.defaultProvider }),
+		...(existingSettings?.defaultModel === undefined ? {} : { defaultModel: existingSettings.defaultModel }),
+		locale,
+	};
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
 export async function saveGlobalProviderApiKey(
@@ -503,6 +526,10 @@ export async function loadStartupConfiguration(
 		readSettingsFile(join(cwd, SETTINGS_PATH), SETTINGS_PATH),
 	]);
 	const settings = mergeSettings(globalSettings, projectSettings);
+	const requestedLocale = environment.DI_CODE_LOCALE?.trim();
+	if (requestedLocale !== undefined && requestedLocale !== "" && !isLocale(requestedLocale)) {
+		throw new Error('DI_CODE_LOCALE must be "en" or "zh-CN".');
+	}
 
 	const providers = Object.entries(settings.providers).map(([id, provider]) => ({
 		id: requiredString(id, `providers.${id}`),
@@ -516,7 +543,13 @@ export async function loadStartupConfiguration(
 		settings.defaultProvider === undefined && settings.defaultModel === undefined
 			? undefined
 			: { providerId: settings.defaultProvider, modelId: settings.defaultModel };
-	return { environment, providers, ...(defaults === undefined ? {} : { defaults }) };
+	const locale = requestedLocale && isLocale(requestedLocale) ? requestedLocale : settings.locale;
+	return {
+		environment,
+		providers,
+		...(locale === undefined ? {} : { locale }),
+		...(defaults === undefined ? {} : { defaults }),
+	};
 }
 
 export async function loadStartupEnvironment(

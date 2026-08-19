@@ -7,6 +7,7 @@ import {
 	removeGlobalProviderApiKey,
 	resolveStartupArgs,
 	resolveStartupRuntime,
+	saveGlobalLocale,
 } from "../src/startup.ts";
 
 describe("resolveStartupArgs", () => {
@@ -165,6 +166,27 @@ describe("Pi-style startup configuration", () => {
 		await writeFile(join(root, ".di-code", "settings.json"), " \r\n\t");
 
 		await expect(loadStartupConfiguration(root, {}, globalDir)).resolves.toEqual({ environment: {}, providers: [] });
+	});
+
+	it("uses the global locale and lets DI_CODE_LOCALE override it", async () => {
+		await writeGlobalSettings({ locale: "zh-CN", providers: {} });
+
+		expect((await loadStartupConfiguration(root, {}, globalDir)).locale).toBe("zh-CN");
+		expect((await loadStartupConfiguration(root, { DI_CODE_LOCALE: "en" }, globalDir)).locale).toBe("en");
+		await expect(loadStartupConfiguration(root, { DI_CODE_LOCALE: "fr" }, globalDir)).rejects.toThrow(
+			'DI_CODE_LOCALE must be "en" or "zh-CN".',
+		);
+	});
+
+	it("persists a global locale without removing Provider settings", async () => {
+		await writeGlobalSettings({ locale: "en", providers: { faux: { api: "faux", models: [{ id: "faux-model" }] } } });
+
+		await saveGlobalLocale(globalDir, "zh-CN");
+
+		expect(JSON.parse(await readFile(join(globalDir, "settings.json"), "utf8"))).toMatchObject({
+			locale: "zh-CN",
+			providers: { faux: { api: "faux", models: [{ id: "faux-model" }] } },
+		});
 	});
 
 	it("loads providers from the user settings file when the project has no settings", async () => {

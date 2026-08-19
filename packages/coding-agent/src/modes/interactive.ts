@@ -3,9 +3,11 @@ import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import {
 	type AutocompleteProvider,
+	Box,
 	CombinedAutocompleteProvider,
 	type Component,
 	Editor,
+	type Focusable,
 	Key,
 	matchesKey,
 	type OverlayHandle,
@@ -24,11 +26,17 @@ import {
 import { extractImageAttachments } from "../core/image-input.ts";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
 import type { ExtensionHost } from "../extensions/runtime.ts";
+import { DEFAULT_LOCALE, type Locale, translate } from "../i18n.ts";
 import {
 	type InteractiveProviderOnboardingOptions,
 	showInteractiveProviderOnboarding,
 } from "../provider-onboarding.ts";
-import { loadStartupConfiguration, removeGlobalProviderApiKey, resolveStartupRuntime } from "../startup.ts";
+import {
+	loadStartupConfiguration,
+	removeGlobalProviderApiKey,
+	resolveStartupRuntime,
+	saveGlobalLocale,
+} from "../startup.ts";
 import {
 	AutocompleteMenu,
 	InteractiveChat,
@@ -47,20 +55,54 @@ export { InteractiveProjection } from "./interactive-state.ts";
 const IMAGE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"]);
 const PASTE_IMAGE_KEY = process.platform === "win32" ? Key.alt("v") : Key.ctrl("v");
 const PASTE_IMAGE_SHORTCUT = process.platform === "win32" ? "Alt+V" : "Ctrl+V";
-const BUILTIN_SLASH_COMMANDS: readonly SlashCommand[] = [
-	{ name: "help", description: "Show interactive commands" },
-	{ name: "clear", description: "Clear visible messages" },
-	{ name: "model", description: "Open the model selector" },
-	{ name: "session", description: "Open the session selector" },
-	{ name: "theme", description: "Open the theme selector" },
-	{ name: "settings", description: "Open the settings selector" },
-	{ name: "login", description: "Choose a Provider and save its global API key" },
-	{ name: "logout", description: "Remove the current Provider global API key" },
-	{ name: "compact", description: "Compact the persisted context now" },
-	{ name: "usage", description: "Show token and cost usage" },
-	{ name: "retry", description: "Retry the last failed prompt" },
-	{ name: "steer", description: "Steer the running agent" },
-];
+function builtinSlashCommands(locale: Locale): readonly SlashCommand[] {
+	const t = (key: string) => translate(locale, key);
+	return [
+		{ name: "help", description: t("showInteractiveCommands") },
+		{ name: "clear", description: t("clearVisibleMessages") },
+		{ name: "model", description: t("openModelSelector") },
+		{ name: "session", description: t("openSessionSelector") },
+		{ name: "theme", description: t("openThemeSelector") },
+		{ name: "settings", description: t("openSettingsSelector") },
+		{ name: "login", description: t("chooseProvider") },
+		{ name: "logout", description: t("removeProviderKey") },
+		{ name: "compact", description: t("compactContext") },
+		{ name: "usage", description: t("showUsage") },
+		{ name: "retry", description: t("retryPrompt") },
+		{ name: "steer", description: t("steerAgent") },
+	];
+}
+
+/** Adds a visual frame without taking keyboard handling away from SettingsList. */
+class SettingsPanel implements Component, Focusable {
+	private readonly box: Box;
+	private readonly list: SettingsList;
+
+	constructor(list: SettingsList, title: string) {
+		this.list = list;
+		this.box = new Box(list, { border: "rounded", padding: 1, title });
+	}
+
+	get focused(): boolean {
+		return this.list.focused;
+	}
+
+	set focused(value: boolean) {
+		this.list.focused = value;
+	}
+
+	invalidate(): void {
+		this.box.invalidate();
+	}
+
+	render(width: number): string[] {
+		return this.box.render(width);
+	}
+
+	handleInput(data: string): void {
+		this.list.handleInput(data);
+	}
+}
 
 function asImageAttachmentReference(pasted: string, cwd: string): string {
 	if (pasted.includes("\n")) return pasted;
@@ -100,6 +142,7 @@ export interface InteractiveModeOptions {
 	/** User data directory that owns clipboard image temporaries. */
 	readonly agentDir?: string;
 	readonly readClipboardImagePath?: (directory?: string) => Promise<string | null>;
+	readonly locale?: Locale;
 }
 
 export interface InteractiveSessionChoice {
@@ -138,6 +181,7 @@ export class InteractiveMode {
 	private spinnerTimer?: ReturnType<typeof setInterval>;
 	private shutdownEmitted = false;
 	private preserveClipboardFiles = false;
+	private locale: Locale;
 
 	constructor(options: InteractiveModeOptions) {
 		this.session = options.session;
@@ -148,6 +192,7 @@ export class InteractiveMode {
 		this.extensionHost = options.extensionHost;
 		this.providerOnboarding = options.providerOnboarding;
 		this.agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
+		this.locale = options.locale ?? DEFAULT_LOCALE;
 		this.readClipboardImagePath = options.readClipboardImagePath ?? readClipboardImagePath;
 		this.clipboardDirectory = clipboardImageDirectory(this.agentDir, this.session.allowedRoot);
 		const autocomplete: AutocompleteProvider = {
@@ -184,6 +229,7 @@ export class InteractiveMode {
 			...this.projection.state,
 			model: `${this.session.modelId}${this.session.thinkingLevel ? `(${this.session.thinkingLevel})` : ""}`,
 			theme: this.theme,
+			locale: this.locale,
 			pasteImageShortcut: PASTE_IMAGE_SHORTCUT,
 		});
 		this.root = new InteractiveLayout({
@@ -291,7 +337,9 @@ export class InteractiveMode {
 		try {
 			const path = await this.readClipboardImagePath(this.clipboardDirectory);
 			if (!path) {
-				this.projection.setStatus("Clipboard has no supported image.");
+				this.projection.setStatus(
+					this.locale === "zh-CN" ? "剪贴板中没有受支持的图片。" : "Clipboard has no supported image.",
+				);
 			} else {
 				this.editor.insertTextAtCursor(path);
 				if (isClipboardImagePath(path, this.clipboardDirectory)) this.clipboardFiles.add(path);
@@ -303,9 +351,10 @@ export class InteractiveMode {
 	}
 
 	private openThemeSelector(): void {
+		const t = (key: string) => translate(this.locale, key);
 		const list = new SelectList([
-			{ value: "dark", label: "Dark", description: "Dark terminal theme" },
-			{ value: "light", label: "Light", description: "Light terminal theme" },
+			{ value: "dark", label: t("dark"), description: t("darkTheme") },
+			{ value: "light", label: t("light"), description: t("lightTheme") },
 		]);
 		list.onSelect = (item) => {
 			this.theme = item.value === "light" ? "light" : "dark";
@@ -340,11 +389,12 @@ export class InteractiveMode {
 	}
 
 	private openSessionSelector(): void {
+		const t = (key: string) => translate(this.locale, key);
 		const list = new SelectList([
 			{
 				value: "__current__",
-				label: "Current session",
-				description: this.session.sessionFile ?? "In-memory session",
+				label: t("currentSession"),
+				description: this.session.sessionFile ?? t("inMemorySession"),
 			},
 			...this.sessionChoices.map((choice) => ({
 				value: choice.id,
@@ -369,34 +419,48 @@ export class InteractiveMode {
 	}
 
 	private openSettingsSelector(): void {
+		const t = (key: string) => translate(this.locale, key);
 		const list = new SettingsList([
 			{
 				id: "compaction",
-				label: "Context compaction",
-				currentValue: this.session.compactionEnabled ? "on" : "off",
-				values: ["on", "off"],
-				description: "Summarize older persisted context before the model limit is reached.",
+				label: t("contextCompaction"),
+				currentValue: this.session.compactionEnabled ? t("on") : t("off"),
+				values: [t("on"), t("off")],
+			},
+			{
+				id: "locale",
+				label: t("language"),
+				currentValue: this.locale,
+				values: ["en", "zh-CN"],
 			},
 		]);
 		list.onChange = (id, value) => {
+			if (id === "locale") {
+				this.locale = value === "zh-CN" ? "zh-CN" : "en";
+				void saveGlobalLocale(this.agentDir, this.locale).catch((cause) => {
+					this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+					this.refresh();
+				});
+				this.closeOverlay();
+				this.openSettingsSelector();
+				return;
+			}
 			if (id !== "compaction") return;
 			try {
-				const enabled = this.session.setCompactionEnabled(value === "on");
-				list.updateValue(id, enabled ? "on" : "off");
+				const enabled = this.session.setCompactionEnabled(value === t("on"));
+				list.updateValue(id, enabled ? t("on") : t("off"));
 				this.projection.setStatus(
-					enabled === (value === "on")
-						? `compaction=${enabled ? "on" : "off"}`
-						: "compaction unavailable without a persisted session",
+					enabled === (value === t("on")) ? `compaction=${enabled ? t("on") : t("off")}` : t("compactionUnavailable"),
 				);
 			} catch (cause) {
-				list.updateValue(id, this.session.compactionEnabled ? "on" : "off");
+				list.updateValue(id, this.session.compactionEnabled ? t("on") : t("off"));
 				this.projection.setError(cause instanceof Error ? cause.message : String(cause));
 				this.closeOverlay();
 			}
 			this.refresh();
 		};
 		list.onCancel = () => this.closeOverlay();
-		this.showOverlay(list);
+		this.showOverlay(new SettingsPanel(list, t("settings")));
 	}
 
 	private showOverlay(component: Component): void {
@@ -482,7 +546,9 @@ export class InteractiveMode {
 
 	private async switchSession(choice: InteractiveSessionChoice): Promise<void> {
 		if (this.promptInFlight || this.sessionSwitching) {
-			this.projection.setError("Cannot switch sessions while a prompt is running.");
+			this.projection.setError(
+				this.locale === "zh-CN" ? "提示词运行时不能切换会话。" : "Cannot switch sessions while a prompt is running.",
+			);
 			this.refresh();
 			return;
 		}
@@ -526,12 +592,20 @@ export class InteractiveMode {
 			return;
 		}
 		if (this.sessionSwitching) {
-			this.projection.setError("A session is opening; wait before submitting a prompt.");
+			this.projection.setError(
+				this.locale === "zh-CN"
+					? "会话正在打开，请等待后再提交提示词。"
+					: "A session is opening; wait before submitting a prompt.",
+			);
 			this.refresh();
 			return;
 		}
 		if (this.compactionInFlight) {
-			this.projection.setError("A compaction is running; wait before submitting a prompt.");
+			this.projection.setError(
+				this.locale === "zh-CN"
+					? "正在压缩上下文，请等待后再提交提示词。"
+					: "A compaction is running; wait before submitting a prompt.",
+			);
 			this.refresh();
 			return;
 		}
@@ -577,22 +651,34 @@ export class InteractiveMode {
 	private async submitSteering(text: string): Promise<void> {
 		const prompt = text.trim();
 		if (prompt.length === 0) {
-			this.projection.setError("Steering content must not be empty.");
+			this.projection.setError(this.locale === "zh-CN" ? "引导内容不能为空。" : "Steering content must not be empty.");
 			this.refresh();
 			return;
 		}
 		if (this.sessionSwitching) {
-			this.projection.setError("A session is opening; wait before steering the agent.");
+			this.projection.setError(
+				this.locale === "zh-CN"
+					? "会话正在打开，请等待后再引导 Agent。"
+					: "A session is opening; wait before steering the agent.",
+			);
 			this.refresh();
 			return;
 		}
 		if (this.compactionInFlight) {
-			this.projection.setError("A compaction is running; wait before steering the agent.");
+			this.projection.setError(
+				this.locale === "zh-CN"
+					? "正在压缩上下文，请等待后再引导 Agent。"
+					: "A compaction is running; wait before steering the agent.",
+			);
 			this.refresh();
 			return;
 		}
 		if (!this.promptInFlight) {
-			this.projection.setError("Steering is only available while a prompt is running.");
+			this.projection.setError(
+				this.locale === "zh-CN"
+					? "只能在提示词运行时引导 Agent。"
+					: "Steering is only available while a prompt is running.",
+			);
 			this.refresh();
 			return;
 		}
@@ -644,7 +730,7 @@ export class InteractiveMode {
 				break;
 			case "clear":
 				this.projection.clearVisibleMessages();
-				this.projection.setStatus("visible messages cleared");
+				this.projection.setStatus(translate(this.locale, "visibleMessagesCleared"));
 				break;
 			case "model":
 				this.openModelSelector();
@@ -672,7 +758,7 @@ export class InteractiveMode {
 				break;
 			case "retry":
 				if (this.lastFailedPrompt && !this.promptInFlight) void this.submit(this.lastFailedPrompt, true);
-				else this.projection.setStatus("nothing to retry");
+				else this.projection.setStatus(translate(this.locale, "nothingToRetry"));
 				break;
 			default: {
 				if (this.extensionHost?.listCommands().some((entry) => entry.name === command)) {
@@ -701,7 +787,11 @@ export class InteractiveMode {
 		}
 		this.editor.cancelAutocomplete();
 		this.closeAutocompleteOverlay();
-		void showInteractiveProviderOnboarding({ ...this.providerOnboarding, tui: this.tui })
+		void showInteractiveProviderOnboarding({
+			...this.providerOnboarding,
+			configuration: { ...this.providerOnboarding.configuration, locale: this.locale },
+			tui: this.tui,
+		})
 			.then((runtime) => {
 				if (!this.started) return;
 				this.tui.setFocus(this.editor);
@@ -769,7 +859,7 @@ export class InteractiveMode {
 			name: `skill:${skill.name}`,
 			description: skill.description,
 		}));
-		return [...BUILTIN_SLASH_COMMANDS, ...(this.extensionHost?.listCommands() ?? []), ...skills];
+		return [...builtinSlashCommands(this.locale), ...(this.extensionHost?.listCommands() ?? []), ...skills];
 	}
 
 	private isLoadedSkillCommand(input: string): boolean {
@@ -779,21 +869,26 @@ export class InteractiveMode {
 
 	private formatUsage(): string {
 		const usage = this.session.usage;
+		if (this.locale === "zh-CN") {
+			return `用量：请求=${usage.requestCount} 输入=${usage.inputTokens} 输出=${usage.outputTokens} 总计=${usage.totalTokens} 费用=$${usage.cost.total.toFixed(4)} 上下文=${usage.estimatedContextTokens}/${usage.contextWindow}`;
+		}
 		return `usage: requests=${usage.requestCount} input=${usage.inputTokens} output=${usage.outputTokens} total=${usage.totalTokens} cost=$${usage.cost.total.toFixed(4)} context=${usage.estimatedContextTokens}/${usage.contextWindow}`;
 	}
 
 	private async runManualCompaction(): Promise<void> {
 		if (this.promptInFlight || this.compactionInFlight) {
-			this.projection.setError("Cannot compact while a prompt is running.");
+			this.projection.setError(
+				this.locale === "zh-CN" ? "提示词运行时不能压缩上下文。" : "Cannot compact while a prompt is running.",
+			);
 			this.refresh();
 			return;
 		}
 		this.compactionInFlight = true;
-		this.projection.setStatus("starting manual compaction");
+		this.projection.setStatus(translate(this.locale, "manualCompactionStarting"));
 		this.refresh();
 		try {
 			await this.session.compact();
-			this.projection.setStatus("manual compaction complete");
+			this.projection.setStatus(translate(this.locale, "manualCompactionComplete"));
 		} catch (cause) {
 			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
 		} finally {

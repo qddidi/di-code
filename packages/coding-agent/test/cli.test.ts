@@ -187,6 +187,17 @@ describe("runCli", () => {
 		expect(stderr).not.toHaveBeenCalled();
 	});
 
+	it("renders help in Chinese when the caller selects zh-CN", async () => {
+		const stdout = vi.fn<(text: string) => void>();
+		const stderr = vi.fn<(text: string) => void>();
+		const run = vi.fn(async () => 0);
+
+		expect(await runCli(["--help"], { stdout, stderr, run, version: "0.0.0", locale: "zh-CN" })).toBe(0);
+		expect(stdout).toHaveBeenCalledWith(expect.stringContaining("用法：di-code"));
+		expect(stdout).toHaveBeenCalledWith(expect.stringContaining("显示帮助"));
+		expect(stderr).not.toHaveBeenCalled();
+	});
+
 	it("forwards run commands and reports usage errors on stderr", async () => {
 		const stdout = vi.fn<(text: string) => void>();
 		const stderr = vi.fn<(text: string) => void>();

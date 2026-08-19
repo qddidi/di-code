@@ -13,6 +13,7 @@ import { AgentSession } from "./core/session.ts";
 import { buildSystemPrompt } from "./core/system-prompt.ts";
 import { workspaceStorageKey } from "./core/user-data.ts";
 import { ProjectTrustManager } from "./extensions/trust.ts";
+import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
 import { addMcpConfig, getMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "./mcp/config.ts";
 import { loadProjectMcp } from "./mcp/loader.ts";
 import { InteractiveMode } from "./modes/interactive.ts";
@@ -35,6 +36,8 @@ export interface MainOptions extends PrintIo {
 	readonly allowedRoot?: string;
 	readonly agentDir?: string;
 	readonly startupConfiguration?: StartupConfiguration;
+	/** Language for built-in human-facing CLI and terminal text. */
+	readonly locale?: Locale;
 	readonly now?: () => number;
 	/** Whether stdin and stdout are interactive terminals. */
 	readonly isInteractiveTerminal?: boolean;
@@ -304,6 +307,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		stdout: options.stdout,
 		stderr: options.stderr,
 		version: options.version,
+		locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
 		plugin: async (command) => {
 			const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 			const manager = new PluginManager({ agentDir });
@@ -519,6 +523,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					session,
 					tui,
 					agentDir,
+					locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
 					onExit: () => {
 						void mcp.manager.close();
 					},
@@ -529,8 +534,11 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					sessions: [
 						{
 							id: "new-session",
-							label: "New session",
-							description: "Start a new persistent conversation.",
+							label: translate(options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE, "newSession"),
+							description: translate(
+								options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
+								"newSessionDescription",
+							),
 							open: async () => {
 								const filePath = newSessionPath(dirname(sessionFile), now);
 								const nextManager = await SessionManager.create({

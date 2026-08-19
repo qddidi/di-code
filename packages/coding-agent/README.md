@@ -126,6 +126,7 @@ di-code "检查当前项目的测试状态"
 | `providers` | Provider 配置对象，key 是 Provider ID |
 | `defaultProvider` | 可选的默认 Provider；`/login` 自动更新，多个 Provider 时用于消除启动歧义 |
 | `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 自动更新 |
+| `locale` | 仅用户全局 `~/.di-code/settings.json`：`en` 或 `zh-CN`；控制内置 CLI 与交互终端文案 |
 | `api` | 接口类型：`openai-responses`、`openai-chat-completions` 或 `anthropic-messages` |
 | `baseUrl` | Provider 的接口地址，必须是绝对的 `http` 或 `https` URL |
 | `apiKey` | API key，推荐填写 `$ENV_VAR` 或 `${ENV_VAR}` |
@@ -209,6 +210,12 @@ di-code "找出可能需要补测试的模块"
 
 `DI_CODE_MODEL` 必须属于当前 Provider；省略时会使用内建默认模型或该 Provider 列表中的第一个模型。选错模型时，CLI 会列出可用 ID。
 
+### 终端语言
+
+设置 `DI_CODE_LOCALE=zh-CN` 可为当前进程显示中文内置终端文案；`en` 则显示英文。未设置时，di-code 读取用户全局 `~/.di-code/settings.json` 的 `locale`，默认 `en`。在 interactive 模式中通过 `/settings` 切换会立即刷新界面并保存该全局偏好。项目 `.di-code/settings.json` 不会覆盖语言偏好。
+
+JSON/RPC 字段、slash command 名称、工具名、Provider 和模型 ID，以及插件提供的文本不随 locale 改变。
+
 ## 日常使用
 
 ```text
@@ -276,7 +283,7 @@ di-code --continue "继续上一次工作"
 | `/model` | 切换当前 Provider 的模型 |
 | `/session` | 选择或切换会话 |
 | `/theme` | 选择 dark 或 light 主题 |
-| `/settings` | 配置上下文压缩开关 |
+| `/settings` | 配置上下文压缩开关和内置终端语言 |
 | `/login` | 打开 Provider、模型和隐藏 API key 向导；保存到用户全局配置并切换当前会话 |
 | `/logout` | 移除当前 Provider 的用户全局 `apiKey`，不改环境变量或其他配置字段 |
 | `/compact` | 立即压缩当前持久化会话的旧上下文 |

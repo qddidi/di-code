@@ -89,7 +89,11 @@ export class SettingsList implements Component, Focusable {
 			this.onCancel?.();
 			return;
 		}
-		if (this.keybindings.matches(data, "tui.select.confirm") || matchesKey(data, Key.right)) {
+		if (this.keybindings.matches(data, "tui.select.confirm")) {
+			this.onCancel?.();
+			return;
+		}
+		if (matchesKey(data, Key.right)) {
 			this.cycle(1);
 			return;
 		}

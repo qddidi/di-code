@@ -1438,7 +1438,7 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
-	it("uses a SettingsList overlay to update compaction", async () => {
+	it("uses arrow keys to update compaction and Enter to close settings", async () => {
 		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-settings-"));
 		try {
 			const faux = createFauxProvider({ responses: [] });
@@ -1457,10 +1457,46 @@ describe("InteractiveMode", () => {
 			assert.equal(session.compactionEnabled, true);
 			terminal.sendInput("\x13");
 			assert.equal(tui.hasOverlay(), true);
+			assert.equal(
+				tui.render(terminal.columns).some((line) => line.includes("╭ Settings")),
+				true,
+			);
 			terminal.sendInput("\r");
-			assert.equal(session.compactionEnabled, false);
-			terminal.sendInput("\x1b");
 			assert.equal(tui.hasOverlay(), false);
+			assert.equal(session.compactionEnabled, true);
+			terminal.sendInput("\x13");
+			terminal.sendInput("\x1b[C");
+			assert.equal(session.compactionEnabled, false);
+			terminal.sendInput("\r");
+			assert.equal(tui.hasOverlay(), false);
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("switches built-in terminal text to Chinese and persists the locale from settings", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-locale-"));
+		try {
+			const faux = createFauxProvider({ responses: [] });
+			const session = new AgentSession({ allowedRoot: root, provider: faux.provider, model: faux.model });
+			const terminal = new TestTerminal();
+			const tui = new TUI(terminal);
+			const mode = new InteractiveMode({ session, tui, agentDir: root });
+			mode.start();
+
+			terminal.sendInput("\x13");
+			terminal.sendInput("\x1b[B");
+			terminal.sendInput("\x1b[C");
+			terminal.sendInput("\r");
+			await waitFor(() => tui.render(terminal.columns).join("\n").includes("就绪"));
+			await waitFor(() => {
+				try {
+					return JSON.parse(readFileSync(join(root, "settings.json"), "utf8")).locale === "zh-CN";
+				} catch {
+					return false;
+				}
+			});
 			mode.stop();
 		} finally {
 			rmSync(root, { recursive: true, force: true });

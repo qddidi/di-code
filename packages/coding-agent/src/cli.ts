@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
+
 export type OutputMode = "print" | "json" | "interactive";
 
 export type CliCommand =
@@ -248,25 +250,28 @@ function parseMcpArgs(args: readonly string[]): Extract<CliCommand, { kind: "mcp
 	return { kind: "mcp", action, transport, serverId: positional[0], url: positional[1], ...(scope ? { scope } : {}) };
 }
 
-const HELP_TEXT = `Usage: di-code [options] <prompt>
+export function helpText(locale: Locale): string {
+	const t = (key: string) => translate(locale, key);
+	return `${t("usage")}
 
-Options:
-  -p, --print        Print only the final assistant text (default)
-  --mode <mode>      Output mode: print, json, or interactive
-  --interactive      Start interactive terminal mode
-  --continue, -c     Continue the most recently modified session
-  --session <path>   Create or resume a JSONL session (relative to the work root)
-  --image <path>     Attach a local PNG, JPEG, WebP, or GIF image (repeatable)
-  --skill <path>     Add a SKILL.md file or skill directory (repeatable)
-  --no-skills        Disable all Skill loading
-  --no-context-files Disable AGENTS.md discovery and loading
-  --trust-project    Persist trust for project-local Skill discovery
-  --untrust-project  Persist denial for project-local Skill discovery
-  plugin <action>    Install, list, enable, disable, update, or remove a plugin
-  mcp add|list|get|remove Manage MCP configuration (add <id> -- <command> defaults to local stdio)
-  -h, --help         Show help
-  -v, --version      Show version
+${t("options")}
+  -p, --print        ${t("print")}
+  --mode <mode>      ${t("mode")}
+  --interactive      ${t("interactive")}
+  --continue, -c     ${t("continueSession")}
+  --session <path>   ${t("session")}
+  --image <path>     ${t("image")}
+  --skill <path>     ${t("skill")}
+  --no-skills        ${t("noSkills")}
+  --no-context-files ${t("noContextFiles")}
+  --trust-project    ${t("trustProject")}
+  --untrust-project  ${t("untrustProject")}
+  plugin <action>    ${t("plugin")}
+  mcp add|list|get|remove ${t("mcp")}
+  -h, --help         ${t("help")}
+  -v, --version      ${t("version")}
 `;
+}
 
 export interface CliDependencies {
 	stdout(text: string): void;
@@ -275,6 +280,7 @@ export interface CliDependencies {
 	plugin?(command: Extract<CliCommand, { kind: "plugin" }>): Promise<number>;
 	mcp?(command: Extract<CliCommand, { kind: "mcp" }>): Promise<number>;
 	readonly version: string;
+	readonly locale?: Locale;
 }
 
 export async function runCli(args: readonly string[], dependencies: CliDependencies): Promise<number> {
@@ -291,7 +297,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
 
 	switch (command.kind) {
 		case "help":
-			dependencies.stdout(HELP_TEXT);
+			dependencies.stdout(helpText(dependencies.locale ?? DEFAULT_LOCALE));
 			return 0;
 		case "plugin":
 			if (!dependencies.plugin) throw new Error("Plugin command handler is unavailable.");
