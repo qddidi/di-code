@@ -293,16 +293,23 @@ di-code --continue "继续上一次工作"
 | `/compact` | 立即压缩当前持久化会话的旧上下文 |
 | `/usage` | 查看请求数、token、费用和上下文占用 |
 | `/retry` | 重新提交最近失败或取消的 prompt |
+| `/steer` | 在当前 prompt 运行期间向 Agent 追加引导内容（例如 `/steer 简短回答`）；空闲时使用会报错 |
+| `/skill:<name>` | 手动调用一个已加载的 Skill，可附带具体请求（见下文 Skills 部分） |
+
+插件和扩展也可以注册额外 slash command，名称与内置命令冲突时以加载诊断为准。
 
 | 按键 | 作用 |
 | --- | --- |
 | `Enter` | 发送当前 prompt |
+| `Shift+Enter` | 在输入框中插入换行 |
 | `Esc` | 取消当前模型请求；没有请求时关闭补全或选择器 |
 | `Ctrl+C` | 退出并恢复终端状态 |
+| `Tab` | 补全 slash command |
+| `Alt+S` | 把编辑框当前内容作为引导发送给运行中的 Agent（与 `/steer` 等价） |
+| `Shift+Tab` | 循环切换模型的 thinking 等级（模型不支持时提示错误） |
 | `Ctrl+O` / `Ctrl+L` | 打开模型 / 会话选择器 |
 | `Ctrl+T` / `Ctrl+S` | 打开主题 / 设置 |
 | `Ctrl+R` | 重试最近失败的 prompt |
-| `Tab` | 补全 slash command |
 
 取消只停止当前请求，不会删除已经追加到磁盘的会话记录。之后可使用 `/retry` 再试一次。
 

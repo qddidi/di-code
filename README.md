@@ -518,8 +518,27 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | `/compact` | 立即压缩当前持久化会话的旧上下文。 |
 | `/usage` | 查看请求数、token、费用和当前上下文占用。 |
 | `/retry` | 重试最后一次失败或取消的提示。 |
+| `/steer` | 在当前提示词运行期间向 Agent 追加引导内容（例如 `/steer 简短回答`）。 |
+| `/login` | 重新打开 Provider、模型和隐藏 API key 向导；保存到用户全局配置并切换当前会话。 |
+| `/logout` | 移除当前 Provider 保存在用户全局配置中的 API key，不影响环境变量。 |
+| `/skill:<name>` | 手动调用一个已加载的 Skill，可附带具体请求，例如 `/skill:release-check 检查发布条件`；交互框中输入 `/skill:` 后可补全。 |
 
-`Esc` 会取消当前模型请求或工具执行；提示在执行期间提交会进入队列。
+输入 `/` 后按 `Tab` 可补全命令。常用按键：
+
+| 按键 | 作用 |
+| --- | --- |
+| `Enter` | 发送当前提示词；执行期间提交的提示词进入队列。 |
+| `Shift+Enter` | 在输入框中插入换行。 |
+| `Esc` | 取消当前模型请求或工具执行；没有请求时关闭补全或选择器。 |
+| `Ctrl+C` | 退出并恢复终端状态。 |
+| `Tab` | 补全 slash command。 |
+| `Alt+S` | 把编辑框当前内容作为引导发送给运行中的 Agent（与 `/steer` 等价）。 |
+| `Shift+Tab` | 循环切换模型的 thinking 等级（模型不支持时提示错误）。 |
+| `Ctrl+O` / `Ctrl+L` | 打开模型 / 会话选择器。 |
+| `Ctrl+T` / `Ctrl+S` | 打开主题 / 设置。 |
+| `Ctrl+R` | 重试最近失败或取消的提示。 |
+
+取消只停止当前请求，不会删除已写入磁盘的会话记录；之后可使用 `/retry` 或 `Ctrl+R` 重试。剪贴板图片快捷键（Windows `Alt+V`，macOS/Linux `Ctrl+V`）见上文图片部分。
 
 ## 内置工具与安全边界
 
