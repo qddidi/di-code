@@ -19,14 +19,15 @@ import type {
 	Usage,
 	UserContent,
 } from "@di-code/ai";
+import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { ExtensionHost } from "../extensions/runtime.ts";
 import { buildSessionContext } from "./context-builder.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic } from "./session/types.ts";
-import { resolveSkillCommand } from "./skill-command.ts";
 import { createBashTool } from "./tools/bash.ts";
 import { createEditTool } from "./tools/edit.ts";
+import { createLoadSkillTool } from "./tools/load-skill.ts";
 import { createReadTool } from "./tools/read.ts";
 import { createWriteTool } from "./tools/write.ts";
 
@@ -89,6 +90,7 @@ export class AgentSession {
 	private readonly sessionManager?: SessionManager;
 	private provider: Provider;
 	private readonly skills: readonly SkillResource[];
+	private readonly skillCatalog: SkillCatalog;
 	private readonly extensionHost?: ExtensionHost;
 	private model: Model;
 	private thinkingLevelValue?: ThinkingLevel;
@@ -110,7 +112,25 @@ export class AgentSession {
 		this.allowedRootValue = options.allowedRoot;
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
-		this.skills = structuredClone([...(options.skills ?? [])]);
+		this.skills = structuredClone(
+			[...(options.skills ?? [])].map((skill) => ({
+				...skill,
+				source:
+					skill.source ?? (skill.scope === "explicit" ? "explicit" : skill.scope === "project" ? "project" : "user"),
+				userInvocable: skill.userInvocable ?? true,
+			})),
+		);
+		this.skillCatalog = createSkillCatalog(
+			this.skills.map((skill) => ({
+				skill: {
+					...skill,
+					source:
+						skill.source ?? (skill.scope === "explicit" ? "explicit" : skill.scope === "project" ? "project" : "user"),
+					userInvocable: skill.userInvocable ?? true,
+				},
+				diagnostics: [],
+			})),
+		);
 		this.extensionHost = options.extensionHost;
 		this.model = options.model;
 		this.thinkingLevelValue = defaultThinkingLevel(this.model);
@@ -150,6 +170,7 @@ export class AgentSession {
 				createWriteTool(options.allowedRoot),
 				createEditTool(options.allowedRoot),
 				createBashTool(options.allowedRoot),
+				...(this.skillCatalog.listForModel().length > 0 ? [createLoadSkillTool(this.skillCatalog)] : []),
 				...(this.extensionHost?.listTools().map((tool) => ({
 					name: tool.name,
 					description: tool.description,
@@ -227,7 +248,7 @@ export class AgentSession {
 	}
 
 	get availableSkills(): readonly SkillResource[] {
-		return structuredClone(this.skills);
+		return structuredClone(this.skills.filter((skill) => skill.userInvocable !== false));
 	}
 
 	setModel(modelId: string): Model {
@@ -323,7 +344,7 @@ export class AgentSession {
 		if (images.length > 0 && !this.model.input.includes("image")) {
 			throw new Error(`Model "${this.model.id}" does not support image input.`);
 		}
-		const prompt = await resolveSkillCommand(text, this.skills, signal);
+		const prompt = await resolveSkillInvocation(text, this.skillCatalog, signal);
 		const content: UserContent[] = [{ type: "text", text: prompt }, ...structuredClone([...images])];
 		this.agent.steerWithContent(content);
 		this.steeringMessages.push({ displayText: text, deliveredText: prompt });
@@ -348,7 +369,7 @@ export class AgentSession {
 			if (images.length > 0 && !this.model.input.includes("image")) {
 				throw new Error(`Model "${this.model.id}" does not support image input.`);
 			}
-			const prompt = await resolveSkillCommand(text, this.skills, signal);
+			const prompt = await resolveSkillInvocation(text, this.skillCatalog, signal);
 			const content: UserContent[] = [{ type: "text", text: prompt }, ...structuredClone([...images])];
 			await this.compactIfNeeded(content, signal);
 			return await this.agent.promptWithContent(content, signal);

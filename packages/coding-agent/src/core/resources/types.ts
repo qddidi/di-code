@@ -1,3 +1,5 @@
+import type { SkillDescriptor, SkillSource } from "@di-code/skills";
+
 export type ResourceScope = "global" | "ancestor" | "project" | "explicit";
 
 export type ResourceDiagnosticStage = "discover" | "read" | "parse" | "collision" | "trust";
@@ -17,15 +19,11 @@ export interface ContextFile {
 	readonly content: string;
 }
 
-export interface SkillResource {
-	readonly kind: "skill";
-	readonly name: string;
-	readonly description: string;
-	readonly filePath: string;
-	readonly baseDir: string;
+export type SkillResource = Omit<SkillDescriptor, "source" | "userInvocable"> & {
 	readonly scope: ResourceScope;
-	readonly disableModelInvocation: boolean;
-}
+	readonly source?: SkillSource;
+	readonly userInvocable?: boolean;
+};
 
 export interface ResourceSnapshot {
 	readonly contextFiles: readonly ContextFile[];

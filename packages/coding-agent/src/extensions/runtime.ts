@@ -187,7 +187,7 @@ function safeDiagnosticMessage(cause: unknown): string {
 }
 
 async function discoverProjectPaths(cwd: string): Promise<string[]> {
-	const candidates = [join(cwd, ".di-code", "extensions"), join(cwd, ".pi", "extensions")];
+	const candidates = [join(cwd, ".di-code", "extensions")];
 	const paths: string[] = [];
 	for (const directory of candidates) {
 		if (!existsSync(directory)) continue;
@@ -220,7 +220,7 @@ export async function loadExtensions(options: ExtensionLoadOptions): Promise<Ext
 	const explicitPaths = [...(options.paths ?? [])].map((path) => resolve(cwd, path));
 	const projectPaths = projectTrusted ? await discoverProjectPaths(cwd) : [];
 	if (!projectTrusted) {
-		const projectDirectories = [join(cwd, ".di-code", "extensions"), join(cwd, ".pi", "extensions")];
+		const projectDirectories = [join(cwd, ".di-code", "extensions")];
 		for (const directory of projectDirectories) {
 			if (existsSync(directory)) {
 				diagnostics.push({

@@ -278,6 +278,48 @@ describe("AgentSession read integration", () => {
 		expect(faux.pendingResponses()).toBe(0);
 	});
 
+	it("loads only cataloged Skill content through load_skill", async () => {
+		const skillPath = join(root, "review.SKILL.md");
+		await writeFile(
+			skillPath,
+			"---\nname: review\ndescription: Review changes.\n---\nFollow the review checklist.",
+			"utf8",
+		);
+		const faux = createFauxProvider({
+			responses: [
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "skill-1", name: "load_skill", arguments: { name: "review" } }],
+				},
+				{ type: "success", content: [{ type: "text", text: "loaded" }] },
+			],
+		});
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: faux.model,
+			skills: [
+				{
+					kind: "skill",
+					name: "review",
+					description: "Review changes.",
+					filePath: skillPath,
+					baseDir: root,
+					scope: "explicit",
+					disableModelInvocation: false,
+				},
+			],
+		});
+
+		await session.prompt("review this");
+
+		expect(findToolResult(session.transcript, "skill-1")).toMatchObject({
+			toolName: "load_skill",
+			isError: false,
+			content: [{ type: "text", text: expect.stringContaining("Follow the review checklist.") }],
+		});
+	});
+
 	it("returns a read failure to the model and lets the next response recover", async () => {
 		const faux = createFauxProvider({
 			responses: [

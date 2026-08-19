@@ -9,6 +9,7 @@ const workspaces = [
 	"@di-code/ai",
 	"@di-code/agent",
 	"@di-code/tui",
+	"@di-code/skills",
 	"@di-code/coding-agent",
 	"@di-code/orchestrator",
 ];

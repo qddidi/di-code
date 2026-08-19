@@ -1,6 +1,6 @@
 import { access, readFile, stat } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
-import { discoverSkills, loadSkill } from "./skills.ts";
+import { createSkillCatalog, discoverSkills, loadSkill, type SkillLoadResult } from "@di-code/skills";
 import type {
 	ContextFile,
 	ResourceDiagnostic,
@@ -108,27 +108,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	async load(): Promise<ResourceSnapshot> {
 		const context = await loadContextFiles(this.options);
 		const diagnostics = [...context.diagnostics];
-		const skills = new Map<string, SkillResource>();
-		const add = (candidate: SkillResource, candidateDiagnostics: readonly ResourceDiagnostic[]): void => {
-			diagnostics.push(...candidateDiagnostics);
-			const existing = skills.get(candidate.name);
-			if (existing) {
-				diagnostics.push({
-					path: candidate.filePath,
-					kind: "skill",
-					stage: "collision",
-					severity: "warning",
-					message: `Skill name collision: "${candidate.name}"; using ${existing.filePath}`,
-				});
-				return;
-			}
-			skills.set(candidate.name, candidate);
-		};
-		const addResults = (results: Awaited<ReturnType<typeof discoverSkills>>): void => {
-			for (const result of results) {
-				if (result.skill) add(result.skill, result.diagnostics);
-				else diagnostics.push(...result.diagnostics);
-			}
+		const skillResults: SkillLoadResult[] = [];
+		const addResults = (results: readonly SkillLoadResult[]): void => {
+			skillResults.push(...results);
 		};
 
 		if (!this.options.noSkills) {
@@ -139,8 +121,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					if (metadata.isDirectory()) addResults(await discoverSkills(path, "explicit"));
 					else {
 						const result = await loadSkill(path, "explicit");
-						if (result.skill) add(result.skill, result.diagnostics);
-						else diagnostics.push(...result.diagnostics);
+						skillResults.push(result);
 					}
 				} catch (cause) {
 					const message = isMissingPath(cause)
@@ -151,7 +132,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 			const projectDirectories = [
 				join(this.options.cwd, ".di-code", "skills"),
-				join(this.options.cwd, ".pi", "skills"),
+				join(this.options.cwd, ".agents", "skills"),
 			];
 			if (this.options.projectTrusted === true) {
 				for (const directory of projectDirectories) addResults(await discoverSkills(directory, "project"));
@@ -168,9 +149,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 					}
 				}
 			}
-			addResults(await discoverSkills(join(this.options.agentDir, "skills"), "global"));
+			addResults(await discoverSkills(join(this.options.agentDir, "skills"), "user"));
 		}
-		return { contextFiles: context.contextFiles, skills: [...skills.values()], diagnostics };
+		const catalog = createSkillCatalog(skillResults);
+		const skillDiagnostics = catalog.diagnostics.map((diagnostic): ResourceDiagnostic => diagnostic);
+		const skills: SkillResource[] = catalog.skills.map((skill) => ({
+			...skill,
+			scope: skill.source === "explicit" ? "explicit" : skill.source === "project" ? "project" : "global",
+		}));
+		return { contextFiles: context.contextFiles, skills, diagnostics: [...diagnostics, ...skillDiagnostics] };
 	}
 }
 

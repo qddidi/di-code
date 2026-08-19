@@ -241,6 +241,12 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				noContextFiles: command.noContextFiles,
 				skillPaths: command.skillPaths,
 			});
+			for (const diagnostic of resources.diagnostics) {
+				if (diagnostic.kind !== "skill") continue;
+				options.stderr(
+					`${JSON.stringify({ type: "skill_diagnostic", path: diagnostic.path, stage: diagnostic.stage, severity: diagnostic.severity, message: diagnostic.message })}\n`,
+				);
+			}
 			const extensions = await loadPlugins({
 				cwd: allowedRoot,
 				agentDir,

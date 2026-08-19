@@ -343,15 +343,15 @@ di-code --no-context-files "只分析当前文件，不遵循项目说明"
 
 ### Skills：可按需加载的专业工作流
 
-Skill 是带少量 YAML frontmatter 的 `SKILL.md` 文件。它不是可执行代码，而是一组可复用的 Markdown 指令，例如“如何发布版本”“如何处理数据库迁移”。默认情况下，模型看到 Skill 的名称和描述；任务匹配时，它会先用 `read` 读取完整 Skill，再按其步骤工作。
+Skill 是带 YAML frontmatter 的 `SKILL.md` 文件。解析、发现、目录和正文读取由独立的 `@di-code/skills` 包提供；它不是可执行代码。默认情况下，模型只看到名称和描述；任务匹配时，它必须使用受控的 `load_skill` 工具按名称加载正文。
 
 Skill 的发现位置和优先级如下：
 
 1. `--skill <path>` 显式传入的文件或目录；
-2. 已信任项目的 `.di-code/skills/` 与 `.pi/skills/`；
+2. 已信任项目的 `.di-code/skills/` 与 `.agents/skills/`；
 3. 用户全局目录 `~/.di-code/skills/`。
 
-目录会递归查找名为 `SKILL.md` 的文件，跳过隐藏目录和 `node_modules`。同名时先发现的 Skill 生效；冲突和格式错误会产生诊断。项目 Skill 不会在项目未信任时加载。
+目录会递归查找名为 `SKILL.md` 的文件，跳过隐藏目录和 `node_modules`。同名时先发现的 Skill 生效；冲突和格式错误会产生诊断。项目 Skill 不会在项目未信任时加载。Skill metadata 不能授予文件、命令或网络权限。
 
 创建项目 Skill：
 
@@ -363,7 +363,7 @@ my-project/
         SKILL.md
 ```
 
-`.di-code/skills/release-check/SKILL.md`：
+`.di-code/skills/release-check/SKILL.md`（或 `.agents/skills/release-check/SKILL.md`）：
 
 ```markdown
 ---
@@ -566,7 +566,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | --- | --- |
 | `Provider is not configured` | 设置 `DI_CODE_PROVIDER` 及对应 API key；或在 TTY 中运行 `di-code` 使用向导；离线测试使用 `faux` |
 | `Unknown model` | 确认 `DI_CODE_MODEL` 属于当前 `DI_CODE_PROVIDER` |
-| 项目 Skill / 插件没有加载 | 目录是否为 `.di-code/skills` 或 `.di-code/plugins`，并运行 `di-code --trust-project --interactive` |
+| 项目 Skill / 插件没有加载 | Skill 目录是否为 `.di-code/skills` 或 `.agents/skills`，插件目录是否为 `.di-code/plugins`，并运行 `di-code --trust-project --interactive` |
 | `Unknown skill` | Skill 是否有正确 `SKILL.md` frontmatter，名称是否匹配 `/skill:<name>`；检查是否被 `--no-skills` 禁用 |
 | `plugin_diagnostic` | 检查 `plugin.json`、默认导出、入口路径及 stderr 的 JSON 诊断；详见插件指南 |
 | 图片被拒绝 | 确认格式、4 张/5 MiB 限制，以及模型 `input` 包含 `image` |

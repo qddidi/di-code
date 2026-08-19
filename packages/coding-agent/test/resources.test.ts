@@ -98,6 +98,21 @@ describe("resource discovery", () => {
 		);
 	});
 
+	it("discovers project skills from .agents", async () => {
+		const root = await temporaryRoot();
+		const project = join(root, "project");
+		const agentsPath = await writeSkill(join(project, ".agents", "skills"), "agents-skill", "Agents project skill");
+
+		const resources = await loadResources({
+			cwd: project,
+			agentDir: join(root, "agent"),
+			projectTrusted: true,
+		});
+
+		expect(resources.skills.map((skill) => skill.name)).toEqual(["agents-skill"]);
+		expect(resources.skills[0]?.filePath).toBe(agentsPath);
+	});
+
 	it("reports invalid skills and omits all resources when both loaders are disabled", async () => {
 		const root = await temporaryRoot();
 		const agentDir = join(root, "agent");

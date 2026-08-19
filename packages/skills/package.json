@@ -1,33 +1,22 @@
 {
-	"name": "@di-code/coding-agent",
+	"name": "@di-code/skills",
 	"version": "0.1.4",
-	"description": "Coding agent product layer for di-code",
+	"description": "Discoverable, provider-neutral SKILL.md documents for di-code hosts",
 	"keywords": [
-		"ai-coding-agent",
+		"ai",
 		"coding-agent",
-		"cli",
-		"developer-tools",
-		"openai",
-		"deepseek",
-		"jsonl",
-		"rpc"
+		"skills",
+		"markdown",
+		"yaml"
 	],
 	"private": false,
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
-	"bin": {
-		"di-code": "./dist/entry.js",
-		"di-code-rpc": "./dist/rpc-entry.js"
-	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		},
-		"./rpc": {
-			"types": "./dist/rpc/index.d.ts",
-			"import": "./dist/rpc/index.js"
 		}
 	},
 	"files": [
@@ -37,7 +26,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/qddidi/di-code.git",
-		"directory": "packages/coding-agent"
+		"directory": "packages/skills"
 	},
 	"bugs": {
 		"url": "https://github.com/qddidi/di-code/issues"
@@ -48,20 +37,10 @@
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
-		"dev": "node --experimental-strip-types src/entry.ts",
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.1.4",
-		"@di-code/ai": "0.1.4",
-		"@di-code/skills": "0.1.4",
-		"@di-code/tui": "0.1.4",
-		"diff": "8.0.4",
-		"highlight.js": "^10.7.3",
-		"jiti": "^2.5.1"
-	},
-	"optionalDependencies": {
-		"@mariozechner/clipboard": "0.3.9"
+		"yaml": "^2.8.1"
 	},
 	"engines": {
 		"node": ">=22.19.0"

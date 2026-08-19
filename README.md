@@ -49,6 +49,7 @@ packages/
   ai/             Provider 无关的 AI 类型、事件流和 OpenAI/Chat Completions 适配器
   agent/          Agent 状态管理与工具调用循环
   coding-agent/   CLI、编码工具、会话、交互模式和扩展运行时
+  skills/         独立的 SKILL.md 解析、发现、目录和调用展开包
   orchestrator/   通过公开 RPC SDK 管理 Coding Agent 子进程生命周期
   tui/            自研 ANSI 终端 UI 组件库
 ```
@@ -76,6 +77,7 @@ Provider.stream() <----> Responses / Chat Completions Provider
 | `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、Anthropic、DeepSeek、智谱 GLM 与 Faux 测试 Provider。 |
 | `@di-code/agent` | 管理完整对话历史和模型上下文，执行模型-工具循环，并向订阅者按序发布事件。 |
 | `@di-code/coding-agent` | 可执行产品层，提供 CLI、文件与命令工具、会话存储、上下文压缩、交互界面和扩展契约。 |
+| `@di-code/skills` | Provider 无关的 SKILL.md YAML frontmatter 解析、受限读取、递归发现、冲突目录和 `/skill:` 参数展开；不执行 Skill 内容。 |
 | `@di-code/orchestrator` | 监督 `di-code-rpc` 子进程，传播取消和崩溃，并保留有上限的 stderr 诊断。 |
 | `@di-code/tui` | ANSI 终端渲染、增量重绘、光标、焦点、Overlay、编辑器、Markdown、补全等基础组件。 |
 
@@ -518,7 +520,7 @@ npm run dev     # 从源码运行 coding-agent
 npm run release:dry-run
 ```
 
-该命令构建五个 workspace，检查并生成 npm tarball，在系统临时目录创建仓库外项目，以 `npm install --ignore-scripts` 安装所有 tarball，然后验证 help、version、Faux 对话和 orchestrator RPC 链路。成功或失败后都会清理临时目录；它不会运行 `npm publish`、创建 Git tag 或调用真实 Provider。
+该命令构建六个 workspace，检查并生成 npm tarball，在系统临时目录创建仓库外项目，以 `npm install --ignore-scripts` 安装所有 tarball，然后验证 help、version、Faux 对话和 orchestrator RPC 链路。成功或失败后都会清理临时目录；它不会运行 `npm publish`、创建 Git tag 或调用真实 Provider。
 
 准备新版本时，不要逐个修改 package manifest。传入一个高于当前版本的稳定语义版本号（`major.minor.patch`）：
 
@@ -543,7 +545,7 @@ git commit -am "chore: release 0.1.2"
 npm run release:publish -- --confirm
 ```
 
-`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖；缺少 `## [0.1.2]` CHANGELOG 标题时只会输出 warning，仍可继续。随后重跑 release dry-run，再按 ai、agent、tui、coding-agent、orchestrator 的顺序调用 `npm publish --ignore-scripts`。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
+`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖；缺少 `## [0.1.2]` CHANGELOG 标题时只会输出 warning，仍可继续。随后重跑 release dry-run，再按 ai、agent、tui、skills、coding-agent、orchestrator 的顺序调用 `npm publish --ignore-scripts`。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
 
 每个包也可单独执行构建或测试：
 
