@@ -8,6 +8,7 @@
 		"provider",
 		"openai",
 		"deepseek",
+		"kimi",
 		"streaming",
 		"typescript"
 	],

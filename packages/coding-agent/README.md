@@ -197,6 +197,7 @@ di-code "检查这个仓库的目录结构"
 | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` |
 | `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_BASE_URL` |
 | `zhipu` | `ZAI_API_KEY` | `ZHIPU_BASE_URL` |
+| `kimi` | `KIMI_API_KEY` | `KIMI_BASE_URL` |
 | `faux` | 无 | 无（离线测试用） |
 
 例如 DeepSeek：
@@ -209,6 +210,8 @@ di-code "找出可能需要补测试的模块"
 ```
 
 `DI_CODE_MODEL` 必须属于当前 Provider；省略时会使用内建默认模型或该 Provider 列表中的第一个模型。选错模型时，CLI 会列出可用 ID。
+
+Kimi Coding 使用 OpenAI Chat Completions 兼容 endpoint `https://api.kimi.com/coding/v1`，内建模型为 `k3`、`k3-256k`、`kimi-for-coding` 和 `kimi-for-coding-highspeed`。Kimi 官方也提供 Anthropic 兼容 endpoint，但当前内建 Provider 使用 OpenAI 兼容协议。
 
 ### 终端语言
 
@@ -547,7 +550,7 @@ $env:DI_CODE_MODEL = "company-coder"
 di-code "总结当前项目"
 ```
 
-`api` 可为 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。Chat Completions 模型还可声明 `chatCompletionsCompat`，用于 DeepSeek/GLM 的 thinking、reasoning_effort、`max_tokens`、流式 usage 和 `tool_stream` 等兼容差异。
+`api` 可为 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。Chat Completions 模型还可声明 `chatCompletionsCompat`，用于 DeepSeek/GLM/Kimi 的 thinking、reasoning_effort、`max_tokens`、流式 usage 和 `tool_stream` 等兼容差异。Kimi 模型支持 `low`、`high`、`max` 推理等级；Kimi 不发送 DeepSeek/智谱的 `thinking` 对象，而是发送 `reasoning_effort`。
 
 `apiKey` 支持直接字符串，也支持 `$NAME` 或 `${NAME}` 环境变量引用。项目级 `settings.json` 若含明文 key，必须保持未提交；`baseUrl` 必须是绝对 `http`/`https` URL。
 

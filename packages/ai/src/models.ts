@@ -38,6 +38,8 @@ interface ChatCompletionsModelOptions {
 	readonly maxOutputTokens: number;
 	readonly reasoning?: boolean;
 	readonly input?: Model["input"];
+	readonly reasoningEfforts?: Model["reasoningEfforts"];
+	readonly chatCompletionsCompat?: Model["chatCompletionsCompat"];
 }
 
 function chatCompletionsModel(id: string, name: string, options: ChatCompletionsModelOptions): Model {
@@ -49,6 +51,8 @@ function chatCompletionsModel(id: string, name: string, options: ChatCompletions
 		baseUrl: options.baseUrl,
 		input: options.input ?? ["text"],
 		reasoning: options.reasoning ?? false,
+		...(options.reasoningEfforts ? { reasoningEfforts: options.reasoningEfforts } : {}),
+		...(options.chatCompletionsCompat ? { chatCompletionsCompat: options.chatCompletionsCompat } : {}),
 		contextWindow: options.contextWindow,
 		maxOutputTokens: options.maxOutputTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -174,6 +178,66 @@ export const MODEL_SOURCE: readonly Model[] = [
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
 	{
+		id: "glm-5.2",
+		name: "GLM-5.2",
+		provider: "zhipu",
+		api: "openai-chat-completions",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		input: ["text"],
+		reasoning: true,
+		reasoningEfforts: ["low", "medium", "high"],
+		chatCompletionsCompat: {
+			thinkingFormat: "zai",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+			zaiToolStream: true,
+		},
+		contextWindow: 1_000_000,
+		maxOutputTokens: 128_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "glm-5.1",
+		name: "GLM-5.1",
+		provider: "zhipu",
+		api: "openai-chat-completions",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		input: ["text"],
+		reasoning: true,
+		reasoningEfforts: ["low", "medium", "high"],
+		chatCompletionsCompat: {
+			thinkingFormat: "zai",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+			zaiToolStream: true,
+		},
+		contextWindow: 200_000,
+		maxOutputTokens: 128_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "glm-5",
+		name: "GLM-5",
+		provider: "zhipu",
+		api: "openai-chat-completions",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		input: ["text"],
+		reasoning: true,
+		reasoningEfforts: ["low", "medium", "high"],
+		chatCompletionsCompat: {
+			thinkingFormat: "zai",
+			maxTokensField: "max_tokens",
+			supportsUsageInStreaming: true,
+			supportsReasoningEffort: true,
+			zaiToolStream: true,
+		},
+		contextWindow: 200_000,
+		maxOutputTokens: 128_000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
 		id: "glm-5-turbo",
 		name: "GLM-5 Turbo",
 		provider: "zhipu",
@@ -254,12 +318,44 @@ export const MODEL_SOURCE: readonly Model[] = [
 		contextWindow: 128_000,
 		maxOutputTokens: 16_384,
 	}),
-	chatCompletionsModel("kimi-k3", "Kimi K3", {
+	chatCompletionsModel("k3", "Kimi K3", {
 		provider: "kimi",
-		baseUrl: "https://api.moonshot.ai/v1",
+		baseUrl: "https://api.kimi.com/coding/v1",
 		input: ["text", "image"],
 		reasoning: true,
+		reasoningEfforts: ["low", "high", "max"],
+		chatCompletionsCompat: { thinkingFormat: "kimi", supportsReasoningEffort: true },
 		contextWindow: 1_000_000,
+		maxOutputTokens: 32_768,
+	}),
+	chatCompletionsModel("k3-256k", "Kimi K3", {
+		provider: "kimi",
+		baseUrl: "https://api.kimi.com/coding/v1",
+		input: ["text", "image"],
+		reasoning: true,
+		reasoningEfforts: ["low", "high", "max"],
+		chatCompletionsCompat: { thinkingFormat: "kimi", supportsReasoningEffort: true },
+		contextWindow: 256_000,
+		maxOutputTokens: 32_768,
+	}),
+	chatCompletionsModel("kimi-for-coding", "Kimi K2.7 Code", {
+		provider: "kimi",
+		baseUrl: "https://api.kimi.com/coding/v1",
+		input: ["text", "image"],
+		reasoning: true,
+		reasoningEfforts: ["high"],
+		chatCompletionsCompat: { thinkingFormat: "kimi", supportsReasoningEffort: true },
+		contextWindow: 256_000,
+		maxOutputTokens: 32_768,
+	}),
+	chatCompletionsModel("kimi-for-coding-highspeed", "K2.7 Code HighSpeed", {
+		provider: "kimi",
+		baseUrl: "https://api.kimi.com/coding/v1",
+		input: ["text", "image"],
+		reasoning: true,
+		reasoningEfforts: ["high"],
+		chatCompletionsCompat: { thinkingFormat: "kimi", supportsReasoningEffort: true },
+		contextWindow: 256_000,
 		maxOutputTokens: 32_768,
 	}),
 	chatCompletionsModel("MiniMax-M3", "MiniMax M3", {
@@ -422,10 +518,12 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 				throw new Error(`${label}.reasoningEfforts requires a reasoning model and must not be empty`);
 			}
 			if (
-				model.reasoningEfforts.some((effort) => effort !== "low" && effort !== "medium" && effort !== "high") ||
+				model.reasoningEfforts.some(
+					(effort) => effort !== "low" && effort !== "medium" && effort !== "high" && effort !== "max",
+				) ||
 				new Set(model.reasoningEfforts).size !== model.reasoningEfforts.length
 			) {
-				throw new Error(`${label}.reasoningEfforts must contain unique low, medium, or high values`);
+				throw new Error(`${label}.reasoningEfforts must contain unique low, medium, high, or max values`);
 			}
 		}
 		if (model.chatCompletionsCompat !== undefined) {
@@ -447,7 +545,8 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 			if (
 				compat.thinkingFormat !== undefined &&
 				compat.thinkingFormat !== "zai" &&
-				compat.thinkingFormat !== "deepseek"
+				compat.thinkingFormat !== "deepseek" &&
+				compat.thinkingFormat !== "kimi"
 			)
 				throw new Error(`${label}.chatCompletionsCompat.thinkingFormat is invalid`);
 			if (compat.supportsReasoningEffort !== undefined && typeof compat.supportsReasoningEffort !== "boolean")

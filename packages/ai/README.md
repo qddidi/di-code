@@ -1,6 +1,6 @@
 # @di-code/ai
 
-为 [di-code](https://github.com/qddidi/di-code) 提供与 Provider 无关的 TypeScript AI 契约、流式事件、模型目录，以及 OpenAI、Anthropic、DeepSeek 和智谱 API 适配器。
+为 [di-code](https://github.com/qddidi/di-code) 提供与 Provider 无关的 TypeScript AI 契约、流式事件、模型目录，以及 OpenAI、Anthropic、DeepSeek、Kimi 和智谱 API 适配器。
 
 这是一个库，不提供命令行程序。想直接使用 AI 编码 CLI，请安装 `@di-code/coding-agent`。
 
@@ -38,7 +38,7 @@ $env:OPENAI_API_KEY = "your-openai-api-key"
 $env:OPENAI_BASE_URL = "https://api.openai.com/v1" # 可选
 ```
 
-DeepSeek 使用 `DEEPSEEK_API_KEY` 和可选的 `DEEPSEEK_BASE_URL`，默认 endpoint 是 `https://api.deepseek.com`。OpenAI 使用 `OPENAI_API_KEY` 和可选的 `OPENAI_BASE_URL`。
+DeepSeek 使用 `DEEPSEEK_API_KEY` 和可选的 `DEEPSEEK_BASE_URL`，默认 endpoint 是 `https://api.deepseek.com`。Kimi 使用 `KIMI_API_KEY` 和可选的 `KIMI_BASE_URL`，默认 endpoint 是 `https://api.kimi.com/coding/v1`。OpenAI 使用 `OPENAI_API_KEY` 和可选的 `OPENAI_BASE_URL`。
 
 Anthropic 使用 `ANTHROPIC_API_KEY` 和可选的 `ANTHROPIC_BASE_URL`，默认 endpoint 是 `https://api.anthropic.com`。`createAnthropicProvider` 使用 Anthropic Messages API，支持文本、Base64 图片、工具调用、工具结果、usage、取消和临时 HTTP 错误重试；扩展思考不会在请求中主动启用。
 
@@ -46,6 +46,6 @@ Anthropic 使用 `ANTHROPIC_API_KEY` 和可选的 `ANTHROPIC_BASE_URL`，默认 
 
 ## 公共 API
 
-主要导出 `Provider`、`Model`、`Message`、`StreamEvent`、`ToolDefinition`、TypeBox 工具、`MODELS`，以及四个 Provider 创建函数。
+主要导出 `Provider`、`Model`、`Message`、`StreamEvent`、`ToolDefinition`、TypeBox 工具、`MODELS`，以及各内建 Provider 创建函数，包括 `createKimiProvider`。
 
 源码、示例和问题反馈：<https://github.com/qddidi/di-code>

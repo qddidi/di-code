@@ -252,7 +252,10 @@ function assertOptions(options: StreamOptions): void {
 	) {
 		throw new Error("temperature must be a finite number between 0 and 2");
 	}
-	if (options.reasoningEffort !== undefined && !["low", "medium", "high"].includes(options.reasoningEffort)) {
+	if (
+		options.reasoningEffort === "max" ||
+		(options.reasoningEffort !== undefined && !["low", "medium", "high"].includes(options.reasoningEffort))
+	) {
 		throw new Error("reasoningEffort must be low, medium, or high");
 	}
 }
@@ -499,9 +502,10 @@ export function buildOpenAIResponsesRequest(
 	const promptCacheKey =
 		isOpenAI && sessionId ? Array.from(sessionId).slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("") : undefined;
 	const promptCacheRetention = isOpenAI && sessionId && model.cacheRetention === "long" ? "24h" : undefined;
-	if (options.reasoningEffort !== undefined) {
-		if (!isOpenAI || !model.reasoning || !model.reasoningEfforts?.includes(options.reasoningEffort)) {
-			throw new Error(`Model "${model.id}" does not support reasoning effort "${options.reasoningEffort}".`);
+	const responsesReasoningEffort = options.reasoningEffort === "max" ? undefined : options.reasoningEffort;
+	if (responsesReasoningEffort !== undefined) {
+		if (!isOpenAI || !model.reasoning || !model.reasoningEfforts?.includes(responsesReasoningEffort)) {
+			throw new Error(`Model "${model.id}" does not support reasoning effort "${responsesReasoningEffort}".`);
 		}
 	}
 
@@ -516,7 +520,7 @@ export function buildOpenAIResponsesRequest(
 			? {
 					reasoning: {
 						summary: "auto" as const,
-						...(options.reasoningEffort !== undefined ? { effort: options.reasoningEffort } : {}),
+						...(responsesReasoningEffort !== undefined ? { effort: responsesReasoningEffort } : {}),
 					},
 					include: ["reasoning.encrypted_content" as const],
 				}

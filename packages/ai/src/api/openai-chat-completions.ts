@@ -24,7 +24,7 @@ export interface ChatCompletionsRequest {
 	readonly max_completion_tokens?: number;
 	readonly temperature?: number;
 	readonly thinking?: { readonly type: "enabled" | "disabled"; readonly clear_thinking?: false };
-	readonly reasoning_effort?: "low" | "medium" | "high";
+	readonly reasoning_effort?: "low" | "medium" | "high" | "max";
 	readonly tool_stream?: true;
 }
 
@@ -159,6 +159,10 @@ export function buildOpenAIChatCompletionsRequest(
 			: { type: "disabled" };
 		if (options.reasoningEffort && compat.supportsReasoningEffort)
 			(request as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+	} else if (compat?.thinkingFormat === "kimi") {
+		if (options.reasoningEffort && compat.supportsReasoningEffort) {
+			(request as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+		}
 	}
 	if (compat?.zaiToolStream && context.tools?.length)
 		(request as unknown as Record<string, unknown>).tool_stream = true;

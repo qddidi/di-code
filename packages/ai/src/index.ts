@@ -40,6 +40,8 @@ export type { DeepSeekProviderOptions } from "./providers/deepseek.ts";
 export { createDeepSeekProvider } from "./providers/deepseek.ts";
 export type { FauxProviderHandle, FauxProviderOptions, FauxResponse } from "./providers/faux.ts";
 export { createFauxProvider } from "./providers/faux.ts";
+export type { KimiProviderOptions } from "./providers/kimi.ts";
+export { createKimiProvider } from "./providers/kimi.ts";
 export type { OpenAIProviderOptions } from "./providers/openai.ts";
 export { createOpenAIProvider } from "./providers/openai.ts";
 export type { OpenAIChatCompletionsProviderOptions } from "./providers/openai-chat-completions.ts";

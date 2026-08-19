@@ -203,6 +203,27 @@ describe("runProviderOnboarding", () => {
 		expect(terminal.output).not.toContain("test-anthropic-secret");
 	});
 
+	it("selects Kimi and persists its hidden API key", async () => {
+		const terminal = new TestTerminal();
+		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });
+
+		for (let index = 0; index < 6; index += 1) terminal.send("\x1b[B");
+		terminal.send("\r");
+		terminal.send("\r");
+		terminal.send("test-kimi-secret");
+		terminal.send("\r");
+
+		const runtime = await result;
+		expect(runtime?.provider.id).toBe("kimi");
+		expect(runtime?.model.id).toBe("k3");
+		expect(terminal.output).not.toContain("test-kimi-secret");
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "kimi",
+			defaultModel: "k3",
+			providers: { kimi: { api: "openai-chat-completions", apiKey: "test-kimi-secret" } },
+		});
+	});
+
 	it("configures a Custom gateway without exposing its API key", async () => {
 		const terminal = new TestTerminal();
 		const result = runProviderOnboarding({ configuration: configuration(), terminal, agentDir });

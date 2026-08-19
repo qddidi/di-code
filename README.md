@@ -135,7 +135,7 @@ npm run dev
 
 | 变量 | 作用 | 是否必需 |
 | --- | --- | --- |
-| `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`anthropic`、`deepseek`、`zhipu`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
+| `DI_CODE_PROVIDER` | 选择 Provider ID：`openai`、`anthropic`、`deepseek`、`kimi`、`zhipu`、`faux` 或 settings 中的自定义 ID | 非交互模式必需；settings 只有一个 Provider 时可省略 |
 | `DI_CODE_MODEL` | 选择所选 Provider 的模型 ID | 可选；OpenAI/Anthropic/Zhipu 使用内建默认模型，其他 Provider 使用模型列表首项 |
 | `DI_CODE_LOCALE` | 选择内置 CLI 和交互终端文案语言：`en` 或 `zh-CN` | 可选；优先于用户全局 settings 中的 `locale` |
 | `OPENAI_API_KEY` | OpenAI 凭据 | 使用 OpenAI 时必需，向导临时输入除外 |
@@ -146,6 +146,8 @@ npm run dev
 | `DEEPSEEK_BASE_URL` | 覆盖内建 DeepSeek endpoint | 可选，默认 `https://api.deepseek.com` |
 | `ZAI_API_KEY` | 智谱 API 凭据 | 使用 `zhipu` 时必需，向导临时输入除外 |
 | `ZHIPU_BASE_URL` | 覆盖内建智谱 Coding Plan endpoint | 可选，默认 `https://open.bigmodel.cn/api/coding/paas/v4` |
+| `KIMI_API_KEY` | Kimi API 凭据 | 使用 `kimi` 时必需，向导临时输入除外 |
+| `KIMI_BASE_URL` | 覆盖内建 Kimi Coding endpoint | 可选，默认 `https://api.kimi.com/coding/v1` |
 
 DeepSeek 的 `.env` 示例：
 
@@ -172,6 +174,15 @@ DI_CODE_PROVIDER=anthropic
 DI_CODE_MODEL=claude-sonnet-4-5
 ANTHROPIC_API_KEY=<your-anthropic-api-key>
 # ANTHROPIC_BASE_URL=https://api.anthropic.com
+```
+
+Kimi Coding：
+
+```dotenv
+DI_CODE_PROVIDER=kimi
+DI_CODE_MODEL=k3
+KIMI_API_KEY=<your-kimi-api-key>
+# KIMI_BASE_URL=https://api.kimi.com/coding/v1
 ```
 
 离线 Faux Provider：
@@ -209,12 +220,13 @@ Anthropic 的请求格式与模型 API 以[官方 Messages API 文档](https://d
 | `anthropic` | `claude-haiku-4-5` | 否 | 文本、图片 |
 | `anthropic` | `claude-opus-4-5` | 否 | 文本、图片 |
 | `anthropic` | `claude-fable-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5` | 否 | 文本、图片 |
-| `zhipu` | `glm-5.3` | 是 | 文本，1M 上下文 |
-| `zhipu` | `glm-5-turbo` | 否 | 文本 |
+| `zhipu` | `glm-5.3`、`glm-5.2` | 是 | 文本，1M 上下文 |
+| `zhipu` | `glm-5.1`、`glm-5`、`glm-5-turbo` | 否 | 文本，200K 上下文 |
 | `zhipu` | `glm-4.7` | 否 | 文本 |
+| `kimi` | `k3`、`k3-256k`、`kimi-for-coding`、`kimi-for-coding-highspeed` | `k3` | 文本、图片 |
 | `faux` | `faux-model` | 是 | 本地测试，不访问网络 |
 
-Custom 向导的模型目录还包含 `qwen3.7-plus`、`kimi-k3` 与 `MiniMax-M3` 的已验证 Chat Completions 元数据；它们需要通过 `Custom` 配置对应厂商或兼容网关，不是可直接用 `DI_CODE_PROVIDER` 选择的内建 Provider。
+Custom 向导的模型目录还包含 `qwen3.7-plus` 与 `MiniMax-M3` 的已验证 Chat Completions 元数据；Kimi 已作为内建 `kimi` Provider 提供。
 
 `DI_CODE_MODEL` 省略时使用 Provider 的默认模型：OpenAI 为 `gpt-4o`，Anthropic 为 `claude-sonnet-4-5`，Zhipu 为 `glm-5.3`，其他内建 Provider 使用其模型列表首项。模型 ID 必须属于当前 Provider，否则启动会列出可用模型并报错。
 

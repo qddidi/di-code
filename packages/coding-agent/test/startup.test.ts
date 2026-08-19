@@ -537,6 +537,13 @@ describe("resolveStartupRuntime", () => {
 		});
 	});
 
+	it("uses the built-in Kimi provider from environment configuration", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "kimi", KIMI_API_KEY: "test-key" }, []);
+
+		expect(runtime.provider).toMatchObject({ id: "kimi", name: "Kimi" });
+		expect(runtime.model).toMatchObject({ id: "k3", provider: "kimi", api: "openai-chat-completions" });
+	});
+
 	it("selects an explicit built-in DeepSeek model", () => {
 		const runtime = resolveStartupRuntime(
 			{
@@ -566,5 +573,14 @@ describe("resolveStartupRuntime", () => {
 
 		expect(runtime.provider.id).toBe("zhipu");
 		expect(runtime.model).toMatchObject({ id: "glm-5.3", api: "openai-chat-completions" });
+	});
+
+	it("allows a configured Kimi provider to use generated Coding models", () => {
+		const runtime = resolveStartupRuntime({ KIMI_API_KEY: "test-key" }, [
+			{ id: "kimi", api: "openai-chat-completions" },
+		]);
+
+		expect(runtime.provider.id).toBe("kimi");
+		expect(runtime.model).toMatchObject({ id: "k3", api: "openai-chat-completions" });
 	});
 });

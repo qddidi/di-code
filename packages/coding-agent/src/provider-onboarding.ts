@@ -49,7 +49,7 @@ export function shouldStartProviderOnboarding(
 }
 
 interface OnboardingChoice extends SelectItem {
-	readonly providerId: "openai" | "deepseek" | "zhipu" | "anthropic" | "faux" | "custom";
+	readonly providerId: "openai" | "deepseek" | "kimi" | "zhipu" | "anthropic" | "faux" | "custom";
 }
 
 class OnboardingScreen {
@@ -97,6 +97,7 @@ function providerChoices(locale: Locale): OnboardingChoice[] {
 			label: translate(locale, "customProvider"),
 			description: translate(locale, "customProviderDescription"),
 		},
+		{ value: "kimi", providerId: "kimi", label: "Kimi", description: "Kimi Coding Chat Completions API" },
 	];
 }
 
@@ -122,6 +123,7 @@ function modelsFor(providerId: OnboardingChoice["providerId"]): readonly Model[]
 function apiKeyEnvironmentVariable(providerId: OnboardingChoice["providerId"]): string | undefined {
 	if (providerId === "openai") return "OPENAI_API_KEY";
 	if (providerId === "deepseek") return "DEEPSEEK_API_KEY";
+	if (providerId === "kimi") return "KIMI_API_KEY";
 	if (providerId === "zhipu") return "ZAI_API_KEY";
 	if (providerId === "anthropic") return "ANTHROPIC_API_KEY";
 	return undefined;
@@ -130,6 +132,7 @@ function apiKeyEnvironmentVariable(providerId: OnboardingChoice["providerId"]): 
 function providerApi(providerId: OnboardingChoice["providerId"]): Exclude<ModelApi, "faux"> | undefined {
 	if (providerId === "openai") return "openai-responses";
 	if (providerId === "deepseek" || providerId === "zhipu") return "openai-chat-completions";
+	if (providerId === "kimi") return "openai-chat-completions";
 	if (providerId === "anthropic") return "anthropic-messages";
 	return undefined;
 }

@@ -39,12 +39,57 @@ describe("model catalog", () => {
 	});
 
 	it("advertises current Qwen, Kimi, and MiniMax catalog models through Chat Completions", () => {
-		const selectedModels = MODEL_SOURCE.filter((model) => ["qwen3.7-plus", "kimi-k3", "MiniMax-M3"].includes(model.id));
+		const selectedModels = MODEL_SOURCE.filter((model) =>
+			["qwen3.7-plus", "k3", "k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed", "MiniMax-M3"].includes(
+				model.id,
+			),
+		);
 
-		expect(selectedModels).toMatchObject([
-			{ provider: "qwen", api: "openai-chat-completions", input: ["text"] },
-			{ provider: "kimi", api: "openai-chat-completions", input: ["text", "image"], contextWindow: 1_000_000 },
-			{ provider: "minimax", api: "openai-chat-completions", input: ["text", "image"], contextWindow: 1_000_000 },
+		expect(
+			selectedModels.map(({ id, provider, api, input, contextWindow }) => ({
+				id,
+				provider,
+				api,
+				input,
+				contextWindow,
+			})),
+		).toEqual([
+			{ id: "qwen3.7-plus", provider: "qwen", api: "openai-chat-completions", input: ["text"], contextWindow: 128_000 },
+			{
+				id: "k3",
+				provider: "kimi",
+				api: "openai-chat-completions",
+				input: ["text", "image"],
+				contextWindow: 1_000_000,
+			},
+			{
+				id: "k3-256k",
+				provider: "kimi",
+				api: "openai-chat-completions",
+				input: ["text", "image"],
+				contextWindow: 256_000,
+			},
+			{
+				id: "kimi-for-coding",
+				provider: "kimi",
+				api: "openai-chat-completions",
+				input: ["text", "image"],
+				contextWindow: 256_000,
+			},
+			{
+				id: "kimi-for-coding-highspeed",
+				provider: "kimi",
+				api: "openai-chat-completions",
+				input: ["text", "image"],
+				contextWindow: 256_000,
+			},
+			{
+				id: "MiniMax-M3",
+				provider: "minimax",
+				api: "openai-chat-completions",
+				input: ["text", "image"],
+				contextWindow: 1_000_000,
+			},
 		]);
 	});
 
@@ -92,7 +137,14 @@ describe("model catalog", () => {
 	it("advertises Zhipu GLM coding models through the Chat Completions adapter", () => {
 		const zhipuModels = MODEL_SOURCE.filter((model) => model.provider === "zhipu");
 
-		expect(zhipuModels.map((model) => model.id)).toEqual(["glm-5.3", "glm-5-turbo", "glm-4.7"]);
+		expect(zhipuModels.map((model) => model.id)).toEqual([
+			"glm-5.3",
+			"glm-5.2",
+			"glm-5.1",
+			"glm-5",
+			"glm-5-turbo",
+			"glm-4.7",
+		]);
 		expect(
 			zhipuModels.map((model) => ({
 				id: model.id,
@@ -101,6 +153,9 @@ describe("model catalog", () => {
 			})),
 		).toEqual([
 			{ id: "glm-5.3", contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+			{ id: "glm-5.2", contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+			{ id: "glm-5.1", contextWindow: 200_000, maxOutputTokens: 128_000 },
+			{ id: "glm-5", contextWindow: 200_000, maxOutputTokens: 128_000 },
 			{ id: "glm-5-turbo", contextWindow: 200_000, maxOutputTokens: 128_000 },
 			{ id: "glm-4.7", contextWindow: 200_000, maxOutputTokens: 128_000 },
 		]);

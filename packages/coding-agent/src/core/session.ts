@@ -77,7 +77,7 @@ export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<
 function defaultThinkingLevel(model: Model): ThinkingLevel | undefined {
 	const efforts = model.reasoningEfforts;
 	if (!efforts || efforts.length === 0) return undefined;
-	return efforts.includes("medium") ? "medium" : efforts[0];
+	return efforts.includes("medium") ? "medium" : efforts.includes("high") ? "high" : efforts[0];
 }
 
 function textFromUserMessage(message: Extract<Message, { role: "user" }>): string {

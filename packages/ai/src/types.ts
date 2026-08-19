@@ -216,7 +216,7 @@ export interface Model {
 }
 
 /** Provider 无关的离散思考强度名称。 */
-export type ThinkingLevel = "low" | "medium" | "high";
+export type ThinkingLevel = "low" | "medium" | "high" | "max";
 
 /** AI 层支持的底层协议标识；厂商 ID 不属于这个联合类型。 */
 export type ModelApi =
@@ -232,8 +232,8 @@ export interface OpenAIChatCompletionsCompat {
 	readonly supportsUsageInStreaming?: boolean;
 	/** max token 字段名；未声明时使用 max_completion_tokens。 */
 	readonly maxTokensField?: "max_tokens" | "max_completion_tokens";
-	/** 思考参数格式；当前只实现智谱的 thinking 结构。 */
-	readonly thinkingFormat?: "zai" | "deepseek";
+	/** 思考参数格式；厂商扩展只在对应模型声明时发送。 */
+	readonly thinkingFormat?: "zai" | "deepseek" | "kimi";
 	/** 是否接受 reasoning_effort 字段。 */
 	readonly supportsReasoningEffort?: boolean;
 	/** 是否在有工具时启用智谱增量工具流。 */

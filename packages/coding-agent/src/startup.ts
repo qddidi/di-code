@@ -5,6 +5,7 @@ import {
 	createAnthropicProvider,
 	createDeepSeekProvider,
 	createFauxProvider,
+	createKimiProvider,
 	createOpenAIChatCompletionsProvider,
 	createOpenAIProvider,
 	createZhipuProvider,
@@ -136,7 +137,12 @@ function parseChatCompletionsCompat(
 		throw new Error(`${settingsPath}: ${path}.maxTokensField is invalid`);
 	}
 	const thinkingFormat = compat.thinkingFormat;
-	if (thinkingFormat !== undefined && thinkingFormat !== "zai" && thinkingFormat !== "deepseek") {
+	if (
+		thinkingFormat !== undefined &&
+		thinkingFormat !== "zai" &&
+		thinkingFormat !== "deepseek" &&
+		thinkingFormat !== "kimi"
+	) {
 		throw new Error(`${settingsPath}: ${path}.thinkingFormat is invalid`);
 	}
 	const supportsUsageInStreaming = optionalBoolean("supportsUsageInStreaming");
@@ -187,11 +193,13 @@ function parseModels(
 			}
 			if (
 				model.reasoning !== true ||
-				configuredReasoningEfforts.some((effort) => effort !== "low" && effort !== "medium" && effort !== "high") ||
+				configuredReasoningEfforts.some(
+					(effort) => effort !== "low" && effort !== "medium" && effort !== "high" && effort !== "max",
+				) ||
 				new Set(configuredReasoningEfforts).size !== configuredReasoningEfforts.length
 			) {
 				throw new Error(
-					`${settingsPath}: ${modelPath}.reasoningEfforts requires reasoning=true and unique low, medium, or high values`,
+					`${settingsPath}: ${modelPath}.reasoningEfforts requires reasoning=true and unique low, medium, high, or max values`,
 				);
 			}
 		}
@@ -516,7 +524,9 @@ function selectProviderModel(provider: Provider, providerId: string, env: Enviro
 				? provider.models.find((candidate) => candidate.id === "gpt-4o")?.id
 				: providerId === "zhipu"
 					? provider.models.find((candidate) => candidate.id === "glm-5.3")?.id
-					: undefined) ||
+					: providerId === "kimi"
+						? provider.models.find((candidate) => candidate.id === "k3")?.id
+						: undefined) ||
 		provider.models[0]?.id;
 	if (!modelId) throw new Error("DI_CODE_MODEL is required when the selected provider has no models");
 	const model = provider.models.find((candidate) => candidate.id === modelId);
@@ -544,6 +554,10 @@ function createBuiltInRuntime(env: Environment, providerId: string): StartupRunt
 		const provider = createZhipuProvider({ env });
 		return { provider, model: selectProviderModel(provider, providerId, env) };
 	}
+	if (providerId === "kimi") {
+		const provider = createKimiProvider({ env });
+		return { provider, model: selectProviderModel(provider, providerId, env) };
+	}
 	return undefined;
 }
 
@@ -561,6 +575,7 @@ function createConfiguredRuntime(env: Environment, configuration: StartupProvide
 		configuration.id !== "openai" &&
 		configuration.id !== "deepseek" &&
 		configuration.id !== "zhipu" &&
+		configuration.id !== "kimi" &&
 		configuration.id !== "anthropic" &&
 		!configuration.models
 	) {
@@ -570,7 +585,7 @@ function createConfiguredRuntime(env: Environment, configuration: StartupProvide
 		configuration.api === "openai-chat-completions"
 			? createOpenAIChatCompletionsProvider({
 					env:
-						configuration.id === "zhipu" || configuration.id === "deepseek"
+						configuration.id === "zhipu" || configuration.id === "deepseek" || configuration.id === "kimi"
 							? env
 							: Object.fromEntries(
 									Object.entries(env).filter(([name]) => name !== "OPENAI_API_KEY" && name !== "OPENAI_BASE_URL"),
@@ -592,7 +607,13 @@ function createConfiguredRuntime(env: Environment, configuration: StartupProvide
 									baseUrlEnvironmentVariable: "DEEPSEEK_BASE_URL",
 									defaultBaseUrl: "https://api.deepseek.com",
 								}
-							: {}),
+							: configuration.id === "kimi"
+								? {
+										apiKeyEnvironmentVariable: "KIMI_API_KEY",
+										baseUrlEnvironmentVariable: "KIMI_BASE_URL",
+										defaultBaseUrl: "https://api.kimi.com/coding/v1",
+									}
+								: {}),
 				})
 			: configuration.api === "anthropic-messages"
 				? createAnthropicProvider({
