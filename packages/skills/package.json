@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/skills",
-	"version": "0.1.4",
+	"version": "0.1.6",
 	"description": "Discoverable, provider-neutral SKILL.md documents for di-code hosts",
 	"keywords": [
 		"ai",
