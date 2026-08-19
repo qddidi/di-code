@@ -299,9 +299,9 @@ di-code --continue "继续上一次工作"
 
 ### 会话
 
-交互式启动默认会在工作根目录的 `.di-code/sessions/` 创建版本化 JSONL 会话。记录为 append-only（只追加）格式；完整磁盘历史和发送给模型的压缩上下文分开保存。可通过 `/session`、`--session` 或 `--continue` 恢复它们。
+交互式启动默认会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 创建版本化 JSONL 会话。记录为 append-only（只追加）格式；完整磁盘历史和发送给模型的压缩上下文分开保存。`/session` 与 `--continue` 只显示或恢复当前工作区的默认会话；`--session` 可以打开任意指定路径。已有项目内 `.di-code/sessions/` 文件不会自动移动，仍可用 `--session <path>` 显式打开。
 
-会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在项目本地历史中的密钥或敏感材料。
+会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在本地历史中的密钥或敏感材料。
 
 ### 图片
 
@@ -314,7 +314,7 @@ di-code --image .\before.png --image .\after.webp "比较两张图"
 
 只支持 PNG、JPEG、WebP、GIF；文件根据内容签名而不是扩展名校验。每条 prompt 最多 4 张、每张最多 5 MiB，并且当前模型必须声明支持图片输入。
 
-交互模式中可输入 `@diagram.png`；有空格的路径使用 `@"architecture diagram.png"`。也可将图片拖入终端。读取剪贴板图片时，Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V`。剪贴板临时文件放在 `.di-code/clipboard/`，发送、删除引用或退出后会清理。
+交互模式中可输入 `@diagram.png`；有空格的路径使用 `@"architecture diagram.png"`。也可将图片拖入终端。读取剪贴板图片时，Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V`。剪贴板临时文件放在用户目录 `~/.di-code/clipboard/<工作区哈希>/<进程 ID>/`，发送、删除引用或退出后会清理；启动时也会清理当前工作区超过 24 小时的遗留文件。
 
 ### Agent 可调用的内置工具
 

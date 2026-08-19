@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { extname, join, resolve } from "node:path";
 import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
@@ -96,6 +97,8 @@ export interface InteractiveModeOptions {
 	readonly sessions?: readonly InteractiveSessionChoice[];
 	readonly extensionHost?: ExtensionHost;
 	readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
+	/** User data directory that owns clipboard image temporaries. */
+	readonly agentDir?: string;
 	readonly readClipboardImagePath?: (directory?: string) => Promise<string | null>;
 }
 
@@ -115,6 +118,7 @@ export class InteractiveMode {
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
 	private readonly extensionHost?: ExtensionHost;
 	private readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
+	private readonly agentDir: string;
 	private readonly readClipboardImagePath: (directory?: string) => Promise<string | null>;
 	private clipboardDirectory: string;
 	private readonly clipboardFiles = new Set<string>();
@@ -143,8 +147,9 @@ export class InteractiveMode {
 		this.sessionChoices = [...(options.sessions ?? [])];
 		this.extensionHost = options.extensionHost;
 		this.providerOnboarding = options.providerOnboarding;
+		this.agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 		this.readClipboardImagePath = options.readClipboardImagePath ?? readClipboardImagePath;
-		this.clipboardDirectory = clipboardImageDirectory(this.session.allowedRoot);
+		this.clipboardDirectory = clipboardImageDirectory(this.agentDir, this.session.allowedRoot);
 		const autocomplete: AutocompleteProvider = {
 			getSuggestions: (context, autocompleteOptions) =>
 				new CombinedAutocompleteProvider(this.listSlashCommands(), this.session.allowedRoot).getSuggestions(
@@ -200,7 +205,7 @@ export class InteractiveMode {
 		this.projection.replaceTranscript(this.session.transcript);
 		this.projection.setUsage(this.session.usage);
 		this.subscribeToSession();
-		void cleanupStaleClipboardImages(this.session.allowedRoot).catch((cause) => {
+		void cleanupStaleClipboardImages(this.agentDir, this.session.allowedRoot).catch((cause) => {
 			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
 			this.refresh();
 		});
@@ -490,8 +495,8 @@ export class InteractiveMode {
 			this.unsubscribeSession?.();
 			this.session = next;
 			this.projection.configureFilePreview(next.allowedRoot, () => this.refresh());
-			this.clipboardDirectory = clipboardImageDirectory(next.allowedRoot);
-			void cleanupStaleClipboardImages(next.allowedRoot);
+			this.clipboardDirectory = clipboardImageDirectory(this.agentDir, next.allowedRoot);
+			void cleanupStaleClipboardImages(this.agentDir, next.allowedRoot);
 			this.queuedPrompts = [];
 			this.steeringPrompts = [];
 			this.refreshQueue();

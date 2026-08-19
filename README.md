@@ -429,7 +429,7 @@ npm run dev -- --image .\diagram.png "说明这张架构图"
 
 `--image` 可重复使用，但只支持 print 和 JSON 模式；每条 prompt 最多 4 张图片、每张不超过 5 MiB。相对路径按工作根目录解析，绝对路径也可使用。
 
-交互模式也支持图片：输入 `@diagram.png` 或 `@"architecture diagram.png"` 后发送；在终端中直接拖入图片文件会自动转换为附件。Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V` 读取剪贴板图片，并将临时图片路径插入输入框；可像普通文本一样编辑或删除。Windows 终端通常会拦截 `Ctrl+V`，因此使用 `Alt+V`。临时图片保存在工作根目录的 `.di-code/clipboard/`，发送成功、删除路径或退出后会清理，启动时还会清理超过 24 小时的遗留文件。当前模型必须在配置的 `input` 字段中声明 `image`，否则会拒绝发送。
+交互模式也支持图片：输入 `@diagram.png` 或 `@"architecture diagram.png"` 后发送；在终端中直接拖入图片文件会自动转换为附件。Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V` 读取剪贴板图片，并将临时图片路径插入输入框；可像普通文本一样编辑或删除。Windows 终端通常会拦截 `Ctrl+V`，因此使用 `Alt+V`。临时图片保存在用户目录 `~/.di-code/clipboard/<工作区哈希>/<进程 ID>/`，发送成功、删除路径或退出后会清理，启动时还会清理当前工作区超过 24 小时的遗留文件。当前模型必须在配置的 `input` 字段中声明 `image`，否则会拒绝发送。
 
 显式启动交互模式：
 
@@ -437,7 +437,7 @@ npm run dev -- --image .\diagram.png "说明这张架构图"
 npm run dev -- --interactive
 ```
 
-默认启动会在 `.di-code/sessions/` 中创建独立的 JSONL 会话。使用 `--continue`（或 `-c`）恢复最近修改的会话；没有历史会话时会新建。使用 `--session` 可以创建或恢复指定路径的会话：
+默认启动会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 中创建独立的 JSONL 会话。使用 `--continue`（或 `-c`）恢复当前工作区最近修改的会话；没有历史会话时会新建。使用 `--session` 可以创建或恢复指定路径的会话：
 
 ```powershell
 npm run dev -- --continue --interactive
@@ -510,7 +510,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 ## 会话与插件
 
-默认 CLI 会为交互会话创建或恢复 `.di-code/sessions/` 下的版本化 JSONL 文件。会话记录采用 append-only（仅追加）格式和父记录链，支持锁文件保护、损坏诊断、并发修改检测与上下文摘要压缩；完整磁盘历史和发送给模型的压缩上下文保持分离。`SessionManager` 与 `AgentSession` 也可作为 SDK 使用。
+默认 CLI 会为交互会话创建或恢复用户目录 `~/.di-code/sessions/<工作区哈希>/` 下的版本化 JSONL 文件。会话记录采用 append-only（仅追加）格式和父记录链，支持锁文件保护、损坏诊断、并发修改检测与上下文摘要压缩；完整磁盘历史和发送给模型的压缩上下文保持分离。`SessionManager` 与 `AgentSession` 也可作为 SDK 使用。已有项目内 `.di-code/sessions/` 文件不会自动移动；需要保留或共享它们时，通过 `--session <path>` 显式打开。
 
 插件可在 CLI 启动时注册三类能力：模型工具、interactive 模式 slash command 和 Agent/会话生命周期事件处理器。项目本地插件位于：
 

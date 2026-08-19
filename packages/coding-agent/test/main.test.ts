@@ -5,6 +5,7 @@ import type { AgentEvent } from "@di-code/agent";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
+import { workspaceStorageKey } from "../src/core/user-data.ts";
 import { formatSessionLabel, runMain, StartupStatusRenderer } from "../src/main.ts";
 
 function createIo() {
@@ -43,10 +44,16 @@ function createRuntime(responses: readonly FauxResponse[]) {
 
 describe("runMain", () => {
 	let root: string;
+	let agentDir: string;
 
 	beforeEach(async () => {
 		root = await mkdtemp(join(tmpdir(), "di-code-main-"));
+		agentDir = join(root, "agent");
 	});
+
+	function defaultSessionDirectory(): string {
+		return join(agentDir, "sessions", workspaceStorageKey(root));
+	}
 
 	afterEach(async () => {
 		await rm(root, { recursive: true, force: true });
@@ -59,6 +66,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([
 				{
 					type: "success",
@@ -88,6 +96,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([
 				{
 					type: "success",
@@ -149,6 +158,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: () => ({ provider, model: faux.model }),
 		});
 
@@ -319,6 +329,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime,
 		});
 
@@ -336,12 +347,13 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime,
 		});
 
 		expect(exitCode).toBe(0);
 		expect(createRuntime).toHaveBeenCalledWith({ kind: "run", mode: "interactive", prompt: "" });
-		await expect(readdir(join(root, ".di-code", "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(readdir(join(agentDir, "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("asks once before loading project-local capabilities and persists trust", async () => {
@@ -426,6 +438,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "first" }] }]),
 		});
 
@@ -434,13 +447,15 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "second" }] }]),
 		});
 
 		expect(secondExit).toBe(0);
-		const sessionDirectory = join(root, ".di-code", "sessions");
+		const sessionDirectory = defaultSessionDirectory();
 		const sessionFiles = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".jsonl"));
 		expect(sessionFiles).toHaveLength(2);
+		await expect(readdir(join(root, ".di-code", "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
 		const sessions = await Promise.all(sessionFiles.map((name) => SessionManager.open(join(sessionDirectory, name))));
 		expect(sessions.map((session) => session.messages.map((message) => message.role))).toEqual([
 			["user", "assistant"],
@@ -450,20 +465,25 @@ describe("runMain", () => {
 
 	it("continues the most recently modified session only when requested", async () => {
 		const io = createIo();
-		const olderPath = join(root, ".di-code", "sessions", "older.jsonl");
-		const newerPath = join(root, ".di-code", "sessions", "newer.jsonl");
-		await runMain(["--session", olderPath, "--print", "older"], {
+		await runMain(["--print", "older"], {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "older answer" }] }]),
 		});
-		await runMain(["--session", newerPath, "--print", "newer"], {
+		const sessionDirectory = defaultSessionDirectory();
+		const [olderName] = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".jsonl"));
+		const olderPath = join(sessionDirectory, olderName as string);
+		await runMain(["--print", "newer"], {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "newer answer" }] }]),
 		});
+		const newerName = (await readdir(sessionDirectory)).find((name) => name.endsWith(".jsonl") && name !== olderName);
+		const newerPath = join(sessionDirectory, newerName as string);
 		await utimes(olderPath, new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"));
 		await utimes(newerPath, new Date("2026-01-02T00:00:00.000Z"), new Date("2026-01-02T00:00:00.000Z"));
 
@@ -471,6 +491,7 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "continued answer" }] }]),
 		});
 
@@ -487,11 +508,12 @@ describe("runMain", () => {
 			...io,
 			version: "0.0.0",
 			allowedRoot: root,
+			agentDir,
 			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "answer" }] }]),
 		});
 
 		expect(exitCode).toBe(0);
-		const sessionFiles = (await readdir(join(root, ".di-code", "sessions"))).filter((name) => name.endsWith(".jsonl"));
+		const sessionFiles = (await readdir(defaultSessionDirectory())).filter((name) => name.endsWith(".jsonl"));
 		expect(sessionFiles).toHaveLength(1);
 	});
 });

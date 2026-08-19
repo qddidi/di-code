@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ImageContent } from "@di-code/ai";
 import { imageContentFromBytes } from "./image-input.ts";
+import { workspaceStorageKey } from "./user-data.ts";
 
 interface ClipboardModule {
 	hasImage(): boolean;
@@ -48,8 +49,8 @@ function extensionForMimeType(mimeType: string): string {
 	}
 }
 
-export function clipboardImageDirectory(root: string): string {
-	return join(root, ".di-code", "clipboard");
+export function clipboardImageDirectory(agentDir: string, root: string): string {
+	return join(agentDir, "clipboard", workspaceStorageKey(root), String(process.pid));
 }
 
 export function isClipboardImagePath(path: string, directory: string): boolean {
@@ -57,24 +58,40 @@ export function isClipboardImagePath(path: string, directory: string): boolean {
 	return dirname(absolutePath) === resolve(directory) && CLIPBOARD_FILE_PATTERN.test(basename(absolutePath));
 }
 
-/** Removes generated clipboard images that were left by an older process. */
-export async function cleanupStaleClipboardImages(root: string, maxAgeMs = DEFAULT_STALE_AGE_MS): Promise<void> {
-	const directory = clipboardImageDirectory(root);
-	let entries: Dirent[];
+/** Removes generated clipboard images that were left by older processes for this workspace. */
+export async function cleanupStaleClipboardImages(
+	agentDir: string,
+	root: string,
+	maxAgeMs = DEFAULT_STALE_AGE_MS,
+): Promise<void> {
+	const workspaceDirectory = join(agentDir, "clipboard", workspaceStorageKey(root));
+	let processDirectories: Dirent[];
 	try {
-		entries = await readdir(directory, { withFileTypes: true });
+		processDirectories = await readdir(workspaceDirectory, { withFileTypes: true });
 	} catch (cause) {
 		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return;
 		throw cause;
 	}
 	const cutoff = Date.now() - maxAgeMs;
 	await Promise.all(
-		entries
-			.filter((entry) => entry.isFile() && CLIPBOARD_FILE_PATTERN.test(entry.name))
-			.map(async (entry) => {
-				const path = join(directory, entry.name);
+		processDirectories
+			.filter((entry) => entry.isDirectory())
+			.map(async (processDirectory) => {
+				const directory = join(workspaceDirectory, processDirectory.name);
 				try {
-					if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
+					const entries = await readdir(directory, { withFileTypes: true });
+					await Promise.all(
+						entries
+							.filter((entry) => entry.isFile() && CLIPBOARD_FILE_PATTERN.test(entry.name))
+							.map(async (entry) => {
+								const path = join(directory, entry.name);
+								try {
+									if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
+								} catch (cause) {
+									if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
+								}
+							}),
+					);
 				} catch (cause) {
 					if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
 				}

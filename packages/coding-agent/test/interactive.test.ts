@@ -6,6 +6,7 @@ import { createFauxProvider, type Message, type Provider } from "@di-code/ai";
 import type { Component, Terminal } from "@di-code/tui";
 import { CURSOR_MARKER, TUI, visibleWidth } from "@di-code/tui";
 import { describe, it } from "vitest";
+import { clipboardImageDirectory } from "../src/core/clipboard-image.ts";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
 import { ExtensionHost } from "../src/extensions/runtime.ts";
@@ -969,7 +970,8 @@ describe("InteractiveMode", () => {
 	it("inserts a clipboard image path at the cursor and attaches it on the platform paste shortcut", async () => {
 		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-clipboard-"));
 		try {
-			const clipboardDirectory = join(root, ".di-code", "clipboard");
+			const agentDir = join(root, "agent");
+			const clipboardDirectory = clipboardImageDirectory(agentDir, root);
 			mkdirSync(clipboardDirectory, { recursive: true });
 			const imagePath = join(clipboardDirectory, "di-code-clipboard-00000000-0000-0000-0000-000000000000.png");
 			writeFileSync(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
@@ -991,6 +993,7 @@ describe("InteractiveMode", () => {
 			const mode = new InteractiveMode({
 				session,
 				tui: new TUI(terminal),
+				agentDir,
 				readClipboardImagePath: async () => {
 					clipboardReads += 1;
 					return imagePath;
@@ -1076,7 +1079,8 @@ describe("InteractiveMode", () => {
 	it("removes an inserted clipboard path with Ctrl+U before sending", async () => {
 		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-clipboard-delete-"));
 		try {
-			const clipboardDirectory = join(root, ".di-code", "clipboard");
+			const agentDir = join(root, "agent");
+			const clipboardDirectory = clipboardImageDirectory(agentDir, root);
 			mkdirSync(clipboardDirectory, { recursive: true });
 			const imagePath = join(clipboardDirectory, "di-code-clipboard-00000000-0000-0000-0000-000000000001.png");
 			writeFileSync(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
@@ -1098,6 +1102,7 @@ describe("InteractiveMode", () => {
 			const mode = new InteractiveMode({
 				session,
 				tui: new TUI(terminal),
+				agentDir,
 				readClipboardImagePath: async () => {
 					clipboardRead = true;
 					return imagePath;

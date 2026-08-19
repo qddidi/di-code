@@ -29,9 +29,10 @@ describe("clipboard image files", () => {
 		await expect(readFile(path)).resolves.toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
 	});
 
-	it("creates the project clipboard directory and removes stale generated files", async () => {
+	it("creates a user-data clipboard directory and removes stale generated files", async () => {
 		const root = join(directory, "project");
-		const clipboardDirectory = clipboardImageDirectory(root);
+		const agentDir = join(directory, "agent");
+		const clipboardDirectory = clipboardImageDirectory(agentDir, root);
 		const path = await writeImageContentToTempFile(
 			{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
 			clipboardDirectory,
@@ -39,8 +40,10 @@ describe("clipboard image files", () => {
 		const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 		await utimes(path, old, old);
 
-		await cleanupStaleClipboardImages(root);
+		await cleanupStaleClipboardImages(agentDir, root);
 
 		await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(clipboardDirectory.startsWith(agentDir)).toBe(true);
+		expect(clipboardDirectory.startsWith(root)).toBe(false);
 	});
 });

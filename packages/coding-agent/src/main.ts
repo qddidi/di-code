@@ -11,6 +11,7 @@ import { loadResources } from "./core/resources/loader.ts";
 import { SessionManager } from "./core/session/session-manager.ts";
 import { AgentSession } from "./core/session.ts";
 import { buildSystemPrompt } from "./core/system-prompt.ts";
+import { workspaceStorageKey } from "./core/user-data.ts";
 import { ProjectTrustManager } from "./extensions/trust.ts";
 import { addMcpConfig, getMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "./mcp/config.ts";
 import { loadProjectMcp } from "./mcp/loader.ts";
@@ -41,8 +42,11 @@ export interface MainOptions extends PrintIo {
 	readonly promptProjectTrust?: (cwd: string) => Promise<boolean>;
 }
 
-const DEFAULT_SESSION_DIRECTORY = join(".di-code", "sessions");
 const MAX_SESSION_QUESTION_LENGTH = 72;
+
+function defaultSessionDirectory(agentDir: string, cwd: string): string {
+	return join(agentDir, "sessions", workspaceStorageKey(cwd));
+}
 
 const STARTUP_STATUS_COLORS = {
 	error: "\x1b[31m",
@@ -188,9 +192,10 @@ async function hasProjectLocalCapabilities(cwd: string): Promise<boolean> {
 async function selectStartupSession(
 	command: Extract<CliCommand, { kind: "run" }>,
 	allowedRoot: string,
+	agentDir: string,
 	now: () => number,
 ): Promise<SessionManager> {
-	const sessionDirectory = resolve(allowedRoot, DEFAULT_SESSION_DIRECTORY);
+	const sessionDirectory = defaultSessionDirectory(agentDir, allowedRoot);
 	if (command.sessionPath !== undefined) {
 		return openOrCreateSession(resolve(allowedRoot, command.sessionPath), allowedRoot, now);
 	}
@@ -480,7 +485,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				);
 			}
 			const systemPrompt = buildSystemPrompt({ cwd: allowedRoot, ...resources });
-			const manager = await selectStartupSession(command, allowedRoot, now);
+			const manager = await selectStartupSession(command, allowedRoot, agentDir, now);
 			const sessionFile = manager.filePath;
 			const session = new AgentSession({
 				allowedRoot,
@@ -513,6 +518,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				const mode = new InteractiveMode({
 					session,
 					tui,
+					agentDir,
 					onExit: () => {
 						void mcp.manager.close();
 					},
