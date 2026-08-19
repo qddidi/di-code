@@ -42,7 +42,7 @@ describe("SessionManager", () => {
 		expect(manager.filePath).toBe(resolve(sessionFile));
 		expect(manager.header).toEqual({
 			type: "session",
-			version: 1,
+			version: 2,
 			id: "session-1",
 			parentId: null,
 			timestamp: "2026-08-12T13:00:00.000Z",
@@ -121,7 +121,7 @@ describe("SessionManager", () => {
 		expect(manager.entries[1]?.parentId).toBe("entry-1");
 	});
 
-	it("allows only one manager to append from the same old leaf", async () => {
+	it("allows two managers to append sibling branches from the same parent", async () => {
 		await SessionManager.create({
 			filePath: sessionFile,
 			cwd: root,
@@ -135,11 +135,31 @@ describe("SessionManager", () => {
 			second.appendMessage(userMessage("from-b", 2)),
 		]);
 
-		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-		const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-		expect(rejected?.reason).toMatchObject({ code: "CONCURRENT_MODIFICATION" });
+		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
 		const reloaded = await SessionManager.open(sessionFile);
-		expect(reloaded.entries).toHaveLength(1);
+		expect(reloaded.entries).toHaveLength(2);
+		expect(reloaded.entries.map((entry) => entry.parentId)).toEqual(["session-1", "session-1"]);
+	});
+
+	it("builds an append-ordered tree and switches the active branch without rewriting history", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			createId: idSequence("session-1", "user-1", "assistant-1", "user-2", "user-branch"),
+		});
+		const first = await manager.appendMessage(userMessage("first", 1));
+		const assistant = await manager.appendMessage(userMessage("answer", 2));
+		await manager.appendMessage(userMessage("later", 3));
+
+		manager.setLeaf(first.id);
+		await manager.appendMessage(userMessage("branch", 4));
+
+		expect(manager.getBranch().map((entry) => entry.id)).toEqual([first.id, "user-branch"]);
+		expect(manager.getTree()[0]).toMatchObject({
+			entry: { id: first.id },
+			children: [{ entry: { id: assistant.id } }, { entry: { id: "user-branch" } }],
+		});
+		expect((await SessionManager.open(sessionFile)).entries).toHaveLength(4);
 	});
 
 	it("does not mutate memory or poison its queue after an append failure", async () => {

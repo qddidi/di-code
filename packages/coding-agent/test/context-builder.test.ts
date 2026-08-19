@@ -1,14 +1,19 @@
 import type { Message } from "@di-code/ai";
 import { describe, expect, it } from "vitest";
 import { buildSessionContext } from "../src/core/context-builder.ts";
-import type { SessionEntry, SessionMessageEntry, SessionSummaryEntry } from "../src/core/session/types.ts";
+import {
+	SESSION_FORMAT_VERSION,
+	type SessionEntry,
+	type SessionMessageEntry,
+	type SessionSummaryEntry,
+} from "../src/core/session/types.ts";
 
 const timestamp = "2026-08-12T00:00:00.000Z";
 
 function messageEntry(id: string, parentId: string, text: string): SessionMessageEntry {
 	return {
 		type: "message",
-		version: 1,
+		version: SESSION_FORMAT_VERSION,
 		id,
 		parentId,
 		timestamp,
@@ -23,7 +28,7 @@ function messageEntry(id: string, parentId: string, text: string): SessionMessag
 function summaryEntry(id: string, parentId: string, summary: string, firstKeptEntryId: string): SessionSummaryEntry {
 	return {
 		type: "summary",
-		version: 1,
+		version: SESSION_FORMAT_VERSION,
 		id,
 		parentId,
 		timestamp,
@@ -36,7 +41,7 @@ function summaryEntry(id: string, parentId: string, summary: string, firstKeptEn
 function failedAssistantEntry(id: string, parentId: string, stopReason: "error" | "aborted"): SessionMessageEntry {
 	return {
 		type: "message",
-		version: 1,
+		version: SESSION_FORMAT_VERSION,
 		id,
 		parentId,
 		timestamp,

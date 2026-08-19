@@ -442,6 +442,48 @@ describe("AgentSession persistence", () => {
 		expect(reopened.messages).toHaveLength(session.transcript.length);
 	});
 
+	it("navigates to a historical user message and creates a sibling branch with only its ancestor context", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first answer" }] },
+				{ type: "success", content: [{ type: "text", text: "second answer" }] },
+				{ type: "success", content: [{ type: "text", text: "branch answer" }] },
+			],
+		});
+		const requestedMessages: Message[][] = [];
+		const provider: Provider = {
+			...faux.provider,
+			stream(model, context: Context, options) {
+				requestedMessages.push(structuredClone(context.messages));
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		const session = new AgentSession({ allowedRoot: root, provider, model: faux.model, sessionManager: manager });
+
+		await session.prompt("first");
+		await session.prompt("second");
+		const second = manager.entries.find(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "user" &&
+				entry.message.content.some((content) => content.type === "text" && content.text === "second"),
+		);
+		if (!second) throw new Error("Expected persisted second user message.");
+
+		const navigation = await session.navigateTree(second.id);
+		expect(navigation.editorText).toBe("second");
+		expect(session.transcript.map((message) => message.role)).toEqual(["user", "assistant"]);
+		await session.prompt("branch");
+
+		const thirdRequest = requestedMessages[2];
+		const thirdTexts = thirdRequest?.flatMap((message) =>
+			message.content.flatMap((content) => (content.type === "text" ? [content.text] : [])),
+		);
+		expect(thirdTexts).toEqual(["first", "first answer", "branch"]);
+		expect(manager.entries.filter((entry) => entry.parentId === second.parentId)).toHaveLength(2);
+	});
+
 	it("surfaces persistence failure and blocks later prompts", async () => {
 		const faux = createFauxProvider({
 			responses: [

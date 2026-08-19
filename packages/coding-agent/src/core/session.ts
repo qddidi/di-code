@@ -22,10 +22,9 @@ import type {
 } from "@di-code/ai";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { ExtensionHost } from "../extensions/runtime.ts";
-import { buildSessionContext } from "./context-builder.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
-import type { SessionDiagnostic } from "./session/types.ts";
+import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
 import { createBashTool } from "./tools/bash.ts";
 import { createEditTool } from "./tools/edit.ts";
 import { createLoadSkillTool } from "./tools/load-skill.ts";
@@ -70,7 +69,21 @@ export type AgentSessionEvent =
 	| { type: "compaction_start"; reason: "threshold" | "manual" }
 	| { type: "compaction_end"; reason: "threshold" | "manual"; success: boolean; errorMessage?: string }
 	| { type: "queue_update"; steering: readonly string[] }
-	| { type: "usage_update"; usage: SessionUsage };
+	| { type: "usage_update"; usage: SessionUsage }
+	| {
+			type: "tree_navigated";
+			oldLeafId: string;
+			newLeafId: string;
+			selectedEntryId: string;
+			restoredEditorText: boolean;
+	  };
+
+export interface TreeNavigationResult {
+	readonly editorText?: string;
+	readonly selectedEntryId: string;
+	readonly leafId: string;
+	readonly imagesOmitted: boolean;
+}
 
 export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<void>;
 
@@ -161,7 +174,7 @@ export class AgentSession {
 		for (const message of options.sessionManager?.messages ?? []) {
 			if (message.role === "assistant") this.addUsage(message.usage);
 		}
-		const initialContext = options.sessionManager ? buildSessionContext(options.sessionManager.entries) : undefined;
+		const initialContext = options.sessionManager?.buildContext();
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
@@ -220,7 +233,11 @@ export class AgentSession {
 	}
 
 	get transcript(): readonly Message[] {
-		return this.agent.transcript;
+		if (!this.sessionManager) return this.agent.transcript;
+		return this.sessionManager
+			.getBranch()
+			.filter((entry): entry is Extract<SessionEntry, { type: "message" }> => entry.type === "message")
+			.map((entry) => structuredClone(entry.message));
 	}
 
 	get isStreaming(): boolean {
@@ -321,6 +338,14 @@ export class AgentSession {
 		return this.sessionManager?.diagnostics ?? [];
 	}
 
+	get sessionTree(): readonly SessionTreeNode[] {
+		return this.sessionManager?.getTree() ?? [];
+	}
+
+	get sessionLeafId(): string | undefined {
+		return this.sessionManager?.leafId;
+	}
+
 	get usage(): SessionUsage {
 		return {
 			...this.usageTotals,
@@ -393,6 +418,44 @@ export class AgentSession {
 		}
 	}
 
+	/** Changes the active persisted branch and replaces the next-request model context. */
+	async navigateTree(entryId: string): Promise<TreeNavigationResult> {
+		if (this.promptActive)
+			throw new Error("Cannot navigate the session tree while AgentSession is processing a prompt.");
+		if (!this.sessionManager) throw new Error("Cannot navigate an in-memory session.");
+		const entry = this.sessionManager.getEntry(entryId);
+		if (!entry) throw new Error(`Unknown session tree entry "${entryId}".`);
+		if (entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "tool_use") {
+			throw new Error("Select the final tool result for an assistant message with tool calls.");
+		}
+
+		const oldLeafId = this.sessionManager.leafId;
+		let editorText: string | undefined;
+		let imagesOmitted = false;
+		if (entry.type === "message" && entry.message.role === "user") {
+			editorText = textFromUserMessage(entry.message);
+			imagesOmitted = entry.message.content.some((content) => content.type === "image");
+			this.sessionManager.setLeaf(entry.parentId);
+		} else {
+			this.sessionManager.setLeaf(entry.id);
+		}
+
+		try {
+			this.agent.replaceContext(this.sessionManager.buildContext().messages);
+		} catch (cause) {
+			this.sessionManager.setLeaf(oldLeafId);
+			throw cause;
+		}
+		await this.emitSession({
+			type: "tree_navigated",
+			oldLeafId,
+			newLeafId: this.sessionManager.leafId,
+			selectedEntryId: entry.id,
+			restoredEditorText: editorText !== undefined,
+		});
+		return { editorText, selectedEntryId: entry.id, leafId: this.sessionManager.leafId, imagesOmitted };
+	}
+
 	subscribe(listener: AgentListener): () => void {
 		return this.agent.subscribe(listener);
 	}
@@ -434,7 +497,7 @@ export class AgentSession {
 	private async compactIfNeeded(content: readonly UserContent[], signal?: AbortSignal): Promise<void> {
 		if (!this.compactionEnabledValue || !this.sessionManager) return;
 
-		const context = buildSessionContext(this.sessionManager.entries);
+		const context = this.sessionManager.buildContext();
 		const pendingUser: Message = {
 			role: "user",
 			content: structuredClone([...content]),
@@ -448,7 +511,7 @@ export class AgentSession {
 
 	private async compactNow(signal: AbortSignal | undefined, reason: "threshold" | "manual"): Promise<void> {
 		if (!this.sessionManager) throw new Error("Cannot compact without a persisted session.");
-		const context = buildSessionContext(this.sessionManager.entries);
+		const context = this.sessionManager.buildContext();
 		await this.emitSession({ type: "compaction_start", reason });
 		const preparation = prepareCompaction(context.messages, this.keepRecentTokens);
 		const firstKeptEntryId = preparation ? context.sourceEntryIds[preparation.firstKeptMessageIndex] : undefined;
@@ -489,7 +552,7 @@ export class AgentSession {
 			throw cause;
 		}
 
-		this.agent.replaceContext(buildSessionContext(this.sessionManager.entries).messages);
+		this.agent.replaceContext(this.sessionManager.buildContext().messages);
 		await this.emitSession({ type: "compaction_end", reason, success: true });
 	}
 }

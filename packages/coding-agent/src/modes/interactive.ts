@@ -47,6 +47,7 @@ import {
 } from "./interactive-components.ts";
 import { InteractiveLayout } from "./interactive-layout.ts";
 import { InteractiveProjection } from "./interactive-state.ts";
+import { TreeSelector } from "./tree-selector.ts";
 
 export type { AgentSessionEvent };
 export type { InteractiveMessage, InteractiveProcessItem, InteractiveState } from "./interactive-state.ts";
@@ -55,6 +56,7 @@ export { InteractiveProjection } from "./interactive-state.ts";
 const IMAGE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"]);
 const PASTE_IMAGE_KEY = process.platform === "win32" ? Key.alt("v") : Key.ctrl("v");
 const PASTE_IMAGE_SHORTCUT = process.platform === "win32" ? "Alt+V" : "Ctrl+V";
+
 function builtinSlashCommands(locale: Locale): readonly SlashCommand[] {
 	const t = (key: string) => translate(locale, key);
 	return [
@@ -62,6 +64,7 @@ function builtinSlashCommands(locale: Locale): readonly SlashCommand[] {
 		{ name: "clear", description: t("clearVisibleMessages") },
 		{ name: "model", description: t("openModelSelector") },
 		{ name: "session", description: t("openSessionSelector") },
+		{ name: "tree", description: t("openTreeSelector") },
 		{ name: "theme", description: t("openThemeSelector") },
 		{ name: "settings", description: t("openSettingsSelector") },
 		{ name: "login", description: t("chooseProvider") },
@@ -418,6 +421,92 @@ export class InteractiveMode {
 		this.showOverlay(list);
 	}
 
+	private openTreeSelector(): void {
+		if (this.promptInFlight || this.compactionInFlight || this.sessionSwitching) {
+			this.projection.setError(
+				this.locale === "zh-CN"
+					? "提示词运行时不能浏览会话树。"
+					: "Cannot browse the session tree while a prompt is running.",
+			);
+			this.refresh();
+			return;
+		}
+		if (this.session.sessionTree.length === 0) {
+			this.projection.setStatus(
+				this.locale === "zh-CN" ? "当前会话还没有历史节点。" : "The current session has no history nodes.",
+			);
+			this.refresh();
+			return;
+		}
+		const selector = new TreeSelector({
+			nodes: this.session.sessionTree,
+			leafId: this.session.sessionLeafId,
+			locale: this.locale,
+			onContinue: (entry) => {
+				this.closeOverlay();
+				void this.navigateTreeEntry(entry.id);
+			},
+			onEdit: (entry) => {
+				if (entry.type !== "message" || entry.message.role !== "user") {
+					this.projection.setError(
+						this.locale === "zh-CN" ? "只能编辑历史用户消息。" : "Only historical user messages can be edited.",
+					);
+					this.refresh();
+					return;
+				}
+				this.closeOverlay();
+				void this.navigateTreeEntry(entry.id);
+			},
+			onSummarize: (entry) => {
+				this.closeOverlay();
+				void this.summarizeTreeBranch(entry.id);
+			},
+			onCancel: () => this.closeOverlay(),
+		});
+		this.showOverlay(selector);
+	}
+
+	private async navigateTreeEntry(entryId: string): Promise<boolean> {
+		try {
+			const result = await this.session.navigateTree(entryId);
+			if (!this.started) return false;
+			this.projection.replaceTranscript(this.session.transcript);
+			this.editor.setValue(result.editorText ?? "");
+			this.projection.setStatus(
+				result.imagesOmitted
+					? this.locale === "zh-CN"
+						? "已恢复文本；请重新附加图片。"
+						: "Text restored; reattach images before sending."
+					: `tree=${result.selectedEntryId}`,
+			);
+			return true;
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+			return false;
+		} finally {
+			this.refresh();
+		}
+	}
+
+	private async summarizeTreeBranch(entryId: string): Promise<void> {
+		if (this.compactionInFlight || this.promptInFlight) return;
+		this.compactionInFlight = true;
+		this.projection.setStatus(this.locale === "zh-CN" ? "正在为分支生成摘要。" : "Summarizing selected branch.");
+		this.refresh();
+		try {
+			if (!(await this.navigateTreeEntry(entryId))) return;
+			await this.session.compact();
+			this.editor.setValue("");
+			this.projection.replaceTranscript(this.session.transcript);
+			this.projection.setStatus(this.locale === "zh-CN" ? "摘要分支已创建。" : "Summary branch created.");
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			this.compactionInFlight = false;
+			this.refresh();
+		}
+	}
+
 	private openSettingsSelector(): void {
 		const t = (key: string) => translate(this.locale, key);
 		const list = new SettingsList([
@@ -533,6 +622,11 @@ export class InteractiveMode {
 		this.unsubscribeSession?.();
 		this.unsubscribeSession = this.session.subscribeSession((event) => {
 			if (!this.started) return;
+			if (event.type === "tree_navigated") {
+				this.projection.replaceTranscript(this.session.transcript);
+				this.refresh();
+				return;
+			}
 			if (event.type === "queue_update") {
 				this.steeringPrompts = [...event.steering];
 				this.refreshQueue();
@@ -737,6 +831,9 @@ export class InteractiveMode {
 				return;
 			case "session":
 				this.openSessionSelector();
+				return;
+			case "tree":
+				this.openTreeSelector();
 				return;
 			case "theme":
 				this.openThemeSelector();

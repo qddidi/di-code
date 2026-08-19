@@ -512,6 +512,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | `/clear` | 清除当前界面中可见的消息，不删除会话数据。 |
 | `/model` | 打开模型选择器。 |
 | `/session` | 打开会话选择器。 |
+| `/tree` | 打开紧凑的分支树；`Enter` 从节点继续，`e` 编辑历史用户消息，`s` 为所选路径生成摘要并开始新分支。 |
 | `/theme` | 切换深色或浅色终端主题。 |
 | `/settings` | 配置上下文压缩和内置终端语言。 |
 | `/compact` | 立即压缩当前持久化会话的旧上下文。 |
@@ -533,7 +534,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 ## 会话与插件
 
-默认 CLI 会为交互会话创建或恢复用户目录 `~/.di-code/sessions/<工作区哈希>/` 下的版本化 JSONL 文件。会话记录采用 append-only（仅追加）格式和父记录链，支持锁文件保护、损坏诊断、并发修改检测与上下文摘要压缩；完整磁盘历史和发送给模型的压缩上下文保持分离。`SessionManager` 与 `AgentSession` 也可作为 SDK 使用。已有项目内 `.di-code/sessions/` 文件不会自动移动；需要保留或共享它们时，通过 `--session <path>` 显式打开。
+默认 CLI 会为交互会话创建或恢复用户目录 `~/.di-code/sessions/<工作区哈希>/` 下的版本化 JSONL 文件。当前格式为 v2：记录只追加，每条记录可引用任意已提交父节点，因此同一文件可保存多个对话分支。`/tree` 以紧凑单栏树显示路径和节点摘要，当前选择由 `›` 标识：选择历史用户消息时会恢复其文本到编辑器，并从该消息之前的上下文发送新 prompt；选择 assistant、tool result 或 summary 时从所选节点继续。按 `s` 会先切换到所选路径，再使用现有上下文压缩生成 summary；成功后下一条 prompt 会从该 summary 分支继续。摘要仍需要有效压缩切点。图片附件只恢复文本，需重新附加。导航仅改变模型上下文，不回滚文件、命令或外部服务副作用。Session 文件 v1 不会迁移，打开时会以 `UNSUPPORTED_VERSION` 拒绝。会话仍支持锁文件保护、损坏诊断、并发追加和每分支的上下文摘要压缩；完整磁盘历史和发送给模型的压缩上下文保持分离。`SessionManager` 与 `AgentSession` 也可作为 SDK 使用。已有项目内 `.di-code/sessions/` 文件不会自动移动；需要保留或共享它们时，通过 `--session <path>` 显式打开。
 
 插件可在 CLI 启动时注册三类能力：模型工具、interactive 模式 slash command 和 Agent/会话生命周期事件处理器。项目本地插件位于：
 

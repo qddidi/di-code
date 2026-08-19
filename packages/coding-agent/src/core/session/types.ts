@@ -1,6 +1,6 @@
 import type { Message } from "@di-code/ai";
 
-export const SESSION_FORMAT_VERSION = 1 as const;
+export const SESSION_FORMAT_VERSION = 2 as const;
 
 export interface SessionRecordBase {
 	readonly version: typeof SESSION_FORMAT_VERSION;
@@ -30,6 +30,12 @@ export interface SessionSummaryEntry extends SessionRecordBase {
 }
 
 export type SessionEntry = SessionMessageEntry | SessionSummaryEntry;
+
+/** An immutable entry snapshot with its append-ordered descendants. */
+export interface SessionTreeNode {
+	readonly entry: SessionEntry;
+	readonly children: readonly SessionTreeNode[];
+}
 
 export type SessionRecord = SessionHeader | SessionEntry;
 

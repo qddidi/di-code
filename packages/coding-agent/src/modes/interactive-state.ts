@@ -189,6 +189,7 @@ export class InteractiveProjection {
 				this.setUsage(event.usage);
 				return;
 			case "queue_update":
+			case "tree_navigated":
 				return;
 			case "message_start":
 				if (event.message.role === "assistant") this.streamingText = "";

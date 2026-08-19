@@ -69,7 +69,7 @@ describe("session cross-process recovery", () => {
 		});
 	});
 
-	it("allows only one process to append from the same old leaf", async () => {
+	it("allows two processes to append sibling branches from the same parent", async () => {
 		const written = await runFixture(["write", sessionFile, root]);
 		expect(written.code).toBe(0);
 		const readyA = join(root, "ready-a");
@@ -82,15 +82,14 @@ describe("session cross-process recovery", () => {
 		await writeFile(gate, "go", "utf8");
 		const results = await Promise.all([first, second]);
 
-		expect(results.map((result) => result.code).sort()).toEqual([0, 2]);
+		expect(results.map((result) => result.code).sort()).toEqual([0, 0]);
 		const payloads = results.map((result) => JSON.parse(result.stdout) as { status: string; code?: string });
-		expect(payloads.filter((payload) => payload.status === "appended")).toHaveLength(1);
-		expect(payloads.filter((payload) => payload.code === "CONCURRENT_MODIFICATION")).toHaveLength(1);
+		expect(payloads.filter((payload) => payload.status === "appended")).toHaveLength(2);
 		const read = await runFixture(["read", sessionFile, root]);
 		const restored = JSON.parse(read.stdout) as { roles: string[]; texts: string[] };
-		expect(restored.roles).toEqual(["user", "assistant", "user"]);
+		expect(restored.roles).toEqual(["user", "assistant", "user", "user"]);
 		expect(restored.texts.slice(0, 2)).toEqual(["saved-question", "saved-answer"]);
-		expect(["from-a", "from-b"]).toContain(restored.texts[2]);
+		expect(restored.texts.slice(2).sort()).toEqual(["from-a", "from-b"]);
 	});
 
 	it("restores compressed model context while preserving all disk messages", async () => {

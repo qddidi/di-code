@@ -180,7 +180,7 @@ describe("loadSessionFile", () => {
 			const loaded = await loadSessionFile(sessionFile);
 			expect(loaded.diagnostics[0]).toMatchObject({
 				kind: "corrupt_record",
-				reason: "record firstKeptEntryId must reference an earlier message entry",
+				reason: "record firstKeptEntryId must reference an earlier message on the summary branch",
 			});
 		}
 	});
@@ -220,7 +220,7 @@ describe("loadSessionFile", () => {
 	});
 
 	it("rejects older and newer unsupported header versions", async () => {
-		for (const version of [0, 2]) {
+		for (const version of [0, 1, 3]) {
 			await writeRecords(sessionFile, [{ ...createHeader(), version }]);
 			await expect(loadSessionFile(sessionFile)).rejects.toMatchObject({
 				name: "SessionLoadError",
@@ -334,7 +334,7 @@ describe("loadSessionFile", () => {
 		expect(loaded.diagnostics).toEqual([]);
 	});
 
-	it("stops when an entry duplicates an id or does not extend the current leaf", async () => {
+	it("stops when an entry duplicates an id or references an unknown parent", async () => {
 		const first = createEntry("entry-1", "session-1", userMessage);
 		const cases = [
 			{
@@ -344,7 +344,7 @@ describe("loadSessionFile", () => {
 			},
 			{
 				records: [createHeader(), createEntry("entry-1", "missing-parent", userMessage)],
-				reason: 'record parentId must be "session-1"',
+				reason: "record parentId must reference an earlier record",
 				lineNumber: 2,
 			},
 		];
@@ -403,21 +403,13 @@ describe("loadSessionFile", () => {
 		expect(await readFile(sessionFile, "utf8")).toBe(`${JSON.stringify(header)}\n${JSON.stringify(entry)}\n`);
 	});
 
-	it("rejects a stale expected parent without changing file bytes", async () => {
+	it("allows appending a sibling branch from an earlier existing parent", async () => {
 		const header = createHeader();
 		const first = createEntry("entry-1", header.id, userMessage);
 		await writeRecords(sessionFile, [header, first]);
-		const before = await readFile(sessionFile);
-
-		await expect(
-			appendSessionEntry(sessionFile, createEntry("entry-2", header.id, assistantMessage), header.id),
-		).rejects.toMatchObject({
-			name: "SessionWriteError",
-			code: "CONCURRENT_MODIFICATION",
-			expectedParentId: header.id,
-			actualParentId: first.id,
-		});
-		expect(await readFile(sessionFile)).toEqual(before);
+		const sibling = createEntry("entry-2", header.id, assistantMessage);
+		await appendSessionEntry(sessionFile, sibling, header.id);
+		expect((await loadSessionFile(sessionFile)).entries).toEqual([first, sibling]);
 	});
 
 	it("refuses to append when the loaded session contains a recovery diagnostic", async () => {

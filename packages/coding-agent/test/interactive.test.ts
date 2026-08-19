@@ -1887,6 +1887,53 @@ describe("InteractiveMode", () => {
 		assert.equal(session.transcript.at(-1)?.role, "assistant");
 		mode.stop();
 	});
+
+	it("lists /tree in help and restores a selected historical user prompt", async () => {
+		const root = mkdtempSync(join(tmpdir(), "di-code-interactive-tree-"));
+		try {
+			const faux = createFauxProvider({
+				responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }],
+			});
+			const manager = await SessionManager.create({ filePath: join(root, "session.jsonl"), cwd: root });
+			const session = new AgentSession({
+				allowedRoot: root,
+				provider: faux.provider,
+				model: faux.model,
+				sessionManager: manager,
+			});
+			const terminal = new TestTerminal(false, 120, 10);
+			const tui = new TUI(terminal);
+			const mode = new InteractiveMode({ session, tui });
+			mode.start();
+			terminal.sendInput("question");
+			terminal.sendInput("\r");
+			await waitFor(() => session.transcript.length === 2);
+			await manager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "question\ncontinued" }],
+				timestamp: 3,
+			});
+
+			terminal.sendInput("/help");
+			terminal.sendInput("\r");
+			await waitFor(() => terminal.output.includes("/tree"));
+			terminal.sendInput("/tree");
+			terminal.sendInput("\r");
+			await waitFor(() => tui.hasOverlay());
+			await waitFor(() => {
+				const frame = tui.render(terminal.columns).join("\n");
+				return frame.includes("›") && frame.includes("question continued") && frame.includes("Summarize + branch");
+			});
+			terminal.sendInput("\x1b[B");
+			terminal.sendInput("\x1b[B");
+			terminal.sendInput("\r");
+			await waitFor(() => !tui.hasOverlay());
+			await waitFor(() => tui.render(terminal.columns).join("\n").includes("tree="));
+			mode.stop();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("interactive CLI parsing", () => {

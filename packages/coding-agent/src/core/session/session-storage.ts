@@ -189,7 +189,7 @@ function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; re
 	if (!isObject(value) || (value.type !== "message" && value.type !== "summary")) {
 		return { reason: 'record type must be "message" or "summary"' };
 	}
-	if (value.version !== SESSION_FORMAT_VERSION) return { reason: "record version must be 1" };
+	if (value.version !== SESSION_FORMAT_VERSION) return { reason: `record version must be ${SESSION_FORMAT_VERSION}` };
 	if (!isRecordId(value.id)) return { reason: "record id is invalid" };
 	if (!isRecordId(value.parentId)) return { reason: "record parentId is invalid" };
 	if (!isIsoTimestamp(value.timestamp)) return { reason: "record timestamp is not canonical ISO 8601 UTC" };
@@ -252,8 +252,7 @@ export async function loadSessionFile(filePath: string): Promise<LoadedSession> 
 	const entries: SessionEntry[] = [];
 	const diagnostics: LoadedSession["diagnostics"][number][] = [];
 	const seenIds = new Set<string>([header.id]);
-	const messageEntryIds = new Set<string>();
-	let expectedParentId = header.id;
+	const entriesById = new Map<string, SessionEntry>();
 
 	for (let index = 1; index < physicalLines.length; index++) {
 		const lineNumber = index + 1;
@@ -262,16 +261,19 @@ export async function loadSessionFile(filePath: string): Promise<LoadedSession> 
 			const decoded = decodeSessionEntry(value);
 			if (!decoded.entry) throw new Error(decoded.reason ?? "Invalid session message record.");
 			if (seenIds.has(decoded.entry.id)) throw new Error("record id is duplicated");
-			if (decoded.entry.parentId !== expectedParentId) {
-				throw new Error(`record parentId must be "${expectedParentId}"`);
-			}
-			if (decoded.entry.type === "summary" && !messageEntryIds.has(decoded.entry.firstKeptEntryId)) {
-				throw new Error("record firstKeptEntryId must reference an earlier message entry");
+			if (!seenIds.has(decoded.entry.parentId)) throw new Error("record parentId must reference an earlier record");
+			if (decoded.entry.type === "summary") {
+				const firstKept = entriesById.get(decoded.entry.firstKeptEntryId);
+				if (
+					firstKept?.type !== "message" ||
+					!isAncestor(decoded.entry.parentId, firstKept.id, entriesById, header.id)
+				) {
+					throw new Error("record firstKeptEntryId must reference an earlier message on the summary branch");
+				}
 			}
 			entries.push(decoded.entry);
 			seenIds.add(decoded.entry.id);
-			if (decoded.entry.type === "message") messageEntryIds.add(decoded.entry.id);
-			expectedParentId = decoded.entry.id;
+			entriesById.set(decoded.entry.id, decoded.entry);
 		} catch (cause) {
 			diagnostics.push({ kind: "corrupt_record", lineNumber, reason: errorText(cause) });
 			break;
@@ -294,6 +296,22 @@ export async function loadSessionFile(filePath: string): Promise<LoadedSession> 
 			.map((entry) => entry.message),
 		diagnostics,
 	};
+}
+
+function isAncestor(
+	leafId: string,
+	ancestorId: string,
+	entriesById: ReadonlyMap<string, SessionEntry>,
+	headerId: string,
+): boolean {
+	let currentId = leafId;
+	while (currentId !== headerId) {
+		if (currentId === ancestorId) return true;
+		const current = entriesById.get(currentId);
+		if (!current) return false;
+		currentId = current.parentId;
+	}
+	return false;
 }
 
 export interface SessionAppendOptions {
@@ -404,13 +422,11 @@ export async function appendSessionEntry(
 			);
 		}
 
-		const actualParentId = loaded.entries.at(-1)?.id ?? loaded.header.id;
+		const entriesById = new Map(loaded.entries.map((existing) => [existing.id, existing] as const));
 		if (
 			entrySnapshot.type === "summary" &&
-			!loaded.entries.some(
-				(existing): existing is SessionMessageEntry =>
-					existing.type === "message" && existing.id === entrySnapshot.firstKeptEntryId,
-			)
+			(entriesById.get(entrySnapshot.firstKeptEntryId)?.type !== "message" ||
+				!isAncestor(expectedParentId, entrySnapshot.firstKeptEntryId, entriesById, loaded.header.id))
 		) {
 			throw new SessionWriteError(
 				"APPEND_FAILED",
@@ -425,12 +441,15 @@ export async function appendSessionEntry(
 				`Refusing to append a duplicate session record id to "${filePath}".`,
 			);
 		}
-		if (actualParentId !== expectedParentId || entrySnapshot.parentId !== expectedParentId) {
+		if (
+			entrySnapshot.parentId !== expectedParentId ||
+			(expectedParentId !== loaded.header.id && !entriesById.has(expectedParentId))
+		) {
 			throw new SessionWriteError(
 				"CONCURRENT_MODIFICATION",
 				filePath,
-				`Session leaf changed before append in "${filePath}".`,
-				{ expectedParentId, actualParentId },
+				`Session parent is no longer available in "${filePath}".`,
+				{ expectedParentId },
 			);
 		}
 
