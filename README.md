@@ -581,7 +581,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 可信插件也可以通过 `registerInteractiveFrontend()` 提供完整 frontend，并以 `--ui <id>` 显式选择。普通插件不能取得终端所有权，只能注册静态面板数据与纯工具结果 renderer；当前 frontend 决定是否以及如何呈现这些贡献。
 
-子 Agent 由宿主拥有的 `SubagentService` 执行，不会让插件创建第二个 Agent 工具循环。模型可使用 `subagent`、`subagent_list`、`send_message`、`wait` 和 `interrupt` 管理进程内子任务；默认限制为深度 `2`、并发 `4`、超时 `120000` ms 和 `32768` UTF-8 字节结果。父 Session 追加 `subagent` 记录以保存运行状态，但这些记录不会进入模型上下文；关闭会先取消子任务，再释放 frontend、MCP 和插件资源。
+子 Agent 由宿主拥有的 `SubagentService` 执行，不会让插件创建第二个 Agent 工具循环。模型可使用 `subagent`、`subagent_list`、`send_message`、`wait` 和 `interrupt` 管理进程内子任务；`subagent` 也可选择已注册的 `providerId`。默认限制为深度 `2`、并发 `4`、超时 `120000` ms 和 `32768` UTF-8 字节结果；宿主会对插件 provider 统一执行超时、取消、结果截断和凭据脱敏。父 Session 追加 `subagent` 记录以保存运行状态，但这些记录不会进入模型上下文；RPC 事件按 `requestId` 关联并校验生命周期字段；关闭会先取消子任务，再释放 frontend、MCP 和插件资源。
 
 交互式 TTY 首次发现项目插件目录时会询问是否信任当前项目；也可以显式授予项目可信状态：
 

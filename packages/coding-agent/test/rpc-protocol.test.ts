@@ -101,6 +101,26 @@ describe("RPC protocol v1", () => {
 		expect(subagent.kind).toBe("event");
 		expect(() =>
 			parseRpcServerMessage(
+				JSON.stringify({
+					version: 1,
+					kind: "event",
+					requestId: "prompt-1",
+					event: { type: "subagent_start", runId: "run-1", parentSessionId: "session-1", status: "completed" },
+				}),
+			),
+		).toThrow(RpcProtocolError);
+		expect(() =>
+			parseRpcServerMessage(
+				JSON.stringify({
+					version: 1,
+					kind: "event",
+					requestId: "prompt-1",
+					event: { type: "subagent_end", runId: "run-1", parentSessionId: "session-1", status: "failed", text: 1 },
+				}),
+			),
+		).toThrow(RpcProtocolError);
+		expect(() =>
+			parseRpcServerMessage(
 				JSON.stringify({ version: 1, kind: "event", requestId: "prompt-1", event: { type: "subagent_end" } }),
 			),
 		).toThrow(RpcProtocolError);

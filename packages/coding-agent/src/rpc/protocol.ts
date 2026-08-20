@@ -132,7 +132,13 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function requiredId(value: unknown, field: string, requestId?: string): string {
-	if (typeof value !== "string" || value.length === 0 || value.length > RPC_MAX_ID_LENGTH) {
+	if (
+		typeof value !== "string" ||
+		value.length === 0 ||
+		value.length > RPC_MAX_ID_LENGTH ||
+		value.trim() !== value ||
+		/[\u0000-\u001f\u007f]/.test(value)
+	) {
 		throw new RpcProtocolError(
 			"INVALID_REQUEST",
 			`${field} must be a non-empty string of at most ${RPC_MAX_ID_LENGTH} characters.`,
@@ -213,15 +219,23 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 		}
 		if (event.type === "subagent_start" || event.type === "subagent_update" || event.type === "subagent_end") {
 			if (
-				typeof event.runId !== "string" ||
-				event.runId.length === 0 ||
-				typeof event.parentSessionId !== "string" ||
-				event.parentSessionId.length === 0 ||
 				!(["running", "completed", "failed", "cancelled"] as const).includes(event.status as never)
 			) {
 				throw new RpcProtocolError("INVALID_REQUEST", "RPC subagent event has invalid lifecycle fields.");
 			}
+			requiredId(event.runId, "event.runId");
+			requiredId(event.parentSessionId, "event.parentSessionId");
 		}
+		if (event.type === "subagent_start" && event.status !== "running")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC subagent_start must be running.");
+		if (event.type === "subagent_end" && event.status === "running")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC subagent_end must be terminal.");
+		if (
+			(event.type === "subagent_start" || event.type === "subagent_update" || event.type === "subagent_end") &&
+			((event.text !== undefined && typeof event.text !== "string") ||
+				(event.errorMessage !== undefined && typeof event.errorMessage !== "string"))
+		)
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC subagent event text fields are invalid.");
 		return record as unknown as RpcEventRecord;
 	}
 	if (record.kind !== "response") {

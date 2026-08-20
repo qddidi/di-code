@@ -437,6 +437,33 @@ describe("AgentSession persistence", () => {
 		expect(restoredSession.sessionDiagnostics).toEqual([]);
 	});
 
+	it("persists child lifecycle records without adding them to restored model context", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "child answer" }] }],
+		});
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: faux.model,
+			sessionManager: manager,
+		});
+		const ended = new Promise<void>((resolve) => {
+			session.subscribeSession((event) => {
+				if (event.type === "subagent_end") resolve();
+			});
+		});
+
+		const run = await session.subagents?.start({ prompt: "child work" });
+		if (!run) throw new Error("SubagentService is unavailable.");
+		await run.wait();
+		await ended;
+
+		expect(manager.entries.map((entry) => entry.type)).toEqual(["subagent", "subagent"]);
+		expect(manager.messages).toEqual([]);
+		expect((await SessionManager.open(sessionFile)).messages).toEqual([]);
+	});
+
 	it("persists every completed message in a tool turn exactly once", async () => {
 		await writeFile(join(root, "notes.txt"), "stored content", "utf8");
 		const faux = createFauxProvider({

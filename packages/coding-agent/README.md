@@ -465,7 +465,7 @@ di-code --no-skills "不要加载任何 Skill"
 
 阶段 5 将该契约接入 CLI：可信插件可注册完整 frontend，`--profile` / `--ui` 决定实际选择。普通插件只能提供 `PluginInteractivePanel` 的数据和 `PluginToolDetailRenderer` 的纯结果格式化函数；它们没有输入焦点、终端对象或布局控制权。
 
-阶段 6 提供宿主拥有的 `SubagentService`。模型可通过 `subagent`、`subagent_list`、`send_message`、`wait` 和 `interrupt` 管理受限子 Agent；默认使用进程内 provider，并复用同一个 `Agent` 工具循环。每个子任务受最大深度、并发数、超时和 UTF-8 结果大小限制，取消、失败和超时会分别投影为 `subagent` 状态。父 Session 以 `version: 2` 的 `subagent` JSONL 记录保存 start/end 状态，记录不会进入模型上下文；退出时宿主先取消子任务，再清理 frontend、MCP 和插件 scope。
+阶段 7 提供宿主拥有的 `SubagentService`。模型可通过 `subagent`、`subagent_list`、`send_message`、`wait` 和 `interrupt` 管理受限子 Agent；默认使用进程内 provider，并复用同一个 `Agent` 工具循环。`subagent` 可显式选择已注册的 `providerId`。每个子任务受最大深度、并发数、超时和 UTF-8 结果大小限制；宿主也会为插件 provider 收口超时、取消、失败和凭据脱敏。父 Session 以 `version: 2` 的 `subagent` JSONL 记录保存 start/end 状态，记录不会进入模型上下文；RPC 只转发并校验关联的子 Agent 事件；退出时宿主先取消子任务，再清理 frontend、MCP 和插件 scope。
 
 插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。interactive 启动时，每个实际加载的插件会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出该插件新增的 tools 和 slash commands 数量。print 和 JSON 模式保持 `plugin_diagnostic` 输出。
 

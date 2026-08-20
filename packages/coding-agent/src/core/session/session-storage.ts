@@ -204,6 +204,10 @@ function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; re
 			return { reason: "record subagent event is invalid" };
 		if (!(["running", "completed", "failed", "cancelled"] as const).includes(value.status as never))
 			return { reason: "record subagent status is invalid" };
+		if (value.event === "start" && value.status !== "running")
+			return { reason: "record subagent start status must be running" };
+		if (value.event === "end" && value.status === "running")
+			return { reason: "record subagent end status must be terminal" };
 		if (value.text !== undefined && typeof value.text !== "string")
 			return { reason: "record subagent text must be a string" };
 		if (value.errorMessage !== undefined && typeof value.errorMessage !== "string")

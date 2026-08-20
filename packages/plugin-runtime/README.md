@@ -20,7 +20,7 @@ Normal plugins may instead register `PluginInteractivePanel` data and `PluginToo
 
 ## Subagent contract
 
-Plugins may register a `SubagentProvider`, but the host owns the request and the Agent loop. `SubagentStartRequest` fixes the parent Session, working directory, selected model, visible tools/plugins, depth, timeout, and maximum result bytes. A provider returns a `SubagentRun` with `wait()`, `sendMessage()`, and idempotent `cancel()`; it must distinguish `completed`, `failed`, and `cancelled` and must not create a second orchestration loop outside the host.
+Plugins may register a `SubagentProvider`, but the host owns the request and the Agent loop. `SubagentStartRequest` fixes the parent Session, working directory, selected model, visible tools/plugins, depth, timeout, and maximum result bytes. A provider returns a `SubagentRun` with `wait()`, `sendMessage()`, and idempotent `cancel()`; it must distinguish `completed`, `failed`, and `cancelled` and must not create a second orchestration loop outside the host. The host validates the provider id and parent Session, and wraps provider runs so timeout, cancellation, result-size and credential-redaction limits still apply when a provider does not enforce them itself.
 
 The coding-agent host supplies an in-process provider and the model tools `subagent`, `subagent_list`, `send_message`, `wait`, and `interrupt`. Depth and concurrency are bounded, results are UTF-8 truncated and diagnostic text is credential-redacted. Providers are not a sandbox: filesystem, process, network, and further delegation remain subject to the child Session's explicit tool policy.
 
