@@ -47,7 +47,7 @@ di-code
 
 向导输入的 API key 会保存到用户全局 `~/.di-code/settings.json`，供之后启动复用；不会写入 `.env`、项目 `.di-code/settings.json`、会话文件或日志。请保护用户目录的访问权限，不要复制或提交该文件。
 
-已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。它总会要求真实 Provider 输入新的隐藏 key，写入用户全局 `settings.json` 成功后立即切换当前会话的 Provider 和模型。`/logout` 会移除当前 Provider 在该全局文件中的 `apiKey`，并在它是默认 Provider 时清除 `defaultProvider` 与 `defaultModel`；`api`、`baseUrl`、`models` 和其他 Provider 配置仍会保留。为避免登出后因缺少 key 重新构建失败，当前会话会继续使用已加载的运行时直到退出；下次交互启动时，如没有明确的 Provider 选择，会显示选择/登录向导。它不会也无法删除环境变量中的 key，因此环境变量仍可能继续生效。
+已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。它总会要求真实 Provider 输入新的隐藏 key，写入用户全局 `settings.json` 成功后立即切换当前会话的 Provider 和模型。`/model` 也会把当前 Provider 和所选模型保存为用户默认值。`/logout` 会移除当前 Provider 在该全局文件中的 `apiKey`，并在它是默认 Provider 时清除 `defaultProvider` 与 `defaultModel`；`api`、`baseUrl`、`models` 和其他 Provider 配置仍会保留。为避免登出后因缺少 key 重新构建失败，当前会话会继续使用已加载的运行时直到退出；下次交互启动时，如没有明确的 Provider 选择，会显示选择/登录向导。它不会也无法删除环境变量中的 key，因此环境变量仍可能继续生效。
 
 `/login` 还会更新同一文件的 `defaultProvider` 和 `defaultModel`。当全局配置中有多个 Provider 时，下一次启动会使用这两个默认值；显式设置的 `DI_CODE_PROVIDER` 与 `DI_CODE_MODEL` 始终优先。
 
@@ -125,7 +125,7 @@ di-code "检查当前项目的测试状态"
 | --- | --- |
 | `providers` | Provider 配置对象，key 是 Provider ID |
 | `defaultProvider` | 可选的默认 Provider；`/login` 自动更新，多个 Provider 时用于消除启动歧义 |
-| `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 自动更新 |
+| `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 和 `/model` 自动更新 |
 | `locale` | 仅用户全局 `~/.di-code/settings.json`：`en` 或 `zh-CN`；控制内置 CLI 与交互终端文案 |
 | `api` | 接口类型：`openai-responses`、`openai-chat-completions` 或 `anthropic-messages` |
 | `baseUrl` | Provider 的接口地址，必须是绝对的 `http` 或 `https` URL |
@@ -285,7 +285,7 @@ di-code --continue "继续上一次工作"
 | `/clear` | 仅清除屏幕可见消息，不删除会话文件 |
 | `/model` | 切换当前 Provider 的模型 |
 | `/session` | 选择或切换会话 |
-| `/tree` | 打开紧凑的分支树；`Enter` 继续、`e` 编辑用户提示词、`s` 摘要后创建分支 |
+| `/tree` | 打开当前历史对话分支树；可以选择回退至哪个阶段 |
 | `/theme` | 选择 dark 或 light 主题 |
 | `/settings` | 配置上下文压缩开关和内置终端语言 |
 | `/login` | 打开 Provider、模型和隐藏 API key 向导；保存到用户全局配置并切换当前会话 |
@@ -306,7 +306,7 @@ di-code --continue "继续上一次工作"
 | `Ctrl+C` | 退出并恢复终端状态 |
 | `Tab` | 补全 slash command |
 | `Alt+S` | 把编辑框当前内容作为引导发送给运行中的 Agent（与 `/steer` 等价） |
-| `Shift+Tab` | 循环切换模型的 thinking 等级（模型不支持时提示错误） |
+| `Shift+Tab` | 循环切换模型的 thinking 等级并保存为用户偏好（模型不支持时提示错误） |
 | `Ctrl+O` / `Ctrl+L` | 打开模型 / 会话选择器 |
 | `Ctrl+T` / `Ctrl+S` | 打开主题 / 设置 |
 | `Ctrl+R` | 重试最近失败的 prompt |
@@ -560,7 +560,7 @@ $env:DI_CODE_MODEL = "company-coder"
 di-code "总结当前项目"
 ```
 
-`api` 可为 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。Chat Completions 模型还可声明 `chatCompletionsCompat`，用于 DeepSeek/GLM/Kimi 的 thinking、reasoning_effort、`max_tokens`、流式 usage 和 `tool_stream` 等兼容差异。Kimi 模型支持 `low`、`high`、`max` 推理等级；Kimi 不发送 DeepSeek/智谱的 `thinking` 对象，而是发送 `reasoning_effort`。
+`api` 可为 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。自定义 Provider 必须提供 `models`；每个模型可设置 `id`、`name`、`input`、`reasoning`、`reasoningEfforts`、`defaultReasoningEffort`、`contextWindow`、`maxTokens`（或 `maxOutputTokens`）及按美元/百万 token 计的 `cost`。`defaultReasoningEffort` 必须在 `reasoningEfforts` 中。Chat Completions 模型还可声明 `chatCompletionsCompat`，用于 DeepSeek/GLM/Kimi 的 thinking、reasoning_effort、`max_tokens`、流式 usage 和 `tool_stream` 等兼容差异。Kimi 模型支持 `low`、`high`、`max` 推理等级；Kimi 不发送 DeepSeek/智谱的 `thinking` 对象，而是发送 `reasoning_effort`。
 
 `apiKey` 支持直接字符串，也支持 `$NAME` 或 `${NAME}` 环境变量引用。项目级 `settings.json` 若含明文 key，必须保持未提交；`baseUrl` 必须是绝对 `http`/`https` URL。
 

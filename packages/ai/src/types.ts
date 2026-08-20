@@ -205,6 +205,8 @@ export interface Model {
 	reasoning: boolean;
 	/** 该模型在当前 API 适配器中支持的思考强度；未声明表示不可调节。 */
 	reasoningEfforts?: readonly ThinkingLevel[];
+	/** 新会话采用的思考强度；必须属于 reasoningEfforts。 */
+	defaultReasoningEffort?: ThinkingLevel;
 	/** 当前模型在 OpenAI Chat Completions 协议上的兼容能力。 */
 	chatCompletionsCompat?: OpenAIChatCompletionsCompat;
 	/** 单次请求可容纳的最大上下文 token 数。 */

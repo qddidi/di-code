@@ -106,8 +106,18 @@ describe("AgentSession read integration", () => {
 	});
 
 	it("cycles thinking level and forwards it to the next provider request", async () => {
-		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
-		const model = { ...faux.model, reasoning: true, reasoningEfforts: ["low", "medium", "high"] as const };
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first answer" }] },
+				{ type: "success", content: [{ type: "text", text: "second answer" }] },
+			],
+		});
+		const model = {
+			...faux.model,
+			reasoning: true,
+			reasoningEfforts: ["low", "high", "max"] as const,
+			defaultReasoningEffort: "max" as const,
+		};
 		const requestedEfforts: Array<string | undefined> = [];
 		const provider: Provider = {
 			...faux.provider,
@@ -119,11 +129,22 @@ describe("AgentSession read integration", () => {
 		};
 		const session = new AgentSession({ allowedRoot: root, provider, model });
 
-		expect(session.thinkingLevel).toBe("medium");
-		expect(session.cycleThinkingLevel()).toBe("high");
-		await session.prompt("question");
+		expect(session.thinkingLevel).toBe("max");
+		await session.prompt("first question");
+		expect(session.cycleThinkingLevel()).toBe("low");
+		await session.prompt("second question");
 
-		expect(requestedEfforts).toEqual(["high"]);
+		expect(requestedEfforts).toEqual(["max", "low"]);
+	});
+
+	it("uses a valid saved thinking preference when creating a session", () => {
+		const faux = createFauxProvider({ responses: [] });
+		const model = { ...faux.model, reasoning: true, reasoningEfforts: ["low", "high", "max"] as const };
+		const provider: Provider = { ...faux.provider, models: [model] };
+
+		const session = new AgentSession({ allowedRoot: root, provider, model, thinkingLevel: "low" });
+
+		expect(session.thinkingLevel).toBe("low");
 	});
 
 	it("clears thinking level when switching to a model without declared effort support", () => {

@@ -7,8 +7,11 @@ import {
 	removeGlobalProviderApiKey,
 	resolveStartupArgs,
 	resolveStartupRuntime,
+	resolveThinkingLevelPreference,
 	saveGlobalCustomProvider,
 	saveGlobalLocale,
+	saveGlobalModelSelection,
+	saveGlobalThinkingLevel,
 	validateCustomBaseUrl,
 } from "../src/startup.ts";
 
@@ -256,6 +259,53 @@ describe("Pi-style startup configuration", () => {
 			locale: "zh-CN",
 			providers: { faux: { api: "faux", models: [{ id: "faux-model" }] } },
 		});
+	});
+
+	it("persists an interactive model selection as the next startup default", async () => {
+		await writeGlobalSettings({ locale: "zh-CN", providers: {} });
+
+		await saveGlobalModelSelection(globalDir, "zhipu", "glm-5.2");
+
+		expect(JSON.parse(await readFile(join(globalDir, "settings.json"), "utf8"))).toMatchObject({
+			locale: "zh-CN",
+			defaultProvider: "zhipu",
+			defaultModel: "glm-5.2",
+		});
+		const configuration = await loadStartupConfiguration(root, { ZAI_API_KEY: "test-key" }, globalDir);
+		expect(
+			resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults).model.id,
+		).toBe("glm-5.2");
+	});
+
+	it("persists thinking preferences per provider and model without accepting project overrides", async () => {
+		await writeGlobalSettings({ providers: {}, thinkingLevels: { zhipu: { "glm-5.3": "max" } } });
+		await writeSettings({ providers: {}, thinkingLevels: { zhipu: { "glm-5.3": "low" } } });
+
+		await saveGlobalThinkingLevel(globalDir, "zhipu", "glm-5.2", "high");
+
+		expect(JSON.parse(await readFile(join(globalDir, "settings.json"), "utf8"))).toMatchObject({
+			thinkingLevels: { zhipu: { "glm-5.3": "max", "glm-5.2": "high" } },
+		});
+		expect((await loadStartupConfiguration(root, {}, globalDir)).thinkingLevels).toEqual({
+			zhipu: { "glm-5.3": "max", "glm-5.2": "high" },
+		});
+	});
+
+	it("restores a thinking preference only when the selected model still supports it", () => {
+		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "zhipu", ZAI_API_KEY: "test-key" }, []);
+
+		expect(
+			resolveThinkingLevelPreference(
+				{ environment: {}, providers: [], thinkingLevels: { zhipu: { "glm-5.3": "low" } } },
+				runtime,
+			),
+		).toBe("low");
+		expect(
+			resolveThinkingLevelPreference(
+				{ environment: {}, providers: [], thinkingLevels: { zhipu: { "glm-5.3": "medium" } } },
+				runtime,
+			),
+		).toBeUndefined();
 	});
 
 	it("loads providers from the user settings file when the project has no settings", async () => {

@@ -56,6 +56,8 @@ export interface AgentSessionOptions {
 	readonly allowedRoot: string;
 	readonly provider: Provider;
 	readonly model: Model;
+	/** Valid initial override for the selected model's thinking level. */
+	readonly thinkingLevel?: ThinkingLevel;
 	readonly systemPrompt?: string;
 	readonly skills?: readonly SkillResource[];
 	readonly now?: () => number;
@@ -92,7 +94,10 @@ export type AgentSessionListener = (event: AgentSessionEvent) => void | Promise<
 function defaultThinkingLevel(model: Model): ThinkingLevel | undefined {
 	const efforts = model.reasoningEfforts;
 	if (!efforts || efforts.length === 0) return undefined;
-	return efforts.includes("medium") ? "medium" : efforts.includes("high") ? "high" : efforts[0];
+	return (
+		model.defaultReasoningEffort ??
+		(efforts.includes("medium") ? "medium" : efforts.includes("high") ? "high" : efforts[0])
+	);
 }
 
 function textFromUserMessage(message: Extract<Message, { role: "user" }>): string {
@@ -151,7 +156,10 @@ export class AgentSession {
 		);
 		this.extensionHost = options.extensionHost;
 		this.model = options.model;
-		this.thinkingLevelValue = defaultThinkingLevel(this.model);
+		this.thinkingLevelValue =
+			options.thinkingLevel !== undefined && this.model.reasoningEfforts?.includes(options.thinkingLevel)
+				? options.thinkingLevel
+				: defaultThinkingLevel(this.model);
 		this.sessionIdValue = options.sessionManager?.header.id ?? randomUUID();
 		this.now = options.now ?? Date.now;
 		this.contextBudget = resolveContextBudget(options.model);

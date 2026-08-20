@@ -10,7 +10,7 @@ const model: Model = {
 	baseUrl: "https://chat.example.test/v1",
 	input: ["text"],
 	reasoning: true,
-	reasoningEfforts: ["low", "medium", "high"],
+	reasoningEfforts: ["low", "high", "max"],
 	chatCompletionsCompat: {
 		thinkingFormat: "zai",
 		supportsReasoningEffort: true,
@@ -58,7 +58,7 @@ describe("OpenAI Chat Completions compatibility", () => {
 			fetch,
 		});
 
-		const result = await provider.stream(model, context, { reasoningEffort: "medium" }).result();
+		const result = await provider.stream(model, context, { reasoningEffort: "max" }).result();
 		expect(result).toMatchObject({
 			content: [
 				{ type: "thinking", thinking: "plan" },
@@ -70,7 +70,7 @@ describe("OpenAI Chat Completions compatibility", () => {
 		expect(url).toBe("https://chat.example.test/v1/chat/completions");
 		expect(JSON.parse(String(init.body))).toMatchObject({
 			thinking: { type: "enabled", clear_thinking: false },
-			reasoning_effort: "medium",
+			reasoning_effort: "max",
 			tool_stream: true,
 		});
 	});

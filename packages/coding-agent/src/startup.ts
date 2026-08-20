@@ -14,6 +14,7 @@ import {
 	type Model,
 	type ModelApi,
 	type Provider,
+	type ThinkingLevel,
 } from "@di-code/ai";
 import { isLocale, type Locale } from "./i18n.ts";
 
@@ -35,6 +36,8 @@ export interface StartupConfiguration {
 	readonly environment: Environment;
 	readonly providers: readonly StartupProviderConfiguration[];
 	readonly defaults?: StartupDefaults;
+	/** User-level per-provider/model thinking-level preferences. */
+	readonly thinkingLevels?: ThinkingLevelPreferences;
 	readonly locale?: Locale;
 }
 
@@ -42,6 +45,8 @@ export interface StartupDefaults {
 	readonly providerId?: string;
 	readonly modelId?: string;
 }
+
+export type ThinkingLevelPreferences = Readonly<Record<string, Readonly<Record<string, ThinkingLevel>>>>;
 
 export interface CustomProviderInput {
 	readonly api: Exclude<ModelApi, "faux">;
@@ -71,6 +76,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 interface SettingsFile {
 	readonly defaultProvider?: string;
 	readonly defaultModel?: string;
+	readonly thinkingLevels?: ThinkingLevelPreferences;
 	readonly locale?: Locale;
 	readonly providers: Record<
 		string,
@@ -221,6 +227,14 @@ function parseModels(
 				: configuredReasoningEfforts === undefined
 					? undefined
 					: ([...configuredReasoningEfforts] as Model["reasoningEfforts"]);
+		const defaultReasoningEffort = model.defaultReasoningEffort;
+		if (
+			defaultReasoningEffort !== undefined &&
+			(typeof defaultReasoningEffort !== "string" ||
+				!reasoningEfforts?.includes(defaultReasoningEffort as Exclude<Model["defaultReasoningEffort"], undefined>))
+		) {
+			throw new Error(`${settingsPath}: ${modelPath}.defaultReasoningEffort must be included in reasoningEfforts`);
+		}
 		const baseUrl = optionalString(model.baseUrl, `${modelPath}.baseUrl`, settingsPath) ?? providerBaseUrl;
 		const id = requiredString(model.id, `${modelPath}.id`, settingsPath);
 		const chatCompletionsCompat = parseChatCompletionsCompat(
@@ -240,6 +254,9 @@ function parseModels(
 			input: [...input],
 			reasoning: model.reasoning ?? false,
 			...(reasoningEfforts ? { reasoningEfforts } : {}),
+			...(defaultReasoningEffort
+				? { defaultReasoningEffort: defaultReasoningEffort as Exclude<Model["defaultReasoningEffort"], undefined> }
+				: {}),
 			...(chatCompletionsCompat ? { chatCompletionsCompat } : {}),
 			...(model.cacheRetention === "long" ? { cacheRetention: "long" as const } : {}),
 			...(model.sessionAffinity === "codex" ? { sessionAffinity: "codex" as const } : {}),
@@ -320,6 +337,7 @@ function serializeModel(model: Model): Record<string, unknown> {
 		input: model.input,
 		reasoning: model.reasoning,
 		...(model.reasoningEfforts ? { reasoningEfforts: model.reasoningEfforts } : {}),
+		...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
 		...(model.chatCompletionsCompat ? { chatCompletionsCompat: model.chatCompletionsCompat } : {}),
 		...(model.cacheRetention ? { cacheRetention: model.cacheRetention } : {}),
 		...(model.sessionAffinity ? { sessionAffinity: model.sessionAffinity } : {}),
@@ -358,6 +376,7 @@ function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 			: requiredString(record.defaultProvider, "defaultProvider", settingsPath);
 	const defaultModel =
 		record.defaultModel === undefined ? undefined : requiredString(record.defaultModel, "defaultModel", settingsPath);
+	const thinkingLevels = parseThinkingLevels(record.thinkingLevels, settingsPath);
 	if (record.locale !== undefined && !isLocale(record.locale)) {
 		throw new Error(`${settingsPath}: locale must be "en" or "zh-CN"`);
 	}
@@ -365,8 +384,33 @@ function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
+		...(thinkingLevels === undefined ? {} : { thinkingLevels }),
 		...(record.locale === undefined ? {} : { locale: record.locale }),
 	};
+}
+
+function parseThinkingLevels(value: unknown, settingsPath: string): ThinkingLevelPreferences | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error(`${settingsPath}: thinkingLevels must be an object`);
+	}
+	const preferences: Record<string, Record<string, ThinkingLevel>> = {};
+	for (const [providerId, models] of Object.entries(value as Record<string, unknown>)) {
+		requiredString(providerId, "thinkingLevels provider ID", settingsPath);
+		if (typeof models !== "object" || models === null || Array.isArray(models)) {
+			throw new Error(`${settingsPath}: thinkingLevels.${providerId} must be an object`);
+		}
+		const modelPreferences: Record<string, ThinkingLevel> = {};
+		for (const [modelId, level] of Object.entries(models as Record<string, unknown>)) {
+			requiredString(modelId, `thinkingLevels.${providerId} model ID`, settingsPath);
+			if (level !== "low" && level !== "medium" && level !== "high" && level !== "max") {
+				throw new Error(`${settingsPath}: thinkingLevels.${providerId}.${modelId} must be a valid thinking level`);
+			}
+			modelPreferences[modelId] = level;
+		}
+		preferences[providerId] = modelPreferences;
+	}
+	return preferences;
 }
 
 async function readSettingsFile(path: string, displayPath: string): Promise<SettingsFile | undefined> {
@@ -407,6 +451,7 @@ function mergeSettings(
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
+		...(globalSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: globalSettings.thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
 	};
 }
@@ -419,6 +464,7 @@ export async function saveGlobalLocale(agentDir: string, locale: Locale): Promis
 		providers: existingSettings?.providers ?? {},
 		...(existingSettings?.defaultProvider === undefined ? {} : { defaultProvider: existingSettings.defaultProvider }),
 		...(existingSettings?.defaultModel === undefined ? {} : { defaultModel: existingSettings.defaultModel }),
+		...(existingSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: existingSettings.thinkingLevels }),
 		locale,
 	};
 	await mkdir(agentDir, { recursive: true, mode: 0o700 });
@@ -441,6 +487,46 @@ export async function saveGlobalProviderApiKey(
 		defaultProvider: providerId,
 		...(modelId === undefined ? {} : { defaultModel: modelId }),
 	});
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+/** Persists the interactive model selection without changing credentials or Provider configuration. */
+export async function saveGlobalModelSelection(agentDir: string, providerId: string, modelId: string): Promise<void> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const normalizedProviderId = requiredString(providerId, "providerId", settingsFilePath);
+	const normalizedModelId = requiredString(modelId, "modelId", settingsFilePath);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	const settings = mergeSettings(existingSettings, {
+		providers: {},
+		defaultProvider: normalizedProviderId,
+		defaultModel: normalizedModelId,
+	});
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+/** Persists a per-provider/model thinking preference in user settings. */
+export async function saveGlobalThinkingLevel(
+	agentDir: string,
+	providerId: string,
+	modelId: string,
+	level: ThinkingLevel,
+): Promise<void> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const normalizedProviderId = requiredString(providerId, "providerId", settingsFilePath);
+	const normalizedModelId = requiredString(modelId, "modelId", settingsFilePath);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	const settings: SettingsFile = {
+		...mergeSettings(existingSettings, undefined),
+		thinkingLevels: {
+			...(existingSettings?.thinkingLevels ?? {}),
+			[normalizedProviderId]: {
+				...(existingSettings?.thinkingLevels?.[normalizedProviderId] ?? {}),
+				[normalizedModelId]: level,
+			},
+		},
+	};
 	await mkdir(agentDir, { recursive: true, mode: 0o700 });
 	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
 }
@@ -498,6 +584,7 @@ export async function removeGlobalProviderApiKey(agentDir: string, providerId: s
 		...(clearsDefault || existingSettings.defaultModel === undefined
 			? {}
 			: { defaultModel: existingSettings.defaultModel }),
+		...(existingSettings.thinkingLevels === undefined ? {} : { thinkingLevels: existingSettings.thinkingLevels }),
 		...(existingSettings.locale === undefined ? {} : { locale: existingSettings.locale }),
 	};
 	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
@@ -699,6 +786,15 @@ export function resolveStartupRuntime(
 	);
 }
 
+/** Returns a stored preference only when the selected model still supports it. */
+export function resolveThinkingLevelPreference(
+	configuration: StartupConfiguration | undefined,
+	runtime: StartupRuntime,
+): ThinkingLevel | undefined {
+	const preference = configuration?.thinkingLevels?.[runtime.provider.id]?.[runtime.model.id];
+	return preference !== undefined && runtime.model.reasoningEfforts?.includes(preference) ? preference : undefined;
+}
+
 export async function loadStartupConfiguration(
 	cwd: string,
 	environment: Environment = process.env,
@@ -730,6 +826,7 @@ export async function loadStartupConfiguration(
 	return {
 		environment,
 		providers,
+		...(settings.thinkingLevels === undefined ? {} : { thinkingLevels: settings.thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
 		...(defaults === undefined ? {} : { defaults }),
 	};

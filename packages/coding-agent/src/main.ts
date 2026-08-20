@@ -22,6 +22,7 @@ import { type PrintIo, runPrintMode } from "./modes/print.ts";
 import { loadPlugins, type PluginLoadStatus } from "./plugins/loader.ts";
 import { PluginManager } from "./plugins/manager.ts";
 import type { StartupConfiguration } from "./startup.ts";
+import { resolveThinkingLevelPreference } from "./startup.ts";
 
 export interface MainRuntime {
 	readonly provider: Provider;
@@ -491,10 +492,12 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			const systemPrompt = buildSystemPrompt({ cwd: allowedRoot, ...resources });
 			const manager = await selectStartupSession(command, allowedRoot, agentDir, now);
 			const sessionFile = manager.filePath;
+			const thinkingLevel = resolveThinkingLevelPreference(options.startupConfiguration, runtime);
 			const session = new AgentSession({
 				allowedRoot,
 				provider: runtime.provider,
 				model: runtime.model,
+				...(thinkingLevel === undefined ? {} : { thinkingLevel }),
 				systemPrompt,
 				skills: resources.skills,
 				now: options.now,
@@ -551,6 +554,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 									allowedRoot,
 									provider: runtime.provider,
 									model: runtime.model,
+									...(thinkingLevel === undefined ? {} : { thinkingLevel }),
 									systemPrompt,
 									skills: resources.skills,
 									now: options.now,
@@ -566,6 +570,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								allowedRoot,
 								provider: runtime.provider,
 								model: runtime.model,
+								...(thinkingLevel === undefined ? {} : { thinkingLevel }),
 								systemPrompt,
 								skills: resources.skills,
 								now: options.now,

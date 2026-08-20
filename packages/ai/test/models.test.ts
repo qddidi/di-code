@@ -167,6 +167,36 @@ describe("model catalog", () => {
 				reasoning: true,
 			});
 		}
+		expect(
+			zhipuModels.map((model) => ({
+				id: model.id,
+				reasoningEfforts: model.reasoningEfforts,
+				defaultReasoningEffort: model.defaultReasoningEffort,
+				supportsReasoningEffort: model.chatCompletionsCompat?.supportsReasoningEffort,
+			})),
+		).toEqual([
+			{
+				id: "glm-5.3",
+				reasoningEfforts: ["low", "high", "max"],
+				defaultReasoningEffort: "max",
+				supportsReasoningEffort: true,
+			},
+			{
+				id: "glm-5.2",
+				reasoningEfforts: ["low", "high", "max"],
+				defaultReasoningEffort: "max",
+				supportsReasoningEffort: true,
+			},
+			{ id: "glm-5.1", reasoningEfforts: undefined, defaultReasoningEffort: undefined, supportsReasoningEffort: false },
+			{ id: "glm-5", reasoningEfforts: undefined, defaultReasoningEffort: undefined, supportsReasoningEffort: false },
+			{
+				id: "glm-5-turbo",
+				reasoningEfforts: undefined,
+				defaultReasoningEffort: undefined,
+				supportsReasoningEffort: false,
+			},
+			{ id: "glm-4.7", reasoningEfforts: undefined, defaultReasoningEffort: undefined, supportsReasoningEffort: false },
+		]);
 	});
 
 	it("sorts entries by provider then model id", () => {

@@ -29,7 +29,12 @@ import {
 	type InteractiveProviderOnboardingOptions,
 	showInteractiveProviderOnboarding,
 } from "../provider-onboarding.ts";
-import { removeGlobalProviderApiKey, saveGlobalLocale } from "../startup.ts";
+import {
+	removeGlobalProviderApiKey,
+	saveGlobalLocale,
+	saveGlobalModelSelection,
+	saveGlobalThinkingLevel,
+} from "../startup.ts";
 import {
 	AutocompleteMenu,
 	InteractiveChat,
@@ -265,6 +270,14 @@ export class InteractiveMode {
 			try {
 				const level = this.session.cycleThinkingLevel();
 				this.projection.setStatus(level ? `thinking=${level}` : "Current model does not support thinking levels.");
+				if (level) {
+					void saveGlobalThinkingLevel(this.agentDir, this.session.providerId, this.session.modelId, level).catch(
+						(cause) => {
+							this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+							this.refresh();
+						},
+					);
+				}
 			} catch (cause) {
 				this.projection.setError(cause instanceof Error ? cause.message : String(cause));
 			}
@@ -343,6 +356,10 @@ export class InteractiveMode {
 			try {
 				this.session.setModel(item.value);
 				this.projection.setStatus(`model=${item.value}`);
+				void saveGlobalModelSelection(this.agentDir, this.session.providerId, this.session.modelId).catch((cause) => {
+					this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+					this.refresh();
+				});
 				this.closeOverlay();
 				this.refresh();
 			} catch (cause) {

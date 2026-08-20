@@ -208,6 +208,8 @@ ZAI_API_KEY=<your-zhipu-api-key>
 
 智谱 GLM Coding Plan 的模型和 endpoint 以[官方套餐概览](https://docs.bigmodel.cn/cn/coding-plan/overview)及[模型切换说明](https://docs.bigmodel.cn/cn/coding-plan/latest-model)为准。
 
+仅 `glm-5.2` 和 `glm-5.3` 支持 [`reasoning_effort`](https://docs.bigmodel.cn/cn/guide/start/concept-param#reasoning_effort)：可选 `low`、`high`、`max`，交互模式默认 `max`；较早的 GLM 模型不会发送该字段。使用 `Shift+Tab` 切换后，di-code 会按 Provider 和模型保存到用户级 `~/.di-code/settings.json`，下次启动自动恢复；项目 `.di-code/settings.json` 不会覆盖该个人偏好。
+
 Anthropic 的请求格式与模型 API 以[官方 Messages API 文档](https://docs.anthropic.com/en/api/messages)为准。
 
 | Provider | 模型 ID | 默认模型 | 输入能力 |
@@ -347,7 +349,7 @@ ZAI_API_KEY=<your-zhipu-api-key>
 4. settings 中没有 Provider、没有明确选择且处于交互 TTY 时，启动选择向导。
 5. 非交互模式有多个 Provider 但没有明确选择时立即报错，不会等待输入。
 
-模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。
+模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则，当所选 Provider 与用户全局 `defaultProvider` 一致时使用 `defaultModel`（在 `/model` 或 `/login` 中选择后自动保存）；再否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。
 
 ### 终端语言
 
@@ -510,7 +512,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | --- | --- |
 | `/help` | 显示可用交互命令。 |
 | `/clear` | 清除当前界面中可见的消息，不删除会话数据。 |
-| `/model` | 打开模型选择器。 |
+| `/model` | 打开模型选择器，并将选择保存为用户默认模型。 |
 | `/session` | 打开会话选择器。 |
 | `/tree` | 打开紧凑的分支树；`Enter` 从节点继续，`e` 编辑历史用户消息，`s` 为所选路径生成摘要并开始新分支。 |
 | `/theme` | 切换深色或浅色终端主题。 |

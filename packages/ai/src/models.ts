@@ -165,7 +165,8 @@ export const MODEL_SOURCE: readonly Model[] = [
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
-		reasoningEfforts: ["low", "medium", "high"],
+		reasoningEfforts: ["low", "high", "max"],
+		defaultReasoningEffort: "max",
 		chatCompletionsCompat: {
 			thinkingFormat: "zai",
 			maxTokensField: "max_tokens",
@@ -185,7 +186,8 @@ export const MODEL_SOURCE: readonly Model[] = [
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
-		reasoningEfforts: ["low", "medium", "high"],
+		reasoningEfforts: ["low", "high", "max"],
+		defaultReasoningEffort: "max",
 		chatCompletionsCompat: {
 			thinkingFormat: "zai",
 			maxTokensField: "max_tokens",
@@ -205,12 +207,11 @@ export const MODEL_SOURCE: readonly Model[] = [
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
-		reasoningEfforts: ["low", "medium", "high"],
 		chatCompletionsCompat: {
 			thinkingFormat: "zai",
 			maxTokensField: "max_tokens",
 			supportsUsageInStreaming: true,
-			supportsReasoningEffort: true,
+			supportsReasoningEffort: false,
 			zaiToolStream: true,
 		},
 		contextWindow: 200_000,
@@ -225,12 +226,11 @@ export const MODEL_SOURCE: readonly Model[] = [
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
-		reasoningEfforts: ["low", "medium", "high"],
 		chatCompletionsCompat: {
 			thinkingFormat: "zai",
 			maxTokensField: "max_tokens",
 			supportsUsageInStreaming: true,
-			supportsReasoningEffort: true,
+			supportsReasoningEffort: false,
 			zaiToolStream: true,
 		},
 		contextWindow: 200_000,
@@ -245,12 +245,11 @@ export const MODEL_SOURCE: readonly Model[] = [
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		input: ["text"],
 		reasoning: true,
-		reasoningEfforts: ["low", "medium", "high"],
 		chatCompletionsCompat: {
 			thinkingFormat: "zai",
 			maxTokensField: "max_tokens",
 			supportsUsageInStreaming: true,
-			supportsReasoningEffort: true,
+			supportsReasoningEffort: false,
 			zaiToolStream: true,
 		},
 		contextWindow: 200_000,
@@ -526,6 +525,9 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 				throw new Error(`${label}.reasoningEfforts must contain unique low, medium, high, or max values`);
 			}
 		}
+		if (model.defaultReasoningEffort !== undefined && !model.reasoningEfforts?.includes(model.defaultReasoningEffort)) {
+			throw new Error(`${label}.defaultReasoningEffort must be included in reasoningEfforts`);
+		}
 		if (model.chatCompletionsCompat !== undefined) {
 			if (model.api !== "openai-chat-completions") {
 				throw new Error(`${label}.chatCompletionsCompat requires api "openai-chat-completions"`);
@@ -609,6 +611,9 @@ function renderModel(model: Model): string {
 		`\t\treasoning: ${model.reasoning},`,
 		...(model.reasoningEfforts
 			? [`\t\treasoningEfforts: [${model.reasoningEfforts.map((effort) => JSON.stringify(effort)).join(", ")}],`]
+			: []),
+		...(model.defaultReasoningEffort
+			? [`\t\tdefaultReasoningEffort: ${JSON.stringify(model.defaultReasoningEffort)},`]
 			: []),
 		...compatLines,
 		`\t\tcontextWindow: ${model.contextWindow},`,
