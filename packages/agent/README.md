@@ -36,6 +36,8 @@ console.log(`\nStopped: ${response.stopReason}`);
 
 工具使用 `AgentTool` 对象注册。每个工具声明 TypeBox 参数 Schema，以及 `execute(toolCallId, parameters, signal)` 函数。Agent 会在执行前校验参数，并把工具结果追加到下一次模型请求。
 
+需要运行时贡献工具或 system prompt 时，可传入 `AgentContextProvider`。Agent 会在每次 Provider 请求开始前调用 `resolve(signal)`，并把返回的 `AgentRequestContext`（包括 `tools` 和可选的 `toolMiddleware`）复制为该请求的不可变快照；工具结果进入下一轮后才会重新解析。middleware 按注册顺序包裹已通过 schema 校验的工具执行，异常会转换为标准的工具错误结果，并始终发出对应的 `tool_execution_end`。未知工具或 schema 校验失败不会进入 middleware 链。middleware 不能启动新的 Provider 请求或递归调用 `Agent.prompt()`。
+
 ## 公共 API
 
 主要导出 `Agent`、`agentLoop`、Agent 事件和工具类型，以及上下文压缩辅助函数。终端 UI、本地文件、Shell 命令、配置文件和会话持久化属于 `@di-code/coding-agent`。

@@ -9,7 +9,17 @@ import {
 	type UserMessage,
 	validateToolArguments,
 } from "@di-code/ai";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AssistantMessagePreview } from "./types.ts";
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentLoopConfig,
+	AgentRequestContext,
+	AgentToolResult,
+	AssistantMessagePreview,
+	ToolExecution,
+	ToolExecutionMiddleware,
+	ToolExecutor,
+} from "./types.ts";
 
 export function agentLoop(
 	prompt: UserMessage,
@@ -77,8 +87,8 @@ function createFailureMessage(
 	};
 }
 
-function toolDefinitions(context: AgentContext) {
-	return context.tools?.map(({ name, description, parameters }) => ({
+function toolDefinitions(context: AgentRequestContext) {
+	return context.tools.map(({ name, description, parameters }) => ({
 		name,
 		description,
 		parameters,
@@ -87,7 +97,7 @@ function toolDefinitions(context: AgentContext) {
 
 async function streamAssistantResponse(
 	messages: Message[],
-	context: AgentContext,
+	context: AgentRequestContext,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: (event: AgentEvent) => void,
@@ -155,22 +165,15 @@ function createToolResult(
 
 async function executeToolCall(
 	toolCall: ToolCallContent,
-	context: AgentContext,
+	context: AgentRequestContext,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: (event: AgentEvent) => void,
 ): Promise<ToolResultMessage> {
-	emit({
-		type: "tool_execution_start",
-		toolCallId: toolCall.id,
-		toolName: toolCall.name,
-		arguments: toolCall.arguments,
-	});
-
 	let content: ToolResultContent[];
 	let details: JsonValue | undefined;
 	let isError = false;
-	const tool = context.tools?.find((candidate) => candidate.name === toolCall.name);
+	const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
 
 	if (signal?.aborted) {
 		content = [{ type: "text", text: "Tool execution aborted." }];
@@ -181,7 +184,18 @@ async function executeToolCall(
 	} else {
 		try {
 			const parameters = validateToolArguments(tool, toolCall.arguments);
-			const execution = await tool.execute(toolCall.id, parameters, signal);
+			emit({
+				type: "tool_execution_start",
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				arguments: toolCall.arguments,
+			});
+			const executor: ToolExecutor = async (execution: ToolExecution): Promise<AgentToolResult> =>
+				execution.tool.execute(execution.toolCallId, execution.parameters as never, execution.signal);
+			const composedExecutor = [...requestMiddleware(context, config)]
+				.reverse()
+				.reduce<ToolExecutor>((next, middleware) => async (execution) => middleware(execution, next), executor);
+			const execution = await composedExecutor({ toolCallId: toolCall.id, tool, parameters, signal });
 			if (Array.isArray(execution)) content = execution;
 			else {
 				content = execution.content;
@@ -214,6 +228,30 @@ async function executeToolCall(
 	return result;
 }
 
+function requestMiddleware(context: AgentRequestContext, config: AgentLoopConfig): readonly ToolExecutionMiddleware[] {
+	return context.toolMiddleware ?? config.toolMiddleware ?? [];
+}
+
+async function resolveRequestContext(
+	context: AgentContext,
+	config: AgentLoopConfig,
+	signal?: AbortSignal,
+): Promise<AgentRequestContext> {
+	const resolved = await config.contextProvider?.resolve(signal);
+	if (resolved) {
+		return {
+			systemPrompt: resolved.systemPrompt,
+			tools: [...resolved.tools],
+			toolMiddleware: resolved.toolMiddleware ? [...resolved.toolMiddleware] : undefined,
+		};
+	}
+	return {
+		systemPrompt: context.systemPrompt,
+		tools: [...(context.tools ?? [])],
+		toolMiddleware: config.toolMiddleware,
+	};
+}
+
 function getToolCalls(message: AssistantMessage): ToolCallContent[] {
 	return message.content.filter((content): content is ToolCallContent => content.type === "tool_call");
 }
@@ -234,7 +272,19 @@ async function runAgentLoop(
 	emit({ type: "message_end", message: prompt });
 
 	while (true) {
-		const assistant = await streamAssistantResponse(messages, context, config, signal, emit);
+		let requestContext: AgentRequestContext;
+		try {
+			requestContext = await resolveRequestContext(context, config, signal);
+		} catch (cause) {
+			const assistant = createFailureMessage(config, signal, cause);
+			messages.push(assistant);
+			emit({ type: "message_start", message: createPreview(config, "") });
+			emit({ type: "message_end", message: assistant });
+			emit({ type: "turn_end", message: assistant, toolResults: [] });
+			emit({ type: "agent_end", messages });
+			return;
+		}
+		const assistant = await streamAssistantResponse(messages, requestContext, config, signal, emit);
 		messages.push(assistant);
 		emit({ type: "message_end", message: assistant });
 
@@ -249,7 +299,7 @@ async function runAgentLoop(
 		const toolResults: ToolResultMessage[] = [];
 		if (hasToolCalls) {
 			for (const toolCall of toolCalls) {
-				const result = await executeToolCall(toolCall, context, config, signal, emit);
+				const result = await executeToolCall(toolCall, requestContext, config, signal, emit);
 				messages.push(result);
 				toolResults.push(result);
 				if (signal?.aborted) {

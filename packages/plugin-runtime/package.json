@@ -38,6 +38,10 @@
 		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest run --passWithNoTests"
 	},
+	"dependencies": {
+		"@di-code/agent": "0.1.7",
+		"@di-code/ai": "0.1.7"
+	},
 	"engines": {
 		"node": ">=22.19.0"
 	}

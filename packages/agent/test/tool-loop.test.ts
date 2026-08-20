@@ -1,6 +1,6 @@
 import { type Context, createFauxProvider, type Message, type Provider, Type } from "@di-code/ai";
 import { describe, expect, it } from "vitest";
-import { Agent, type AgentEvent, type AgentTool } from "../src/index.ts";
+import { Agent, type AgentEvent, type AgentTool, type ToolExecutionMiddleware } from "../src/index.ts";
 
 const echoParameters = Type.Object({ value: Type.String() });
 
@@ -13,6 +13,79 @@ function toolResult(messages: readonly Message[], toolCallId: string) {
 }
 
 describe("tool loop", () => {
+	it("resolves a fresh request context and applies middleware around execution", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "tool_call", id: "dynamic-1", name: "dynamic", arguments: {} }] },
+				{ type: "success", content: [{ type: "text", text: "done" }] },
+			],
+		});
+		const dynamicParameters = Type.Object({});
+		const tool = {
+			name: "dynamic",
+			description: "dynamic",
+			parameters: dynamicParameters,
+			async execute() {
+				return [{ type: "text" as const, text: "tool" }];
+			},
+		} satisfies AgentTool<typeof dynamicParameters>;
+		const calls: string[] = [];
+		const agent = new Agent({
+			provider: faux.provider,
+			model: faux.model,
+			contextProvider: {
+				resolve: () => ({ systemPrompt: "dynamic", tools: [tool] }),
+			},
+			toolMiddleware: [
+				async (_execution, next) => {
+					calls.push("before");
+					const result = await next(_execution);
+					calls.push("after");
+					return result;
+				},
+			],
+		});
+		await agent.prompt("run dynamic");
+		expect(calls).toEqual(["before", "after"]);
+	});
+
+	it("keeps request middleware stable while resolving a new context for the next request", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "tool_call", id: "dynamic-1", name: "dynamic", arguments: {} }] },
+				{ type: "success", content: [{ type: "text", text: "done" }] },
+			],
+		});
+		const parameters = Type.Object({});
+		const tool = {
+			name: "dynamic",
+			description: "dynamic",
+			parameters,
+			execute: async () => [{ type: "text" as const, text: "tool" }],
+		} satisfies AgentTool<typeof parameters>;
+		const calls: string[] = [];
+		let resolves = 0;
+		const middleware: ToolExecutionMiddleware = async (_execution, next) => {
+			calls.push("before");
+			const result = await next(_execution);
+			calls.push("after");
+			return result;
+		};
+		const agent = new Agent({
+			provider: faux.provider,
+			model: faux.model,
+			contextProvider: {
+				resolve: () => {
+					resolves++;
+					return { tools: [tool], toolMiddleware: resolves === 1 ? [middleware] : [] };
+				},
+			},
+		});
+		await agent.prompt("dynamic");
+		expect(resolves).toBe(2);
+		expect(calls).toEqual(["before", "after"]);
+	});
+
 	it("executes a valid tool and sends its result in the next model request", async () => {
 		const faux = createFauxProvider({
 			responses: [

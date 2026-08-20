@@ -9,7 +9,14 @@ import type {
 	UserMessage,
 } from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
-import type { AgentContext, AgentEvent, AgentTool, AgentToolResult } from "./types.ts";
+import type {
+	AgentContext,
+	AgentContextProvider,
+	AgentEvent,
+	AgentTool,
+	AgentToolResult,
+	ToolExecutionMiddleware,
+} from "./types.ts";
 
 export interface AgentOptions {
 	readonly provider: Provider;
@@ -17,6 +24,8 @@ export interface AgentOptions {
 	readonly sessionId?: string;
 	readonly tools?: readonly AgentTool<TSchema, AgentToolResult>[];
 	readonly systemPrompt?: string;
+	readonly contextProvider?: AgentContextProvider;
+	readonly toolMiddleware?: readonly ToolExecutionMiddleware[];
 	readonly now?: () => number;
 	readonly initialMessages?: readonly Message[];
 	readonly initialContextMessages?: readonly Message[];
@@ -65,6 +74,8 @@ export class Agent {
 	private thinkingLevel?: ThinkingLevel;
 	private readonly sessionId?: string;
 	private readonly systemPrompt?: string;
+	private readonly contextProvider?: AgentContextProvider;
+	private readonly toolMiddleware: readonly ToolExecutionMiddleware[];
 	private readonly now: () => number;
 	private readonly tools: readonly AgentTool<TSchema, AgentToolResult>[];
 	constructor(options: AgentOptions) {
@@ -77,6 +88,8 @@ export class Agent {
 		this.transcriptMessages = initialMessages;
 		this.contextMessageState = createModelContext(options.initialContextMessages ?? initialMessages);
 		this.systemPrompt = options.systemPrompt;
+		this.contextProvider = options.contextProvider;
+		this.toolMiddleware = [...(options.toolMiddleware ?? [])];
 		this.now = options.now ?? Date.now;
 	}
 
@@ -173,6 +186,8 @@ export class Agent {
 				now: this.now,
 				thinkingLevel: this.thinkingLevel,
 				getSteeringMessages: () => this.steeringMessages.splice(0),
+				contextProvider: this.contextProvider,
+				toolMiddleware: this.toolMiddleware,
 			},
 			signal,
 		);

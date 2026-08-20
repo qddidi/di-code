@@ -35,6 +35,29 @@ export interface AgentContext {
 	tools?: readonly AgentTool<TSchema, AgentToolResult>[];
 }
 
+/** Immutable context resolved immediately before each Provider request. */
+export interface AgentRequestContext {
+	readonly systemPrompt?: string;
+	readonly tools: readonly AgentTool<TSchema, AgentToolResult>[];
+	readonly toolMiddleware?: readonly ToolExecutionMiddleware[];
+}
+
+/** Supplies the model-visible context for the next request. */
+export interface AgentContextProvider {
+	resolve(signal?: AbortSignal): Promise<AgentRequestContext> | AgentRequestContext;
+}
+
+export interface ToolExecution<TParameters = unknown> {
+	readonly toolCallId: string;
+	readonly tool: AgentTool<TSchema, AgentToolResult>;
+	readonly parameters: TParameters;
+	readonly signal?: AbortSignal;
+}
+
+export type ToolExecutor = (execution: ToolExecution) => Promise<AgentToolResult>;
+
+export type ToolExecutionMiddleware = (execution: ToolExecution, next: ToolExecutor) => Promise<AgentToolResult>;
+
 export interface AssistantMessagePreview {
 	readonly role: "assistant";
 	readonly provider: string;
@@ -50,6 +73,8 @@ export interface AgentLoopConfig {
 	readonly thinkingLevel?: ThinkingLevel;
 	/** Returns user instructions to inject after the current turn completes. */
 	readonly getSteeringMessages?: () => UserMessage[];
+	readonly contextProvider?: AgentContextProvider;
+	readonly toolMiddleware?: readonly ToolExecutionMiddleware[];
 }
 
 export type MessageUpdateEvent = Exclude<StreamEvent, { type: "start" | "done" | "error" }>;
