@@ -1,4 +1,5 @@
 import type { ImageContent } from "@di-code/ai";
+import type { PluginUiContributions } from "@di-code/plugin-runtime";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
 import { InteractiveProjection, type InteractiveState } from "../modes/interactive-state.ts";
 import type { CodingAgentPluginHost } from "../plugins/runtime-host.ts";
@@ -46,6 +47,7 @@ export class InteractiveController {
 	private switching = false;
 	private compactionActive = false;
 	private queue: InteractiveInput[] = [];
+	private lastRetryInput?: InteractiveInput;
 	private disposed = false;
 
 	constructor(options: InteractiveControllerOptions) {
@@ -65,6 +67,11 @@ export class InteractiveController {
 			sessionId: this.session.sessionId,
 			streaming: this.promptActive,
 		};
+	}
+
+	/** Restricted panel data and result formatters supplied by active plugin scopes. */
+	get ui(): PluginUiContributions {
+		return this.runtimePluginHost?.getUiContributions() ?? { panels: [], toolDetailRenderers: [] };
 	}
 
 	subscribe(listener: InteractiveControllerListener): { dispose(): void } {
@@ -93,9 +100,12 @@ export class InteractiveController {
 				typeof input === "string"
 					? await this.session.prompt(input, this.activeAbort.signal)
 					: await this.session.promptWithImages(input.text, input.images ?? [], this.activeAbort.signal);
-			if (result.stopReason === "error" || result.stopReason === "aborted")
+			if (result.stopReason === "error" || result.stopReason === "aborted") {
+				this.lastRetryInput = typeof input === "string" ? input : { ...input, images: [...(input.images ?? [])] };
 				this.projection.setError(result.errorMessage);
+			} else this.lastRetryInput = undefined;
 		} catch (cause) {
+			this.lastRetryInput = typeof input === "string" ? input : { ...input, images: [...(input.images ?? [])] };
 			this.reportError(cause);
 		} finally {
 			this.promptActive = false;
@@ -113,6 +123,12 @@ export class InteractiveController {
 
 	cancel(): void {
 		this.activeAbort?.abort();
+	}
+
+	async retry(): Promise<void> {
+		if (!this.lastRetryInput) throw new Error("There is no failed or cancelled prompt to retry.");
+		if (this.promptActive) throw new Error("Cannot retry while a prompt is running.");
+		await this.submit(this.lastRetryInput);
 	}
 
 	async runCommand(name: string, args: string): Promise<void> {

@@ -16,6 +16,8 @@ describe("runtime profiles", () => {
 		expect(() => resolveRuntimeProfile("missing")).toThrow("Unknown runtime profile");
 		expect(() => resolveRuntimeProfile("terminal", { cli: { pluginIds: ["dup", "dup"] } })).toThrow("duplicate");
 		expect(() => resolveRuntimeProfile("headless", {}, "interactive")).toThrow("headless");
+		expect(() => resolveRuntimeProfile("headless", { cli: { frontend: "acme-terminal" } })).toThrow("frontend");
+		expect(() => resolveRuntimeProfile("terminal", {}, "print")).toThrow("terminal");
 	});
 
 	it("lists defensive copies of built-in profiles", () => {

@@ -23,6 +23,8 @@ export type CliCommand =
 			sessionPath?: string;
 			continueSession?: true;
 			imagePaths?: readonly string[];
+			profile?: string;
+			ui?: string;
 			noSkills?: true;
 			noContextFiles?: true;
 			skillPaths?: readonly string[];
@@ -68,6 +70,9 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	}
 
 	let mode: OutputMode = "print";
+	let explicitMode = false;
+	let profile: string | undefined;
+	let ui: string | undefined;
 	let printAlias = false;
 	let sessionPath: string | undefined;
 	let continueSession = false;
@@ -86,6 +91,25 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		}
 		if (argument === "--interactive") {
 			mode = "interactive";
+			explicitMode = true;
+			continue;
+		}
+		if (argument === "--profile") {
+			const value = args[index + 1];
+			if (value === undefined || value.trim() === "")
+				throw new CliUsageError("Option --profile requires a non-empty value.");
+			if (profile !== undefined) throw new CliUsageError("Option --profile may only be used once.");
+			profile = value;
+			index++;
+			continue;
+		}
+		if (argument === "--ui") {
+			const value = args[index + 1];
+			if (value === undefined || value.trim() === "")
+				throw new CliUsageError("Option --ui requires a non-empty value.");
+			if (ui !== undefined) throw new CliUsageError("Option --ui may only be used once.");
+			ui = value;
+			index++;
 			continue;
 		}
 		if (argument === "-c" || argument === "--continue") {
@@ -135,6 +159,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 				throw new CliUsageError(`Unsupported mode "${value}". Expected print, json, or interactive.`);
 			}
 			mode = value;
+			explicitMode = true;
 			index++;
 			continue;
 		}
@@ -158,6 +183,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		}
 	}
 
+	if (profile !== undefined && profile !== "terminal" && profile !== "headless")
+		throw new CliUsageError(`Unknown runtime profile "${profile}".`);
+	if (profile === "terminal" && !explicitMode && !printAlias) mode = "interactive";
+	if (profile === "headless" && !explicitMode && !printAlias) mode = "print";
 	if (printAlias && mode !== "print") {
 		throw new CliUsageError(`Cannot combine --print with --mode ${mode}.`);
 	}
@@ -167,6 +196,8 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	if (mode === "interactive" && imagePaths.length > 0) {
 		throw new CliUsageError("--image is not available in interactive mode.");
 	}
+	if (ui !== undefined && mode !== "interactive")
+		throw new CliUsageError("Option --ui is only available in interactive mode.");
 	if (promptParts.length === 0 && mode !== "interactive") {
 		throw new CliUsageError("A prompt is required.");
 	}
@@ -181,6 +212,8 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		...(noContextFiles ? { noContextFiles: true as const } : {}),
 		...(skillPaths.length > 0 ? { skillPaths } : {}),
 		...(imagePaths.length > 0 ? { imagePaths } : {}),
+		...(profile ? { profile } : {}),
+		...(ui ? { ui } : {}),
 		...(projectTrust === undefined ? {} : { projectTrust }),
 	};
 }
@@ -258,6 +291,8 @@ ${t("options")}
   -p, --print        ${t("print")}
   --mode <mode>      ${t("mode")}
   --interactive      ${t("interactive")}
+  --profile <name>  Select the terminal or headless runtime profile
+  --ui <id>         Select a registered interactive frontend
   --continue, -c     ${t("continueSession")}
   --session <path>   ${t("session")}
   --image <path>     ${t("image")}

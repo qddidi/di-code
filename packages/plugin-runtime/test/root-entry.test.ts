@@ -177,13 +177,34 @@ describe("plugin runtime package boundary", () => {
 		expect(host.diagnostics.at(-1)).toMatchObject({ pluginId: "events", stage: "handler" });
 		await expect(
 			host.load("duplicate", (api) => {
-				api.registerInteractiveFrontend({ id: "same", displayName: "one", capabilities: [], create: () => ({}) });
+				api.registerInteractiveFrontend({
+					id: "same",
+					displayName: "one",
+					capabilities: [],
+					create: () => ({ start: async () => {}, dispose: async () => {} }),
+				});
 			}),
 		).resolves.toBeDefined();
 		await expect(
 			host.load("duplicate-two", (api) => {
-				api.registerInteractiveFrontend({ id: "same", displayName: "two", capabilities: [], create: () => ({}) });
+				api.registerInteractiveFrontend({
+					id: "same",
+					displayName: "two",
+					capabilities: [],
+					create: () => ({ start: async () => {}, dispose: async () => {} }),
+				});
 			}),
 		).rejects.toThrow("frontend conflict");
+	});
+
+	it("exposes restricted panel data and pure tool result renderers in contribution snapshots", async () => {
+		const host = new PluginHost();
+		await host.load("ui", (api) => {
+			api.registerInteractivePanel({ id: "ui-status", title: "Status", data: { ready: true } });
+			api.registerToolDetailRenderer({ toolName: "ui__inspect", render: (result) => JSON.stringify(result) });
+		});
+		const { panels, toolDetailRenderers } = host.snapshot().contributions;
+		expect(panels).toEqual([{ id: "ui-status", title: "Status", data: { ready: true } }]);
+		expect(toolDetailRenderers[0]?.render({ ok: true })).toBe('{"ok":true}');
 	});
 });

@@ -437,6 +437,8 @@ Options:
   -p, --print        Print only the final assistant text (default)
   --mode <mode>      Output mode: print, json, or interactive
   --interactive      Start interactive terminal mode
+  --profile <name>   Select the terminal or headless runtime profile
+  --ui <id>          Select a registered interactive frontend
   --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
   --image <path>     Attach a local PNG, JPEG, WebP, or GIF image (repeatable)
@@ -471,6 +473,8 @@ npm run dev -- --image .\diagram.png "说明这张架构图"
 ```powershell
 npm run dev -- --interactive
 ```
+
+`--profile terminal` 会启动 interactive 模式并默认选择内置 `builtin` frontend；`--profile headless` 只允许 print 或 JSON 模式。interactive 模式可用 `--ui <id>` 选择一个已加载、已信任插件注册的 frontend，例如 `npm run dev -- --profile terminal --ui acme-terminal`。未指定 `--ui` 时始终使用 `builtin`；所选 ID 未注册、factory 失败或 frontend 生命周期无效时启动失败，不会悄悄回退。frontend 独占终端输入和 ANSI 输出，`start()` 返回后宿主会取消仍在运行的请求并恢复终端、MCP 与插件资源。
 
 默认启动会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 中创建独立的 JSONL 会话。使用 `--continue`（或 `-c`）恢复当前工作区最近修改的会话；没有历史会话时会新建。使用 `--session` 可以创建或恢复指定路径的会话：
 
@@ -574,6 +578,8 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 ```text
 .di-code/plugins/<plugin-id>/
 ```
+
+可信插件也可以通过 `registerInteractiveFrontend()` 提供完整 frontend，并以 `--ui <id>` 显式选择。普通插件不能取得终端所有权，只能注册静态面板数据与纯工具结果 renderer；当前 frontend 决定是否以及如何呈现这些贡献。
 
 交互式 TTY 首次发现项目插件目录时会询问是否信任当前项目；也可以显式授予项目可信状态：
 

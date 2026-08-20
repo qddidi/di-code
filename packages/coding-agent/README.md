@@ -247,6 +247,9 @@ di-code --mode json "检查 TypeScript 配置"
 # 显式进入持续对话
 di-code --interactive
 
+# 选择 terminal profile 中已注册的自定义 frontend
+di-code --profile terminal --ui acme-terminal
+
 # 使用一个指定、可持续追加的会话
 di-code --session .di-code\sessions\review.jsonl "审查当前改动"
 di-code --session .di-code\sessions\review.jsonl "继续处理最高优先级问题"
@@ -256,6 +259,8 @@ di-code --continue "继续上一次工作"
 ```
 
 `--help` 和 `--version` 必须单独使用。非交互模式必须有 prompt；`--continue` 不能和 `--session` 一起使用；`--print` 不能和 `--mode json` 或 interactive 模式组合。
+
+`--profile terminal` 固定使用 interactive 模式，默认 frontend 为 `builtin`；`--profile headless` 不允许 interactive 或 `--ui`。`--ui <id>` 只用于 interactive 模式，选择一个已经由可信、已加载插件注册的 frontend。ID 不存在、factory 失败或返回对象不含 `start()` / `dispose()` 时，启动会失败而不会降级到内置 TUI。frontend 的 `start()` 必须在它释放终端时才 resolve；无论用户退出或启动失败，宿主都会取消活跃 prompt，停止终端并关闭 MCP 与 plugin scope。
 
 ## 交互模式
 
@@ -457,6 +462,8 @@ di-code --no-skills "不要加载任何 Skill"
 阶段 3 的宿主适配器 `CodingAgentPluginHost` 还支持 runtime prompt sections、工具 middleware、frontend/subagent 注册和显式 Session projection。`AgentSession` 在每次 Provider 请求前解析不可变快照；插件更新不会改变当前请求，下一次请求才会看到新贡献。scope 关闭按逆序释放资源，重复关闭安全；Session JSONL 不会自动保存插件状态，只有通过 `projectPluginState()` 显式投影的数据才会进入产品层。
 
 阶段 4 固化了可替换 interactive frontend 契约：`InteractiveController` 统一提交、steering、取消、命令、Session 和压缩动作；默认 ANSI UI 通过 `BuiltinInteractiveFrontend` 适配。frontend 只能使用宿主传入的终端门面和 Controller 事件，不直接访问 stdin、stdout、Provider 或 Session JSONL。
+
+阶段 5 将该契约接入 CLI：可信插件可注册完整 frontend，`--profile` / `--ui` 决定实际选择。普通插件只能提供 `PluginInteractivePanel` 的数据和 `PluginToolDetailRenderer` 的纯结果格式化函数；它们没有输入焦点、终端对象或布局控制权。
 
 插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。interactive 启动时，每个实际加载的插件会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出该插件新增的 tools 和 slash commands 数量。print 和 JSON 模式保持 `plugin_diagnostic` 输出。
 

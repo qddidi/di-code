@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@di-code/agent";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
+import type { PluginTerminalFrontendHost } from "@di-code/plugin-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { workspaceStorageKey } from "../src/core/user-data.ts";
@@ -10,6 +11,32 @@ import { formatSessionLabel, runMain, StartupStatusRenderer } from "../src/main.
 
 function createIo() {
 	return { stdout: vi.fn(), stderr: vi.fn() };
+}
+
+class FixtureTerminal implements PluginTerminalFrontendHost {
+	readonly columns = 80;
+	readonly rows = 24;
+	readonly output: string[] = [];
+	starts = 0;
+	stops = 0;
+
+	start(onInput: (data: string) => void, _onResize: () => void): void {
+		this.starts++;
+		queueMicrotask(() => onInput("submit"));
+	}
+	stop(): void {
+		this.stops++;
+	}
+	write(data: string): void {
+		this.output.push(data);
+	}
+	moveBy(_lines: number): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(_title: string): void {}
 }
 
 describe("StartupStatusRenderer", () => {
@@ -132,6 +159,80 @@ describe("runMain", () => {
 			content: [{ type: "text", text: "json file content" }],
 		});
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
+	});
+
+	it("runs a selected plugin frontend with controller events, restricted UI data, and terminal cleanup", async () => {
+		const pluginRoot = join(root, ".di-code", "plugins", "fixture");
+		await mkdir(pluginRoot, { recursive: true });
+		await writeFile(
+			join(pluginRoot, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "fixture",
+				name: "Fixture",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginRoot, "index.mjs"),
+			`export default (api) => {
+				api.registerInteractivePanel({ id: "fixture-status", title: "Fixture status", data: { ready: true } });
+				api.registerToolDetailRenderer({ toolName: "fixture__tool", render: (result) => String(result) });
+				api.registerInteractiveFrontend({
+					id: "fixture",
+					displayName: "Fixture terminal",
+					capabilities: ["streaming", "tool-status", "cancel", "retry", "commands", "model-selection", "session-selection", "compaction"],
+					create: () => ({
+						start: async (controller, terminal) => new Promise((resolve) => {
+							const subscription = controller.subscribe((event) => terminal.write(event.type));
+							terminal.write("panel:" + controller.ui.panels[0].title);
+							terminal.start((input) => {
+								if (input !== "submit") return;
+								void controller.submit("hello").then(() => {
+									subscription.dispose();
+									terminal.stop();
+									resolve();
+								});
+							}, () => {});
+						}),
+						dispose: async () => {}
+					})
+				});
+			};`,
+		);
+		const terminal = new FixtureTerminal();
+
+		expect(
+			await runMain(["--trust-project", "--profile", "terminal", "--ui", "fixture"], {
+				...createIo(),
+				version: "0.0.0",
+				allowedRoot: root,
+				agentDir,
+				createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "done" }] }]),
+				createTerminal: () => terminal,
+			}),
+		).toBe(0);
+		expect(terminal.output).toContain("panel:Fixture status");
+		expect(terminal.output).toContain("session_event");
+		expect(terminal.starts).toBe(1);
+		expect(terminal.stops).toBeGreaterThanOrEqual(1);
+	});
+
+	it("fails selected frontend startup without falling back to the builtin terminal", async () => {
+		const terminal = new FixtureTerminal();
+		await expect(
+			runMain(["--interactive", "--ui", "missing"], {
+				...createIo(),
+				version: "0.0.0",
+				allowedRoot: root,
+				agentDir,
+				createRuntime: createRuntime([]),
+				createTerminal: () => terminal,
+			}),
+		).rejects.toThrow('Interactive frontend "missing" is not registered');
+		expect(terminal.starts).toBe(0);
 	});
 
 	it("sends a CLI image attachment to the provider with its text prompt", async () => {

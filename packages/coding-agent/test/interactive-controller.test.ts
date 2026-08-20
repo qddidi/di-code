@@ -42,8 +42,20 @@ describe("InteractiveController", () => {
 		await controller.submit("two");
 		controller.cancel();
 		await first;
-		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		for (let attempt = 0; attempt < 20 && controller.state.streaming; attempt++)
+			await new Promise<void>((resolve) => setTimeout(resolve, 5));
 		expect(controller.state.streaming).toBe(false);
 		expect(controller.state.queue.length).toBeLessThanOrEqual(1);
+	});
+
+	it("retries the most recent failed prompt through the frontend-safe controller action", async () => {
+		const { controller } = createController([
+			{ type: "failure", errorMessage: "temporary failure" },
+			{ type: "success", content: [{ type: "text", text: "recovered" }] },
+		]);
+		await controller.submit("try again");
+		await controller.retry();
+		expect(controller.state.messages).toContain("recovered");
+		await expect(controller.retry()).rejects.toThrow("There is no failed or cancelled prompt");
 	});
 });

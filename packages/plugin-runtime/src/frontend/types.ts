@@ -10,13 +10,33 @@ export type InteractiveFrontendCapability =
 	| "compaction"
 	| (string & {});
 
+/** Data a normal plugin may offer for an active frontend to render in its own layout. */
+export interface PluginInteractivePanel {
+	readonly id: string;
+	readonly title: string;
+	readonly data: unknown;
+}
+
+/** A pure, optional formatter for one tool's completed result. */
+export interface PluginToolDetailRenderer {
+	readonly toolName: string;
+	render(result: unknown): string | undefined;
+}
+
+export interface PluginUiContributions {
+	readonly panels: readonly PluginInteractivePanel[];
+	readonly toolDetailRenderers: readonly PluginToolDetailRenderer[];
+}
+
 /** A small, host-neutral view event surface supplied to a frontend. */
 export interface PluginFrontendController {
 	readonly state: unknown;
+	readonly ui: PluginUiContributions;
 	subscribe(listener: (event: unknown) => void): Disposable;
 	submit(input: unknown): Promise<void>;
 	steer(input: unknown): void;
 	cancel(): void;
+	retry(): Promise<void>;
 	runCommand(name: string, args: string): Promise<void>;
 	selectModel(modelId: string): void;
 	openSession(sessionId: string): Promise<void>;
@@ -41,8 +61,9 @@ export interface PluginTerminalFrontendHost {
 }
 
 export interface InteractiveFrontend {
-	start(controller: PluginFrontendController, terminal: PluginTerminalFrontendHost): void | Promise<void>;
-	dispose(): void | Promise<void>;
+	/** Resolves only after this frontend has released terminal ownership. */
+	start(controller: PluginFrontendController, terminal: PluginTerminalFrontendHost): Promise<void>;
+	dispose(): Promise<void>;
 }
 
 export interface PluginInteractiveFrontend {
@@ -50,7 +71,7 @@ export interface PluginInteractiveFrontend {
 	readonly displayName: string;
 	readonly capabilities: readonly InteractiveFrontendCapability[];
 	/** The host validates the returned lifecycle object before starting it. */
-	create(): InteractiveFrontend | Record<string, unknown> | Promise<InteractiveFrontend | Record<string, unknown>>;
+	create(): InteractiveFrontend | Promise<InteractiveFrontend>;
 }
 
 export interface Disposable {

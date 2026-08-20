@@ -4,6 +4,11 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
 import type { McpServerConnectionStatus } from "@di-code/mcp";
+import type {
+	InteractiveFrontend,
+	PluginInteractiveFrontend,
+	PluginTerminalFrontendHost,
+} from "@di-code/plugin-runtime";
 import { ProcessTerminal, truncateToWidth } from "@di-code/tui";
 import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
 import { loadImageInputs } from "./core/image-input.ts";
@@ -22,6 +27,7 @@ import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
 import { loadPlugins, type PluginLoadStatus } from "./plugins/loader.ts";
 import { PluginManager } from "./plugins/manager.ts";
+import { resolveRuntimeProfile } from "./plugins/profile.ts";
 import type { StartupConfiguration } from "./startup.ts";
 import { resolveThinkingLevelPreference } from "./startup.ts";
 
@@ -45,6 +51,8 @@ export interface MainOptions extends PrintIo {
 	readonly isInteractiveTerminal?: boolean;
 	/** Ask whether project-local Skills, plugins, and extensions may be loaded. */
 	readonly promptProjectTrust?: (cwd: string) => Promise<boolean>;
+	/** Test and embedding hook; production uses the process terminal. */
+	readonly createTerminal?: () => PluginTerminalFrontendHost;
 }
 
 const MAX_SESSION_QUESTION_LENGTH = 72;
@@ -93,6 +101,37 @@ function formatPluginDiagnostic(pluginId: string | undefined, stage: string, mes
 function pluginStatusKey(status: PluginLoadStatus): string {
 	if (status.state === "failed" && status.pluginId === undefined) return `plugin:${status.sourcePath}`;
 	return `plugin:${status.pluginId}`;
+}
+
+function validateInteractiveFrontend(value: unknown): InteractiveFrontend {
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		typeof (value as { start?: unknown }).start !== "function" ||
+		typeof (value as { dispose?: unknown }).dispose !== "function"
+	)
+		throw new Error("Interactive frontend must provide start() and dispose() lifecycle methods.");
+	return value as InteractiveFrontend;
+}
+
+function lifecyclePromise(value: unknown, method: "start" | "dispose"): Promise<void> {
+	if (typeof value !== "object" || value === null || typeof (value as { then?: unknown }).then !== "function")
+		throw new Error(`Interactive frontend ${method}() must return a Promise.`);
+	return Promise.resolve(value as PromiseLike<void>);
+}
+
+async function createSelectedFrontend(
+	id: string,
+	options: { readonly builtin: () => InteractiveFrontend; readonly registered: readonly PluginInteractiveFrontend[] },
+): Promise<InteractiveFrontend> {
+	if (id === "builtin") return options.builtin();
+	const descriptor = options.registered.find((frontend) => frontend.id === id);
+	if (!descriptor) throw new Error(`Interactive frontend "${id}" is not registered by a loaded trusted plugin.`);
+	try {
+		return validateInteractiveFrontend(await descriptor.create());
+	} catch (cause) {
+		throw new Error(`Interactive frontend "${id}" failed during startup.`, { cause });
+	}
 }
 
 /** Renders startup states in place so terminal history retains only their final outcome. */
@@ -397,6 +436,9 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 			const now = options.now ?? Date.now;
 			const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
+			const selectedProfile = command.profile
+				? resolveRuntimeProfile(command.profile, command.ui ? { cli: { frontend: command.ui } } : {}, command.mode)
+				: undefined;
 			const trustManager = new ProjectTrustManager(join(agentDir, "trust.json"));
 			if (command.projectTrust !== undefined) await trustManager.set(allowedRoot, command.projectTrust);
 			let persistedTrust = await trustManager.get(allowedRoot);
@@ -526,56 +568,23 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				}
 			}
 			if (command.mode === "interactive") {
-				const terminal = new ProcessTerminal();
-				const controller = new InteractiveController({ session, runtimePluginHost: extensions.runtimeHost });
-				const frontend = createBuiltinInteractiveFrontend({
-					session,
-					initialPrompt: command.prompt,
-					agentDir,
-					locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
-					onExit: () => {
-						controller.dispose();
-						void mcp.manager.close();
-						void extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
-						void extensions.runtimeHost.dispose();
-					},
-					extensionHost: extensions.host,
-					...(options.startupConfiguration
-						? { providerOnboarding: { configuration: options.startupConfiguration, agentDir } }
-						: {}),
-					sessions: [
-						{
-							id: "new-session",
-							label: translate(options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE, "newSession"),
-							description: translate(
-								options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
-								"newSessionDescription",
-							),
-							open: async () => {
-								const filePath = newSessionPath(dirname(sessionFile), now);
-								const nextManager = await SessionManager.create({
-									filePath,
-									cwd: allowedRoot,
-									now,
-									deferCreate: true,
-								});
-								return new AgentSession({
-									allowedRoot,
-									provider: runtime.provider,
-									model: runtime.model,
-									...(thinkingLevel === undefined ? {} : { thinkingLevel }),
-									systemPrompt,
-									skills: resources.skills,
-									now: options.now,
-									sessionManager: nextManager,
-									extensionHost: extensions.host,
-									externalTools: mcp.tools,
-									runtimePluginHost: extensions.runtimeHost,
-								});
-							},
-						},
-						...(await sessionChoices(dirname(sessionFile), sessionFile, async (filePath) => {
-							const nextManager = await SessionManager.open(filePath, { now });
+				const terminal = options.createTerminal?.() ?? new ProcessTerminal();
+				const availableSessions = [
+					{
+						id: "new-session",
+						label: translate(options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE, "newSession"),
+						description: translate(
+							options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
+							"newSessionDescription",
+						),
+						open: async () => {
+							const filePath = newSessionPath(dirname(sessionFile), now);
+							const nextManager = await SessionManager.create({
+								filePath,
+								cwd: allowedRoot,
+								now,
+								deferCreate: true,
+							});
 							return new AgentSession({
 								allowedRoot,
 								provider: runtime.provider,
@@ -589,19 +598,80 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								externalTools: mcp.tools,
 								runtimePluginHost: extensions.runtimeHost,
 							});
-						})),
-					],
+						},
+					},
+					...(await sessionChoices(dirname(sessionFile), sessionFile, async (filePath) => {
+						const nextManager = await SessionManager.open(filePath, { now });
+						return new AgentSession({
+							allowedRoot,
+							provider: runtime.provider,
+							model: runtime.model,
+							...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+							systemPrompt,
+							skills: resources.skills,
+							now: options.now,
+							sessionManager: nextManager,
+							extensionHost: extensions.host,
+							externalTools: mcp.tools,
+							runtimePluginHost: extensions.runtimeHost,
+						});
+					})),
+				];
+				const controller = new InteractiveController({
+					session,
+					runtimePluginHost: extensions.runtimeHost,
+					sessions: availableSessions,
 				});
+				const builtinOptions = {
+					session,
+					sessions: availableSessions,
+					initialPrompt: command.prompt,
+					agentDir,
+					locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
+					extensionHost: extensions.host,
+					...(options.startupConfiguration
+						? { providerOnboarding: { configuration: options.startupConfiguration, agentDir } }
+						: {}),
+				};
+				const frontendId = selectedProfile?.frontend ?? command.ui ?? "builtin";
+				let frontend: InteractiveFrontend;
 				try {
-					frontend.start(controller, terminal);
+					frontend = await createSelectedFrontend(frontendId, {
+						registered: extensions.runtimeHost.listInteractiveFrontends(),
+						builtin: () => createBuiltinInteractiveFrontend(builtinOptions),
+					});
 				} catch (cause) {
 					controller.dispose();
 					await mcp.manager.close();
-					await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "error" });
 					await extensions.runtimeHost.dispose();
 					throw cause;
 				}
-				return 0;
+				let shutdownReason: "user" | "error" = "user";
+				try {
+					if (frontendId !== "builtin") {
+						await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+						await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });
+					}
+					await lifecyclePromise(frontend.start(controller, terminal), "start");
+					return 0;
+				} catch (cause) {
+					shutdownReason = "error";
+					throw cause;
+				} finally {
+					controller.cancel();
+					controller.dispose();
+					try {
+						await lifecyclePromise(frontend.dispose(), "dispose");
+					} finally {
+						terminal.stop();
+					}
+					await mcp.manager.close();
+					if (frontendId !== "builtin") {
+						await extensions.host.emit({ type: "session_shutdown", reason: shutdownReason });
+						await extensions.runtimeHost.emit({ type: "session_shutdown", reason: shutdownReason });
+					}
+					await extensions.runtimeHost.dispose();
+				}
 			}
 			await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
 			await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });

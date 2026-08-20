@@ -74,6 +74,25 @@ describe("parseCliArgs", () => {
 		expect(parseCliArgs(["--mode", "json", "hello"])).toEqual({ kind: "run", mode: "json", prompt: "hello" });
 	});
 
+	it("selects terminal frontends through profile and UI options", () => {
+		expect(parseCliArgs(["--profile", "terminal"])).toEqual({
+			kind: "run",
+			mode: "interactive",
+			prompt: "",
+			profile: "terminal",
+		});
+		expect(parseCliArgs(["--interactive", "--ui", "acme-terminal"])).toEqual({
+			kind: "run",
+			mode: "interactive",
+			prompt: "",
+			ui: "acme-terminal",
+		});
+		expect(() => parseCliArgs(["--ui", "acme-terminal", "hello"])).toThrow(
+			"Option --ui is only available in interactive mode.",
+		);
+		expect(() => parseCliArgs(["--profile", "missing", "hello"])).toThrow('Unknown runtime profile "missing"');
+	});
+
 	it("parses an optional session path", () => {
 		expect(parseCliArgs(["--session", "work.jsonl", "hello"])).toEqual({
 			kind: "run",

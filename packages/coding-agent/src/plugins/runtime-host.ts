@@ -6,8 +6,10 @@ import {
 	type PluginContextProviderOptions,
 	type PluginFactory,
 	PluginHost,
+	type PluginInteractiveFrontend,
 	type PluginPromptContext,
 	type PluginScope,
+	type PluginUiContributions,
 } from "@di-code/plugin-runtime";
 
 export interface CodingAgentPluginHostOptions {
@@ -47,6 +49,15 @@ export class CodingAgentPluginHost {
 
 	listCommands(): readonly PluginCommand[] {
 		return [...this.runtime.snapshot().contributions.commands];
+	}
+
+	listInteractiveFrontends(): readonly PluginInteractiveFrontend[] {
+		return [...this.runtime.snapshot().contributions.frontends];
+	}
+
+	getUiContributions(): PluginUiContributions {
+		const { panels, toolDetailRenderers } = this.runtime.snapshot().contributions;
+		return { panels: [...panels], toolDetailRenderers: [...toolDetailRenderers] };
 	}
 
 	async runCommand(

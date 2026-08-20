@@ -1,13 +1,16 @@
 import type { AgentContextProvider, AgentTool, AgentToolResult, ToolExecutionMiddleware } from "@di-code/agent";
 import type { TSchema } from "@di-code/ai";
-import type { PluginInteractiveFrontend } from "./frontend/index.ts";
+import type { PluginInteractiveFrontend, PluginInteractivePanel, PluginToolDetailRenderer } from "./frontend/index.ts";
 
 export type {
 	InteractiveFrontend,
 	InteractiveFrontendCapability,
 	PluginFrontendController,
 	PluginInteractiveFrontend,
+	PluginInteractivePanel,
 	PluginTerminalFrontendHost,
+	PluginToolDetailRenderer,
+	PluginUiContributions,
 } from "./frontend/index.ts";
 
 export const PLUGIN_API_VERSION = 1 as const;
@@ -78,6 +81,8 @@ export interface PluginApi {
 	registerPromptSection(section: PluginPromptSection): Disposable;
 	useToolMiddleware(middleware: ToolExecutionMiddleware): Disposable;
 	registerInteractiveFrontend(frontend: PluginInteractiveFrontend): Disposable;
+	registerInteractivePanel(panel: PluginInteractivePanel): Disposable;
+	registerToolDetailRenderer(renderer: PluginToolDetailRenderer): Disposable;
 	registerSubagentProvider(provider: SubagentProvider): Disposable;
 	on(event: string, handler: PluginEventHandler): Disposable;
 	registerSessionProjection(projection: PluginSessionProjection): Disposable;
@@ -96,6 +101,8 @@ export interface PluginContributions {
 	readonly promptSections: readonly PluginPromptSection[];
 	readonly toolMiddleware: readonly ToolExecutionMiddleware[];
 	readonly frontends: readonly PluginInteractiveFrontend[];
+	readonly panels: readonly PluginInteractivePanel[];
+	readonly toolDetailRenderers: readonly PluginToolDetailRenderer[];
 	readonly subagentProviders: readonly SubagentProvider[];
 	readonly sessionProjections: readonly PluginSessionProjection[];
 }
@@ -122,6 +129,8 @@ type Mutable = {
 	promptSections: PluginPromptSection[];
 	toolMiddleware: ToolExecutionMiddleware[];
 	frontends: PluginInteractiveFrontend[];
+	panels: PluginInteractivePanel[];
+	toolDetailRenderers: PluginToolDetailRenderer[];
 	subagentProviders: SubagentProvider[];
 	sessionProjections: PluginSessionProjection[];
 	handlers: Map<string, Array<{ pluginId: string; handler: PluginEventHandler }>>;
@@ -132,6 +141,8 @@ const empty = (): Mutable => ({
 	promptSections: [],
 	toolMiddleware: [],
 	frontends: [],
+	panels: [],
+	toolDetailRenderers: [],
 	subagentProviders: [],
 	sessionProjections: [],
 	handlers: new Map(),
@@ -228,6 +239,8 @@ export class PluginHost {
 				promptSections: [...contributions.promptSections],
 				toolMiddleware: [...contributions.toolMiddleware],
 				frontends: [...contributions.frontends],
+				panels: [...contributions.panels],
+				toolDetailRenderers: [...contributions.toolDetailRenderers],
 				subagentProviders: [...contributions.subagentProviders],
 				sessionProjections: [...contributions.sessionProjections],
 			},
@@ -368,6 +381,8 @@ export class PluginHost {
 			registerPromptSection: (section) => add(registry.promptSections, section),
 			useToolMiddleware: (middleware) => add(registry.toolMiddleware, middleware),
 			registerInteractiveFrontend: (frontend) => add(registry.frontends, frontend),
+			registerInteractivePanel: (panel) => add(registry.panels, panel),
+			registerToolDetailRenderer: (renderer) => add(registry.toolDetailRenderers, renderer),
 			registerSubagentProvider: (provider) => add(registry.subagentProviders, provider),
 			on: (event, handler) => {
 				const list = registry.handlers.get(event) ?? [];
@@ -431,6 +446,22 @@ export class PluginHost {
 			sectionIds.add(section.id);
 		}
 		this.validateUnique(staged.frontends, this.registry.frontends, "frontend");
+		for (const frontend of staged.frontends) {
+			if (!Array.isArray(frontend.capabilities) || typeof frontend.create !== "function")
+				throw new Error("invalid interactive frontend");
+		}
+		this.validateUnique(staged.panels, this.registry.panels, "interactive panel");
+		for (const panel of staged.panels) nonEmpty(panel.title, "interactive panel.title");
+		for (const renderer of staged.toolDetailRenderers) {
+			nonEmpty(renderer.toolName, "tool detail renderer.toolName");
+			if (typeof renderer.render !== "function") throw new Error("tool detail renderer.render must be a function");
+		}
+		const renderedTools = new Set(this.registry.toolDetailRenderers.map((renderer) => renderer.toolName));
+		for (const renderer of staged.toolDetailRenderers) {
+			if (renderedTools.has(renderer.toolName))
+				throw new Error(`Plugin tool detail renderer conflict: "${renderer.toolName}"`);
+			renderedTools.add(renderer.toolName);
+		}
 		this.validateUnique(staged.subagentProviders, this.registry.subagentProviders, "subagent provider");
 		this.validateUnique(staged.sessionProjections, this.registry.sessionProjections, "session projection");
 	}
@@ -464,6 +495,8 @@ export class PluginHost {
 			promptSections: [...this.registry.promptSections, ...staged.promptSections],
 			toolMiddleware: [...this.registry.toolMiddleware, ...staged.toolMiddleware],
 			frontends: [...this.registry.frontends, ...staged.frontends],
+			panels: [...this.registry.panels, ...staged.panels],
+			toolDetailRenderers: [...this.registry.toolDetailRenderers, ...staged.toolDetailRenderers],
 			subagentProviders: [...this.registry.subagentProviders, ...staged.subagentProviders],
 			sessionProjections: [...this.registry.sessionProjections, ...staged.sessionProjections],
 			handlers,

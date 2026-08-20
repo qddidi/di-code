@@ -3,7 +3,7 @@ export type RuntimeProfileName = "terminal" | "headless";
 export interface RuntimeProfile {
 	readonly name: RuntimeProfileName;
 	readonly mode: "interactive" | "print" | "json";
-	readonly frontend: "builtin" | "headless";
+	readonly frontend: string;
 	readonly pluginIds: readonly string[];
 }
 
@@ -38,6 +38,8 @@ export function resolveRuntimeProfile(
 	if (new Set(pluginIds).size !== pluginIds.length) throw new Error("Runtime profile contains duplicate plugin IDs.");
 	if (mode !== undefined && selected === "headless" && mode === "interactive")
 		throw new Error('The "headless" profile cannot use interactive mode.');
+	if (mode !== undefined && selected === "terminal" && mode !== "interactive")
+		throw new Error('The "terminal" profile requires interactive mode.');
 	if (selected === "headless" && merged.frontend !== "headless")
 		throw new Error('The "headless" profile cannot select an interactive frontend.');
 	return { name: selected, mode: mode ?? base.mode, frontend: merged.frontend, pluginIds };
