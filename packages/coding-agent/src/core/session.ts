@@ -238,16 +238,11 @@ export class AgentSession {
 				maxConcurrent: options.subagents?.maxConcurrent,
 				defaultTimeoutMs: options.subagents?.timeoutMs,
 				maxResultBytes: options.subagents?.maxResultBytes,
-					emit: async (event) => {
-						if (this.sessionManager) {
-							await this.sessionManager.appendSubagent({
-								runId: event.runId,
-								event:
-									event.type === "subagent_start"
-										? "start"
-										: event.type === "subagent_end"
-											? "end"
-											: "update",
+				emit: async (event) => {
+					if (this.sessionManager) {
+						await this.sessionManager.appendSubagent({
+							runId: event.runId,
+							event: event.type === "subagent_start" ? "start" : event.type === "subagent_end" ? "end" : "update",
 							status: event.status,
 							...(event.text === undefined ? {} : { text: event.text }),
 							...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),

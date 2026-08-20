@@ -518,6 +518,8 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 `@di-code/orchestrator` 的 `RpcSupervisor` 接收 RPC 可执行命令、参数、cwd 和环境变量。它只通过上述公开 SDK 通信；非预期子进程退出会把状态设为 `crashed`，并拒绝所有尚未完成的请求。实现不会自动重启，因为工具调用目前没有跨进程幂等键，自动重放可能重复写文件或执行命令。
 
+Web 客户端通过 `WebFrontendHost` 使用同一个 `InteractiveController` 投影。连接必须通过短期 token、frontend ID 和 slot 白名单授权；事件带 `eventId`，断线重连可重放窗口内事件，过期事件要求新的状态快照。浏览器断开只释放连接，不会替宿主取消或销毁 Agent/Session。
+
 ## 交互模式
 
 交互模式提供流式对话、工具执行状态、图片附件、文件路径和斜杠命令补全。常用命令包括：

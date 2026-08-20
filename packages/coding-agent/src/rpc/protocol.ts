@@ -137,7 +137,10 @@ function requiredId(value: unknown, field: string, requestId?: string): string {
 		value.length === 0 ||
 		value.length > RPC_MAX_ID_LENGTH ||
 		value.trim() !== value ||
-		/[\u0000-\u001f\u007f]/.test(value)
+		[...value].some((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code <= 0x1f || code === 0x7f;
+		})
 	) {
 		throw new RpcProtocolError(
 			"INVALID_REQUEST",
@@ -218,9 +221,7 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
 		}
 		if (event.type === "subagent_start" || event.type === "subagent_update" || event.type === "subagent_end") {
-			if (
-				!(["running", "completed", "failed", "cancelled"] as const).includes(event.status as never)
-			) {
+			if (!(["running", "completed", "failed", "cancelled"] as const).includes(event.status as never)) {
 				throw new RpcProtocolError("INVALID_REQUEST", "RPC subagent event has invalid lifecycle fields.");
 			}
 			requiredId(event.runId, "event.runId");

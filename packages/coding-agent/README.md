@@ -605,6 +605,12 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 需要监督子进程生命周期时，使用 `@di-code/orchestrator`，不要依赖 coding-agent 的内部文件路径。
 
+### Web 前端投影
+
+公开 Web 投影从 `@di-code/coding-agent` 导出 `WebFrontendHost`、`WebTransport` 和版本化消息解析器。宿主将浏览器连接绑定到现有 `InteractiveController`；浏览器只能提交 `allowedActions` 白名单动作，不能取得 Agent、Provider 或 Session 对象。连接使用短期授权 token、frontend ID 和 slot 白名单，token 过期或 frontend 未授权时会拒绝握手。
+
+事件带单调递增的 `eventId`。页面断线只释放传输连接，重连可携带 `lastEventId` 重放仍在窗口内的事件；窗口外的事件会要求客户端以新的 `hello` 快照同步。页面销毁不应调用 Host 的 `dispose()`，只有宿主关闭 Session 时才释放 Controller 和全部连接。slot action 必须同时出现在授权 slot 和宿主注册的 handler 中。
+
 ## 安全边界与故障排查
 
 - 在可信项目根目录运行；`bash` 不是沙箱，插件也没有沙箱。
