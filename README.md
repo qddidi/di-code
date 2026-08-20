@@ -2,8 +2,18 @@
 
 `di-code` 是一个以终端为主要界面的 TypeScript AI Coding Agent（编码代理）。它把模型适配、Agent 工具循环、编码工具、会话、插件和 ANSI 终端 UI 拆分为可独立构建、测试和发布的 npm workspace 包。
 
-它支持 OpenAI、Anthropic、DeepSeek 和智谱等 Provider，以及流式文本、推理、工具调用、持久化会话、交互终端、JSON 输出和 JSONL RPC。
+它支持 OpenAI、Anthropic、DeepSeek、Kimi、智谱和自定义Provider，以及流式文本、推理、工具调用、持久化会话、交互终端、JSON 输出和 JSONL RPC。
+## 快速体验
 
+```powershell
+npm install -g @di-code/coding-agent
+```
+然后执行
+
+```powershell
+di-code
+```
+完成向导即可体验
 
 ## 快速开始
 
@@ -514,7 +524,7 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 | `/clear` | 清除当前界面中可见的消息，不删除会话数据。 |
 | `/model` | 打开模型选择器，并将选择保存为用户默认模型。 |
 | `/session` | 打开会话选择器。 |
-| `/tree` | 打开紧凑的分支树；`Enter` 从节点继续，`e` 编辑历史用户消息，`s` 为所选路径生成摘要并开始新分支。 |
+| `/tree` | 打开当前历史对话分支树；可以选择回退至哪个阶段 |
 | `/theme` | 切换深色或浅色终端主题。 |
 | `/settings` | 配置上下文压缩和内置终端语言。 |
 | `/compact` | 立即压缩当前持久化会话的旧上下文。 |
