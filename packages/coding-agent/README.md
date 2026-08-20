@@ -45,17 +45,11 @@ di-code
 3. **填写 API key**：选择真实 Provider 时，在隐藏输入框中粘贴对应的 key；输入内容不会显示在终端中。
 4. **确认并开始对话**：向导完成后进入 interactive 模式，在底部输入框输入问题并按 `Enter`。
 
-向导输入的 API key 会保存到用户全局 `~/.di-code/settings.json`，供之后启动复用；不会写入 `.env`、项目 `.di-code/settings.json`、会话文件或日志。请保护用户目录的访问权限，不要复制或提交该文件。
+向导输入的 API key 会保存到用户全局 `~/.di-code/settings.json`，供之后启动复用
 
-已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。它总会要求真实 Provider 输入新的隐藏 key，写入用户全局 `settings.json` 成功后立即切换当前会话的 Provider 和模型。`/model` 也会把当前 Provider 和所选模型保存为用户默认值。`/logout` 会移除当前 Provider 在该全局文件中的 `apiKey`，并在它是默认 Provider 时清除 `defaultProvider` 与 `defaultModel`；`api`、`baseUrl`、`models` 和其他 Provider 配置仍会保留。为避免登出后因缺少 key 重新构建失败，当前会话会继续使用已加载的运行时直到退出；下次交互启动时，如没有明确的 Provider 选择，会显示选择/登录向导。它不会也无法删除环境变量中的 key，因此环境变量仍可能继续生效。
+已经进入交互模式后，使用 `/login` 可以重新打开 Provider、模型和 key 向导。
 
-`/login` 还会更新同一文件的 `defaultProvider` 和 `defaultModel`。当全局配置中有多个 Provider 时，下一次启动会使用这两个默认值；显式设置的 `DI_CODE_PROVIDER` 与 `DI_CODE_MODEL` 始终优先。
 
-向导完成后可以直接这样使用：
-
-```text
-请先读取项目结构，然后告诉我应该从哪些文件开始修改。
-```
 
 ### 方式二：直接用 `settings.json` 配置
 
@@ -154,14 +148,6 @@ di-code "检查当前项目的测试状态"
   }
 }
 ```
-
-合并后的 `settings.json` 中只有一个 Provider 时，可以省略 `DI_CODE_PROVIDER`；如果有多个 Provider，则必须设置它。`DI_CODE_MODEL` 省略时使用该 Provider 模型列表的第一项。配置完成后，先用 print 模式验证：
-
-```powershell
-di-code --print "用一句话介绍当前项目"
-```
-
-出现 `Unknown model` 时，检查 `DI_CODE_MODEL` 是否与 `models[].id` 完全一致；出现 `Configured apiKey environment variable ... is not set` 时，检查环境变量名称是否拼写正确。
 
 ### 方式三：使用环境变量
 
@@ -277,7 +263,7 @@ di-code --continue "继续上一次工作"
 
 ### Slash commands 与快捷键
 
-输入 `/` 后按 `Tab` 可补全命令。
+输入 `/` 后可补全命令；补全菜单打开时按 `Enter` 会直接运行当前选中的 slash command，按 `Tab` 只补全到输入框。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -302,7 +288,7 @@ di-code --continue "继续上一次工作"
 | --- | --- |
 | `Enter` | 发送当前 prompt |
 | `Shift+Enter` | 在输入框中插入换行 |
-| `Esc` | 取消当前模型请求；没有请求时关闭补全或选择器 |
+| `Esc` | 取消当前模型请求并显示取消状态；没有请求时关闭补全或选择器 |
 | `Ctrl+C` | 退出并恢复终端状态 |
 | `Tab` | 补全 slash command |
 | `Alt+S` | 把编辑框当前内容作为引导发送给运行中的 Agent（与 `/steer` 等价） |
@@ -311,7 +297,7 @@ di-code --continue "继续上一次工作"
 | `Ctrl+T` / `Ctrl+S` | 打开主题 / 设置 |
 | `Ctrl+R` | 重试最近失败的 prompt |
 
-取消只停止当前请求，不会删除已经追加到磁盘的会话记录。之后可使用 `/retry` 再试一次。
+取消只停止当前请求，不会删除已经追加到磁盘的会话记录，并显示取消状态而非错误。之后可使用 `/retry` 再试一次。
 
 ## 会话、图片与内置工具
 

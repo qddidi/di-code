@@ -181,9 +181,15 @@ export class InteractiveMode {
 		this.editor = new Editor({
 			maxHeight: 3,
 			autocomplete,
+			submitAutocomplete: (context) => /^\/[^\s/]*$/.test(context.text.slice(0, context.cursor)),
 		});
 		this.editor.onSubmit = (text) => void this.submit(text);
-		this.editor.onEscape = () => this.activeAbort?.abort();
+		this.editor.onEscape = () => {
+			if (!this.activeAbort) return;
+			this.projection.setStatus(translate(this.locale, "cancelled"));
+			this.activeAbort.abort();
+			this.refresh();
+		};
 		this.editor.onCommand = (data) => this.handleCommand(data);
 		this.editor.onInterrupt = () => this.exit();
 		this.editor.onChange = () => {

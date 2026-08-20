@@ -139,6 +139,23 @@ describe("Editor autocomplete", () => {
 		assert.equal(editor.isShowingAutocomplete(), false);
 	});
 
+	it("submits an Enter-confirmed completion when the host opts in", async () => {
+		const provider = new CombinedAutocompleteProvider([{ name: "model" }], ".");
+		const editor = new Editor({
+			autocomplete: provider,
+			submitAutocomplete: (context) => context.text.startsWith("/"),
+		});
+		const submitted: string[] = [];
+		editor.onSubmit = (value) => submitted.push(value);
+		editor.setValue("/mo");
+
+		await editor.requestAutocomplete(true);
+		editor.handleInput("\r");
+
+		assert.deepEqual(submitted, ["/model "]);
+		assert.equal(editor.isShowingAutocomplete(), false);
+	});
+
 	it("cancels autocomplete with escape without invoking editor escape", async () => {
 		const provider = new CombinedAutocompleteProvider([{ name: "help" }], ".");
 		const editor = new Editor({ autocomplete: provider });

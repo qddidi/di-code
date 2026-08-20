@@ -270,7 +270,7 @@ export class InteractiveProjection {
 		for (const content of message.content) {
 			if (content.type === "tool_call") this.storeFileChange(content.id, content.name, content.arguments);
 		}
-		if (message.stopReason === "error" || message.stopReason === "aborted") this.error = message.errorMessage;
+		if (message.stopReason === "error") this.error = message.errorMessage;
 		this.streamingText = "";
 	}
 

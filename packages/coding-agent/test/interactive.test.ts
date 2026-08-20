@@ -71,8 +71,8 @@ function preview(text: string) {
 	return { role: "assistant" as const, provider: "faux", model: "faux-model", text };
 }
 
-function assistantMessage(text: string, stopReason: "stop" | "error" = "stop") {
-	if (stopReason === "error") {
+function assistantMessage(text: string, stopReason: "stop" | "error" | "aborted" = "stop") {
+	if (stopReason === "error" || stopReason === "aborted") {
 		return {
 			role: "assistant" as const,
 			content: [],
@@ -88,7 +88,7 @@ function assistantMessage(text: string, stopReason: "stop" | "error" = "stop") {
 			},
 			timestamp: 2,
 			stopReason,
-			errorMessage: "model failed",
+			errorMessage: stopReason === "aborted" ? "request aborted" : "model failed",
 		};
 	}
 	return {
@@ -1166,12 +1166,32 @@ describe("InteractiveMode", () => {
 		mode.stop();
 	});
 
-	it("cancels an active prompt with Escape and stops safely with Ctrl+C", async () => {
-		const faux = createFauxProvider({
-			chunkSize: 1,
-			responses: [{ type: "success", content: [{ type: "text", text: "a".repeat(1000) }] }],
-		});
-		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
+	it("shows cancellation instead of an error when Escape stops an active prompt", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const provider: Provider = {
+			...faux.provider,
+			stream(_model, _context, options) {
+				const message = assistantMessage("", "aborted") as Extract<
+					Message,
+					{ readonly role: "assistant"; readonly stopReason: "aborted" }
+				>;
+				const cancelled = new Promise<void>((resolve) =>
+					options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+				);
+				return {
+					async *[Symbol.asyncIterator]() {
+						yield { type: "start" as const };
+						await cancelled;
+						yield { type: "error" as const, reason: "aborted" as const, message };
+					},
+					async result() {
+						await cancelled;
+						return message;
+					},
+				};
+			},
+		};
+		const session = new AgentSession({ allowedRoot: process.cwd(), provider, model: faux.model });
 		const terminal = new TestTerminal();
 		const tui = new TUI(terminal);
 		let exited = false;
@@ -1186,10 +1206,13 @@ describe("InteractiveMode", () => {
 		mode.start();
 		terminal.sendInput("hello");
 		terminal.sendInput("\r");
-		await flush();
+		await waitFor(() => session.isStreaming);
 		terminal.sendInput("\x1b");
 		await waitFor(() => session.transcript.at(-1)?.role === "assistant");
 		assert.equal(session.transcript.at(-1)?.role, "assistant");
+		await waitFor(() => terminal.output.includes("Cancelled"));
+		assert.equal(terminal.output.includes("Cancelled"), true);
+		assert.equal(terminal.output.includes("Error:"), false);
 		terminal.sendInput("\x03");
 		assert.equal(exited, true);
 		mode.stop();
@@ -1612,7 +1635,7 @@ describe("InteractiveMode", () => {
 		}
 	});
 
-	it("shows slash autocomplete without sending the completed command to the provider", async () => {
+	it("runs a slash command when Enter confirms its autocomplete selection", async () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
 		const terminal = new TestTerminal();
@@ -1620,13 +1643,12 @@ describe("InteractiveMode", () => {
 		const mode = new InteractiveMode({ session, tui });
 		mode.start();
 
-		terminal.sendInput("/mo");
-		terminal.sendInput("\t");
+		terminal.sendInput("/he");
 		await waitFor(() => tui.hasOverlay());
-		await waitFor(() => terminal.output.includes("Open the model selector"));
+		await waitFor(() => terminal.output.includes("Show interactive commands"));
 		assert.equal(terminal.output.includes("Suggestions"), true);
 		assert.equal(terminal.output.includes("›"), true);
-		assert.equal(terminal.output.includes("Open the model selector"), true);
+		assert.equal(terminal.output.includes("Show interactive commands"), true);
 		const frame = tui.render(terminal.columns);
 		const suggestionsRow = frame.findIndex((line) => line.includes("Suggestions"));
 		assert.equal(
@@ -1634,11 +1656,9 @@ describe("InteractiveMode", () => {
 			true,
 		);
 		terminal.sendInput("\r");
-		assert.equal(tui.hasOverlay(), false);
-		terminal.sendInput("\r");
-		await flush();
+		await waitFor(() => terminal.output.includes("commands: /help"));
 
-		assert.equal(tui.hasOverlay(), true);
+		assert.equal(tui.hasOverlay(), false);
 		assert.equal(session.transcript.length, 0);
 		mode.stop();
 	});

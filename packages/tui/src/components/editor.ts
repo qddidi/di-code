@@ -69,6 +69,8 @@ export interface EditorOptions {
 	readonly maxHeight?: number;
 	readonly keybindings?: KeybindingsManager;
 	readonly autocomplete?: AutocompleteProvider;
+	/** Return true to submit an Enter-confirmed autocomplete selection. */
+	readonly submitAutocomplete?: (context: AutocompleteContext, item: AutocompleteItem) => boolean;
 }
 
 export class Editor implements Component, Focusable {
@@ -89,6 +91,7 @@ export class Editor implements Component, Focusable {
 	private readonly maxHeight: number | undefined;
 	private readonly keybindings: KeybindingsManager;
 	private readonly autocompleteProvider?: AutocompleteProvider;
+	private readonly submitAutocomplete?: (context: AutocompleteContext, item: AutocompleteItem) => boolean;
 	private autocompleteItems: AutocompleteItem[] = [];
 	private autocompleteIndex = 0;
 	private autocompletePrefix = "";
@@ -108,6 +111,7 @@ export class Editor implements Component, Focusable {
 		this.maxHeight = options.maxHeight;
 		this.keybindings = options.keybindings ?? new KeybindingsManager();
 		this.autocompleteProvider = options.autocomplete;
+		this.submitAutocomplete = options.submitAutocomplete;
 	}
 
 	get focused(): boolean {
@@ -214,7 +218,13 @@ export class Editor implements Component, Focusable {
 				return;
 			}
 			if (this.keybindings.matches(data, "tui.input.tab") || this.keybindings.matches(data, "tui.input.submit")) {
+				const item = this.autocompleteItems[this.autocompleteIndex];
+				const submit =
+					item !== undefined &&
+					this.keybindings.matches(data, "tui.input.submit") &&
+					this.submitAutocomplete?.({ text: this.value, cursor: this.cursor }, item) === true;
 				this.applyAutocomplete();
+				if (submit && this.onSubmit && !this.disableSubmit) this.onSubmit(this.value);
 				return;
 			}
 		}
