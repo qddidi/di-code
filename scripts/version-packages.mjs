@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "orchestrator"];
+const workspaceDirectories = ["ai", "agent", "plugin-runtime", "tui", "skills", "mcp", "coding-agent", "orchestrator"];
 const dependencyFields = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 const stableVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 

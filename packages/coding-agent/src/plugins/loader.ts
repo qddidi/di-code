@@ -1,3 +1,4 @@
+// Frozen migration baseline. This legacy loader remains until the runtime loader is introduced.
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";

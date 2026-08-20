@@ -1,3 +1,4 @@
+// Frozen migration baseline. New plugin contracts belong in @di-code/plugin-runtime.
 import type { AgentEvent } from "@di-code/agent";
 import type { Static, ToolResultContent, TSchema } from "@di-code/ai";
 

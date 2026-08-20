@@ -1,3 +1,4 @@
+// Frozen migration baseline. New loaders must not discover .di-code/extensions.
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";

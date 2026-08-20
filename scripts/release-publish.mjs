@@ -4,8 +4,17 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workspaces = ["@di-code/ai", "@di-code/agent", "@di-code/tui", "@di-code/skills", "@di-code/mcp", "@di-code/coding-agent", "@di-code/orchestrator"];
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "orchestrator"];
+const workspaces = [
+	"@di-code/ai",
+	"@di-code/agent",
+	"@di-code/plugin-runtime",
+	"@di-code/tui",
+	"@di-code/skills",
+	"@di-code/mcp",
+	"@di-code/coding-agent",
+	"@di-code/orchestrator",
+];
+const workspaceDirectories = ["ai", "agent", "plugin-runtime", "tui", "skills", "mcp", "coding-agent", "orchestrator"];
 const stableVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 function npmCommand(args) {

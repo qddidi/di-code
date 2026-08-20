@@ -18,7 +18,16 @@ interface PackageMetadata {
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "orchestrator"] as const;
+const workspaceDirectories = [
+	"ai",
+	"agent",
+	"plugin-runtime",
+	"tui",
+	"skills",
+	"mcp",
+	"coding-agent",
+	"orchestrator",
+] as const;
 const execFileAsync = promisify(execFile);
 
 async function readPackage(path: string): Promise<PackageMetadata> {
@@ -71,7 +80,9 @@ describe("release package contract", () => {
 			"--dry-run",
 			targetVersion,
 		]);
-		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 7 packages`);
+		expect(result.stdout).toContain(
+			`Version dry-run passed: ${root.version} -> ${targetVersion} for ${workspaceDirectories.length} packages`,
+		);
 		await expect(
 			execFileAsync(process.execPath, [
 				join(repositoryRoot, "scripts", "version-packages.mjs"),

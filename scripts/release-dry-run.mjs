@@ -8,6 +8,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = [
 	"@di-code/ai",
 	"@di-code/agent",
+	"@di-code/plugin-runtime",
 	"@di-code/tui",
 	"@di-code/skills",
 	"@di-code/mcp",

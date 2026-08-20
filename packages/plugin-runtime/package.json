@@ -1,0 +1,44 @@
+{
+	"name": "@di-code/plugin-runtime",
+	"version": "0.1.7",
+	"description": "Plugin runtime contracts and lifecycle management for di-code hosts",
+	"keywords": [
+		"ai-coding-agent",
+		"plugin",
+		"runtime",
+		"di-code"
+	],
+	"private": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/qddidi/di-code.git",
+		"directory": "packages/plugin-runtime"
+	},
+	"bugs": {
+		"url": "https://github.com/qddidi/di-code/issues"
+	},
+	"homepage": "https://github.com/qddidi/di-code#readme",
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
