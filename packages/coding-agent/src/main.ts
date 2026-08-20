@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
 import type { McpServerConnectionStatus } from "@di-code/mcp";
-import { ProcessTerminal, TUI, truncateToWidth } from "@di-code/tui";
+import { ProcessTerminal, truncateToWidth } from "@di-code/tui";
 import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
 import { loadImageInputs } from "./core/image-input.ts";
 import { loadResources } from "./core/resources/loader.ts";
@@ -14,9 +14,10 @@ import { buildSystemPrompt } from "./core/system-prompt.ts";
 import { workspaceStorageKey } from "./core/user-data.ts";
 import { ProjectTrustManager } from "./extensions/trust.ts";
 import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
+import { createBuiltinInteractiveFrontend } from "./interactive/builtin.ts";
+import { InteractiveController } from "./interactive/controller.ts";
 import { addMcpConfig, getMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "./mcp/config.ts";
 import { loadProjectMcp } from "./mcp/loader.ts";
-import { InteractiveMode } from "./modes/interactive.ts";
 import { runJsonMode } from "./modes/json.ts";
 import { type PrintIo, runPrintMode } from "./modes/print.ts";
 import { loadPlugins, type PluginLoadStatus } from "./plugins/loader.ts";
@@ -526,13 +527,14 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			}
 			if (command.mode === "interactive") {
 				const terminal = new ProcessTerminal();
-				const tui = new TUI(terminal);
-				const mode = new InteractiveMode({
+				const controller = new InteractiveController({ session, runtimePluginHost: extensions.runtimeHost });
+				const frontend = createBuiltinInteractiveFrontend({
 					session,
-					tui,
+					initialPrompt: command.prompt,
 					agentDir,
 					locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
 					onExit: () => {
+						controller.dispose();
 						void mcp.manager.close();
 						void extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 						void extensions.runtimeHost.dispose();
@@ -590,7 +592,15 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 						})),
 					],
 				});
-				mode.start(command.prompt);
+				try {
+					frontend.start(controller, terminal);
+				} catch (cause) {
+					controller.dispose();
+					await mcp.manager.close();
+					await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "error" });
+					await extensions.runtimeHost.dispose();
+					throw cause;
+				}
 				return 0;
 			}
 			await extensions.host.emit({ type: "session_start", cwd: allowedRoot });

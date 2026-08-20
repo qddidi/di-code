@@ -14,4 +14,6 @@ Tool names must use `<plugin-id>__<tool-name>`. Command names are checked agains
 
 The runtime package does not load `.di-code/extensions/` and does not adapt the frozen legacy `ExtensionAPI`/`ExtensionHost`. Hosts may keep that migration baseline separately while adopting this API.
 
+The package root exports the host-neutral `InteractiveFrontend`, `PluginInteractiveFrontend`, `PluginFrontendController`, and `PluginTerminalFrontendHost` contracts. A frontend receives terminal ownership from its host and must release it from `dispose()`; it does not receive Provider, Agent internals, or Session storage access.
+
 源码、示例和问题反馈：<https://github.com/qddidi/di-code>

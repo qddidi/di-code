@@ -1,5 +1,14 @@
 import type { AgentContextProvider, AgentTool, AgentToolResult, ToolExecutionMiddleware } from "@di-code/agent";
 import type { TSchema } from "@di-code/ai";
+import type { PluginInteractiveFrontend } from "./frontend/index.ts";
+
+export type {
+	InteractiveFrontend,
+	InteractiveFrontendCapability,
+	PluginFrontendController,
+	PluginInteractiveFrontend,
+	PluginTerminalFrontendHost,
+} from "./frontend/index.ts";
 
 export const PLUGIN_API_VERSION = 1 as const;
 export type PluginScopeState = "loading" | "active" | "stopping" | "stopped" | "failed";
@@ -45,13 +54,6 @@ export interface PluginCommand {
 	readonly description: string;
 	handler(context: PluginCommandContext): void | Promise<void>;
 }
-export interface PluginInteractiveFrontend {
-	readonly id: string;
-	readonly displayName: string;
-	readonly capabilities: readonly string[];
-	create(): unknown | Promise<unknown>;
-}
-export type InteractiveFrontendCapability = string;
 export interface SubagentProvider {
 	readonly id: string;
 	start(request: unknown, signal?: AbortSignal): Promise<unknown>;
