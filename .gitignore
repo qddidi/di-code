@@ -15,6 +15,7 @@ npm-debug.log*
 .env.*
 !.env.example
 .di-code/*
+.playwright-mcp/*
 
 
 # Editors and operating systems
