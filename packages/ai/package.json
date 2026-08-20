@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/ai",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"description": "Provider-neutral AI contracts and adapters for di-code",
 	"keywords": [
 		"ai",
