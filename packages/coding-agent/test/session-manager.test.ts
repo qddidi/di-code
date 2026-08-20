@@ -242,6 +242,23 @@ describe("SessionManager", () => {
 		expect(manager.messages).toEqual([userMessage("kept", 1)]);
 	});
 
+	it("persists subagent lifecycle records without adding model messages", async () => {
+		const manager = await SessionManager.create({
+			filePath: sessionFile,
+			cwd: root,
+			createId: idSequence("session-1", "run-start", "run-end"),
+		});
+		const started = await manager.appendSubagent({ runId: "run-1", event: "start", status: "running" });
+		const ended = await manager.appendSubagent({ runId: "run-1", event: "end", status: "completed", text: "done" });
+		expect(started.type).toBe("subagent");
+		expect(ended.parentId).toBe(started.id);
+		expect(manager.messages).toEqual([]);
+		expect((await SessionManager.open(sessionFile)).entries.map((entry) => entry.type)).toEqual([
+			"subagent",
+			"subagent",
+		]);
+	});
+
 	it("returns the latest summary when more than one exists", async () => {
 		const manager = await SessionManager.create({
 			filePath: sessionFile,

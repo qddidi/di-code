@@ -18,6 +18,11 @@ export interface InteractiveControllerState extends InteractiveState {
 	readonly provider: string;
 	readonly sessionId: string;
 	readonly streaming: boolean;
+	/** Child runs are host-owned and expose no Agent or Session internals to a frontend. */
+	readonly subagents: readonly {
+		readonly id: string;
+		readonly status: import("@di-code/plugin-runtime").SubagentStatus;
+	}[];
 }
 
 export type InteractiveViewEvent =
@@ -66,6 +71,7 @@ export class InteractiveController {
 			provider: this.session.providerId,
 			sessionId: this.session.sessionId,
 			streaming: this.promptActive,
+			subagents: this.session.subagents?.list().map((run) => ({ id: run.id, status: run.status })) ?? [],
 		};
 	}
 
@@ -147,6 +153,7 @@ export class InteractiveController {
 		if (!choice) throw new Error(`Unknown session: "${sessionId}"`);
 		this.switching = true;
 		try {
+			await this.session.disposeSubagents();
 			const next = await choice.open();
 			this.unsubscribeSession?.();
 			this.session = next;
@@ -184,6 +191,10 @@ export class InteractiveController {
 		this.listeners.clear();
 	}
 
+	async disposeSubagents(): Promise<void> {
+		await this.session.disposeSubagents();
+	}
+
 	private async steerAsync(input: InteractiveInput): Promise<void> {
 		if (!this.promptActive) {
 			this.reportError(new Error("Steering is only available while a prompt is running."));
@@ -201,7 +212,9 @@ export class InteractiveController {
 		this.unsubscribeSession = this.session.subscribeSession((event) => {
 			if (event.type === "queue_update") this.projection.setQueue(event.steering);
 			else if (event.type === "tree_navigated") this.projection.replaceTranscript(this.session.transcript);
-			else this.projection.apply(event);
+			else if (event.type.startsWith("subagent_")) {
+				// Subagent state is read through the restricted controller projection above.
+			} else this.projection.apply(event);
 			this.emit({ type: "session_event", event });
 			this.emitState();
 		});

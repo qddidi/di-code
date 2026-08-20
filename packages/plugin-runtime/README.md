@@ -18,4 +18,10 @@ The package root exports the host-neutral `InteractiveFrontend`, `PluginInteract
 
 Normal plugins may instead register `PluginInteractivePanel` data and `PluginToolDetailRenderer` functions. The active frontend receives copies through `PluginFrontendController.ui` and chooses whether to render them. Panels cannot claim input, write ANSI, or rearrange host layout; result renderers are pure formatters for completed tool results.
 
+## Subagent contract
+
+Plugins may register a `SubagentProvider`, but the host owns the request and the Agent loop. `SubagentStartRequest` fixes the parent Session, working directory, selected model, visible tools/plugins, depth, timeout, and maximum result bytes. A provider returns a `SubagentRun` with `wait()`, `sendMessage()`, and idempotent `cancel()`; it must distinguish `completed`, `failed`, and `cancelled` and must not create a second orchestration loop outside the host.
+
+The coding-agent host supplies an in-process provider and the model tools `subagent`, `subagent_list`, `send_message`, `wait`, and `interrupt`. Depth and concurrency are bounded, results are UTF-8 truncated and diagnostic text is credential-redacted. Providers are not a sandbox: filesystem, process, network, and further delegation remain subject to the child Session's explicit tool policy.
+
 源码、示例和问题反馈：<https://github.com/qddidi/di-code>

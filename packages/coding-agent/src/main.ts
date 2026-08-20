@@ -561,6 +561,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				try {
 					return await runJsonMode(command.prompt, promptRunner, options);
 				} finally {
+					await session.disposeSubagents();
 					await extensions.host.emit({ type: "session_shutdown", reason: "user" });
 					await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 					await mcp.manager.close();
@@ -660,6 +661,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				} finally {
 					controller.cancel();
 					controller.dispose();
+					await controller.disposeSubagents();
 					try {
 						await lifecyclePromise(frontend.dispose(), "dispose");
 					} finally {
@@ -678,6 +680,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			try {
 				return await runPrintMode(command.prompt, promptRunner, options);
 			} finally {
+				await session.disposeSubagents();
 				await extensions.host.emit({ type: "session_shutdown", reason: "user" });
 				await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 				await mcp.manager.close();

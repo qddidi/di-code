@@ -51,8 +51,16 @@ export class CodingAgentPluginHost {
 		return [...this.runtime.snapshot().contributions.commands];
 	}
 
+	listPluginIds(): readonly string[] {
+		return this.runtime.listPluginIds();
+	}
+
 	listInteractiveFrontends(): readonly PluginInteractiveFrontend[] {
 		return [...this.runtime.snapshot().contributions.frontends];
+	}
+
+	snapshot() {
+		return this.runtime.snapshot();
 	}
 
 	getUiContributions(): PluginUiContributions {

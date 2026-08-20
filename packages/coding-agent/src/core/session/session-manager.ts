@@ -15,6 +15,7 @@ import {
 	type SessionEntry,
 	type SessionHeader,
 	type SessionMessageEntry,
+	type SessionSubagentEntry,
 	type SessionSummaryEntry,
 	type SessionTreeNode,
 } from "./types.ts";
@@ -149,6 +150,7 @@ export class SessionManager {
 			const entry = this.entriesById.get(currentId);
 			if (!entry) throw new Error(`Unknown session leaf "${currentId}".`);
 			branch.push(structuredClone(entry));
+			if (entry.parentId === null) throw new Error("Session entry parentId cannot be null.");
 			currentId = entry.parentId;
 		}
 		branch.reverse();
@@ -255,10 +257,40 @@ export class SessionManager {
 		return operation;
 	}
 
+	appendSubagent(
+		input: Omit<SessionSubagentEntry, "type" | "version" | "id" | "parentId" | "timestamp">,
+	): Promise<SessionSubagentEntry> {
+		const inputSnapshot = structuredClone(input);
+		const operation = this.appendQueue.then(async () => {
+			await this.ensureFileCreated();
+			const id = this.createId();
+			assertRecordId(id);
+			const expectedParentId = this.leafId;
+			const entry: SessionSubagentEntry = {
+				type: "subagent",
+				version: SESSION_FORMAT_VERSION,
+				id,
+				parentId: expectedParentId,
+				timestamp: createIsoTimestamp(this.now),
+				...inputSnapshot,
+			};
+			await appendSessionEntry(this.filePath, entry, expectedParentId, this.appendOptions);
+			this.sessionEntries.push(structuredClone(entry));
+			this.addToIndexes(entry);
+			this.activeLeafId = entry.id;
+			return structuredClone(entry);
+		});
+		this.appendQueue = operation.then(
+			() => undefined,
+			() => undefined,
+		);
+		return operation;
+	}
+
 	private addToIndexes(entry: SessionEntry): void {
 		this.entriesById.set(entry.id, structuredClone(entry));
 		const children = this.childrenByParentId.get(entry.parentId) ?? [];
 		children.push(entry.id);
-		this.childrenByParentId.set(entry.parentId, children);
+		if (entry.parentId !== null) this.childrenByParentId.set(entry.parentId, children);
 	}
 }

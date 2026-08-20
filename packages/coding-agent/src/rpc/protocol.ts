@@ -80,6 +80,9 @@ const RPC_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
 	"compaction_start",
 	"compaction_end",
 	"usage_update",
+	"subagent_start",
+	"subagent_update",
+	"subagent_end",
 ]);
 
 const ASSISTANT_STOP_REASONS = new Set(["stop", "length", "tool_use", "error", "aborted"]);
@@ -207,6 +210,17 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 		const event = objectRecord(record.event);
 		if (!event || typeof event.type !== "string" || !RPC_EVENT_TYPES.has(event.type as AgentSessionEvent["type"])) {
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
+		}
+		if (event.type === "subagent_start" || event.type === "subagent_update" || event.type === "subagent_end") {
+			if (
+				typeof event.runId !== "string" ||
+				event.runId.length === 0 ||
+				typeof event.parentSessionId !== "string" ||
+				event.parentSessionId.length === 0 ||
+				!(["running", "completed", "failed", "cancelled"] as const).includes(event.status as never)
+			) {
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC subagent event has invalid lifecycle fields.");
+			}
 		}
 		return record as unknown as RpcEventRecord;
 	}

@@ -90,6 +90,20 @@ describe("RPC protocol v1", () => {
 			}),
 		);
 		expect(event.kind).toBe("event");
+		const subagent = parseRpcServerMessage(
+			JSON.stringify({
+				version: 1,
+				kind: "event",
+				requestId: "prompt-1",
+				event: { type: "subagent_end", runId: "run-1", parentSessionId: "session-1", status: "completed" },
+			}),
+		);
+		expect(subagent.kind).toBe("event");
+		expect(() =>
+			parseRpcServerMessage(
+				JSON.stringify({ version: 1, kind: "event", requestId: "prompt-1", event: { type: "subagent_end" } }),
+			),
+		).toThrow(RpcProtocolError);
 	});
 
 	it("rejects unknown error codes, event types, and malformed method results", () => {

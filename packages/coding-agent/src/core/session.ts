@@ -23,6 +23,7 @@ import type {
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { ExtensionHost } from "../extensions/runtime.ts";
 import type { CodingAgentPluginHost } from "../plugins/runtime-host.ts";
+import { type SubagentEvent, SubagentService } from "../subagents/service.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
@@ -66,6 +67,15 @@ export interface AgentSessionOptions {
 	readonly compaction?: AgentSessionCompactionOptions;
 	readonly extensionHost?: ExtensionHost;
 	readonly runtimePluginHost?: CodingAgentPluginHost;
+	readonly subagentDepth?: number;
+	readonly subagents?:
+		| false
+		| {
+				readonly maxDepth?: number;
+				readonly maxConcurrent?: number;
+				readonly timeoutMs?: number;
+				readonly maxResultBytes?: number;
+		  };
 	/** External tools already validated by the product integration layer. */
 	readonly externalTools?: readonly AgentTool[];
 }
@@ -82,7 +92,8 @@ export type AgentSessionEvent =
 			newLeafId: string;
 			selectedEntryId: string;
 			restoredEditorText: boolean;
-	  };
+	  }
+	| SubagentEvent;
 
 export interface TreeNavigationResult {
 	readonly editorText?: string;
@@ -118,6 +129,7 @@ export class AgentSession {
 	private readonly skillCatalog: SkillCatalog;
 	private readonly extensionHost?: ExtensionHost;
 	private readonly runtimePluginHost?: CodingAgentPluginHost;
+	private readonly subagentService?: SubagentService;
 	private model: Model;
 	private thinkingLevelValue?: ThinkingLevel;
 	private readonly sessionIdValue: string;
@@ -212,6 +224,42 @@ export class AgentSession {
 				})) ?? []),
 			...(options.externalTools ?? []),
 		];
+		if (options.subagents !== false) {
+			this.subagentService = new SubagentService({
+				parentSessionId: this.sessionIdValue,
+				cwd: this.allowedRootValue,
+				provider: options.provider,
+				model: options.model,
+				currentDepth: options.subagentDepth ?? 0,
+				providers: this.runtimePluginHost?.snapshot().contributions.subagentProviders,
+				toolNames: staticTools.map((tool) => tool.name),
+				pluginIds: this.runtimePluginHost?.listPluginIds(),
+				maxDepth: options.subagents?.maxDepth,
+				maxConcurrent: options.subagents?.maxConcurrent,
+				defaultTimeoutMs: options.subagents?.timeoutMs,
+				maxResultBytes: options.subagents?.maxResultBytes,
+				emit: async (event) => {
+					if (this.sessionManager && event.type !== "subagent_update") {
+						await this.sessionManager.appendSubagent({
+							runId: event.runId,
+							event: event.type === "subagent_start" ? "start" : "end",
+							status: event.status,
+							...(event.text === undefined ? {} : { text: event.text }),
+							...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),
+						});
+					}
+					await this.emitSession(event);
+				},
+				createSession: (request) =>
+					new AgentSession({
+						...options,
+						sessionManager: undefined,
+						subagentDepth: request.depth,
+						subagents: options.subagents,
+					}),
+			});
+			staticTools.push(...this.subagentService.createTools());
+		}
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
@@ -362,6 +410,14 @@ export class AgentSession {
 	/** Projects host-owned plugin state without writing arbitrary plugin data to Session JSONL. */
 	async projectPluginState(value: unknown): Promise<Readonly<Record<string, import("@di-code/ai").JsonValue>>> {
 		return (await this.runtimePluginHost?.projectSession(value)) ?? {};
+	}
+
+	get subagents(): SubagentService | undefined {
+		return this.subagentService;
+	}
+
+	async disposeSubagents(): Promise<void> {
+		await this.subagentService?.dispose();
 	}
 
 	get sessionDiagnostics(): readonly SessionDiagnostic[] {

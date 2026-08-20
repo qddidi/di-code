@@ -12,3 +12,4 @@ export * from "./mcp/config.ts";
 export * from "./mcp/loader.ts";
 export * from "./mcp/tool-adapter.ts";
 export * from "./plugins/index.ts";
+export * from "./subagents/index.ts";

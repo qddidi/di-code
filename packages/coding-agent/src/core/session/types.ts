@@ -29,7 +29,18 @@ export interface SessionSummaryEntry extends SessionRecordBase {
 	readonly tokensBefore: number;
 }
 
-export type SessionEntry = SessionMessageEntry | SessionSummaryEntry;
+/** Durable projection of a child Agent lifecycle event; it never becomes model context. */
+export interface SessionSubagentEntry extends SessionRecordBase {
+	readonly type: "subagent";
+	readonly parentId: string;
+	readonly runId: string;
+	readonly event: "start" | "update" | "end";
+	readonly status: "running" | "completed" | "failed" | "cancelled";
+	readonly text?: string;
+	readonly errorMessage?: string;
+}
+
+export type SessionEntry = SessionMessageEntry | SessionSummaryEntry | SessionSubagentEntry;
 
 /** An immutable entry snapshot with its append-ordered descendants. */
 export interface SessionTreeNode {

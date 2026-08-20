@@ -1,6 +1,7 @@
 import type { AgentContextProvider, AgentTool, AgentToolResult, ToolExecutionMiddleware } from "@di-code/agent";
 import type { TSchema } from "@di-code/ai";
 import type { PluginInteractiveFrontend, PluginInteractivePanel, PluginToolDetailRenderer } from "./frontend/index.ts";
+import type { SubagentProvider } from "./subagents.ts";
 
 export type {
 	InteractiveFrontend,
@@ -12,6 +13,14 @@ export type {
 	PluginToolDetailRenderer,
 	PluginUiContributions,
 } from "./frontend/index.ts";
+export type {
+	SubagentInput,
+	SubagentProvider,
+	SubagentResult,
+	SubagentRun,
+	SubagentStartRequest,
+	SubagentStatus,
+} from "./subagents.ts";
 
 export const PLUGIN_API_VERSION = 1 as const;
 export type PluginScopeState = "loading" | "active" | "stopping" | "stopped" | "failed";
@@ -56,10 +65,6 @@ export interface PluginCommand {
 	readonly name: string;
 	readonly description: string;
 	handler(context: PluginCommandContext): void | Promise<void>;
-}
-export interface SubagentProvider {
-	readonly id: string;
-	start(request: unknown, signal?: AbortSignal): Promise<unknown>;
 }
 export type PluginEventType = string;
 export type PluginEventHandler<E extends PluginEventType = PluginEventType> = (
@@ -248,6 +253,9 @@ export class PluginHost {
 	}
 	getToolMiddleware(): readonly ToolExecutionMiddleware[] {
 		return [...this.registry.toolMiddleware];
+	}
+	listPluginIds(): readonly string[] {
+		return [...this.scopes.keys()];
 	}
 	registerPlugin(pluginId: string, factory: PluginFactory): Promise<PluginScope> {
 		return this.load(pluginId, factory);
@@ -463,6 +471,9 @@ export class PluginHost {
 			renderedTools.add(renderer.toolName);
 		}
 		this.validateUnique(staged.subagentProviders, this.registry.subagentProviders, "subagent provider");
+		for (const provider of staged.subagentProviders) {
+			if (typeof provider.start !== "function") throw new Error("subagent provider.start must be a function");
+		}
 		this.validateUnique(staged.sessionProjections, this.registry.sessionProjections, "session projection");
 	}
 	private validateUnique<T extends { id: string }>(staged: T[], existing: readonly T[], kind: string): void {

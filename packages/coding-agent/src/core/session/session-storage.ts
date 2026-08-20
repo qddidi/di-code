@@ -8,6 +8,7 @@ import {
 	type SessionHeader,
 	SessionLoadError,
 	type SessionMessageEntry,
+	type SessionSubagentEntry,
 	type SessionSummaryEntry,
 	SessionWriteError,
 } from "./types.ts";
@@ -186,8 +187,8 @@ function decodeHeader(value: unknown, filePath: string): SessionHeader {
 }
 
 function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; readonly reason?: string } {
-	if (!isObject(value) || (value.type !== "message" && value.type !== "summary")) {
-		return { reason: 'record type must be "message" or "summary"' };
+	if (!isObject(value) || (value.type !== "message" && value.type !== "summary" && value.type !== "subagent")) {
+		return { reason: 'record type must be "message", "summary", or "subagent"' };
 	}
 	if (value.version !== SESSION_FORMAT_VERSION) return { reason: `record version must be ${SESSION_FORMAT_VERSION}` };
 	if (!isRecordId(value.id)) return { reason: "record id is invalid" };
@@ -196,6 +197,18 @@ function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; re
 	if (value.type === "message") {
 		if (!isMessage(value.message)) return { reason: "record message does not match the Message contract" };
 		return { entry: value as unknown as SessionMessageEntry };
+	}
+	if (value.type === "subagent") {
+		if (!isNonEmptyString(value.runId)) return { reason: "record subagent runId must be a non-empty string" };
+		if (value.event !== "start" && value.event !== "update" && value.event !== "end")
+			return { reason: "record subagent event is invalid" };
+		if (!(["running", "completed", "failed", "cancelled"] as const).includes(value.status as never))
+			return { reason: "record subagent status is invalid" };
+		if (value.text !== undefined && typeof value.text !== "string")
+			return { reason: "record subagent text must be a string" };
+		if (value.errorMessage !== undefined && typeof value.errorMessage !== "string")
+			return { reason: "record subagent errorMessage must be a string" };
+		return { entry: value as unknown as SessionSubagentEntry };
 	}
 	if (typeof value.summary !== "string" || value.summary.trim().length === 0) {
 		return { reason: "record summary must be a non-empty string" };
@@ -261,7 +274,8 @@ export async function loadSessionFile(filePath: string): Promise<LoadedSession> 
 			const decoded = decodeSessionEntry(value);
 			if (!decoded.entry) throw new Error(decoded.reason ?? "Invalid session message record.");
 			if (seenIds.has(decoded.entry.id)) throw new Error("record id is duplicated");
-			if (!seenIds.has(decoded.entry.parentId)) throw new Error("record parentId must reference an earlier record");
+			if (decoded.entry.parentId === null || !seenIds.has(decoded.entry.parentId))
+				throw new Error("record parentId must reference an earlier record");
 			if (decoded.entry.type === "summary") {
 				const firstKept = entriesById.get(decoded.entry.firstKeptEntryId);
 				if (
@@ -309,6 +323,7 @@ function isAncestor(
 		if (currentId === ancestorId) return true;
 		const current = entriesById.get(currentId);
 		if (!current) return false;
+		if (current.parentId === null) return false;
 		currentId = current.parentId;
 	}
 	return false;
