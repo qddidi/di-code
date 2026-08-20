@@ -471,6 +471,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					"bash",
 					"load_skill",
 					...extensions.host.listTools().map((tool) => tool.name),
+					...extensions.runtimeHost.listTools().map((tool) => tool.name),
 				],
 				...(interactiveMcpStatus
 					? {
@@ -504,6 +505,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				sessionManager: manager,
 				extensionHost: extensions.host,
 				externalTools: mcp.tools,
+				runtimePluginHost: extensions.runtimeHost,
 			});
 			const imagePaths = command.imagePaths ?? [];
 			const promptRunner = {
@@ -512,11 +514,14 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			};
 			if (command.mode === "json") {
 				await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+				await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });
 				try {
 					return await runJsonMode(command.prompt, promptRunner, options);
 				} finally {
 					await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+					await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 					await mcp.manager.close();
+					await extensions.runtimeHost.dispose();
 				}
 			}
 			if (command.mode === "interactive") {
@@ -529,6 +534,8 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
 					onExit: () => {
 						void mcp.manager.close();
+						void extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
+						void extensions.runtimeHost.dispose();
 					},
 					extensionHost: extensions.host,
 					...(options.startupConfiguration
@@ -561,6 +568,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 									sessionManager: nextManager,
 									extensionHost: extensions.host,
 									externalTools: mcp.tools,
+									runtimePluginHost: extensions.runtimeHost,
 								});
 							},
 						},
@@ -577,6 +585,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								sessionManager: nextManager,
 								extensionHost: extensions.host,
 								externalTools: mcp.tools,
+								runtimePluginHost: extensions.runtimeHost,
 							});
 						})),
 					],
@@ -585,11 +594,14 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				return 0;
 			}
 			await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+			await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });
 			try {
 				return await runPrintMode(command.prompt, promptRunner, options);
 			} finally {
 				await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+				await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 				await mcp.manager.close();
+				await extensions.runtimeHost.dispose();
 			}
 		},
 	};

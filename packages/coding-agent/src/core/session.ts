@@ -22,6 +22,7 @@ import type {
 } from "@di-code/ai";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { ExtensionHost } from "../extensions/runtime.ts";
+import type { CodingAgentPluginHost } from "../plugins/runtime-host.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
@@ -64,6 +65,7 @@ export interface AgentSessionOptions {
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
 	readonly extensionHost?: ExtensionHost;
+	readonly runtimePluginHost?: CodingAgentPluginHost;
 	/** External tools already validated by the product integration layer. */
 	readonly externalTools?: readonly AgentTool[];
 }
@@ -115,6 +117,7 @@ export class AgentSession {
 	private readonly skills: readonly SkillResource[];
 	private readonly skillCatalog: SkillCatalog;
 	private readonly extensionHost?: ExtensionHost;
+	private readonly runtimePluginHost?: CodingAgentPluginHost;
 	private model: Model;
 	private thinkingLevelValue?: ThinkingLevel;
 	private readonly sessionIdValue: string;
@@ -155,6 +158,7 @@ export class AgentSession {
 			})),
 		);
 		this.extensionHost = options.extensionHost;
+		this.runtimePluginHost = options.runtimePluginHost;
 		this.model = options.model;
 		this.thinkingLevelValue =
 			options.thinkingLevel !== undefined && this.model.reasoningEfforts?.includes(options.thinkingLevel)
@@ -185,21 +189,18 @@ export class AgentSession {
 			if (message.role === "assistant") this.addUsage(message.usage);
 		}
 		const initialContext = options.sessionManager?.buildContext();
-		this.agent = new Agent({
-			provider: options.provider,
-			model: options.model,
-			thinkingLevel: this.thinkingLevelValue,
-			systemPrompt: options.systemPrompt,
-			sessionId: this.sessionIdValue,
-			tools: [
-				createReadTool(options.allowedRoot),
-				createWriteTool(options.allowedRoot),
-				createEditTool(options.allowedRoot),
-				createBashTool(options.allowedRoot),
-				createGlobTool(options.allowedRoot),
-				createGrepTool(options.allowedRoot),
-				...(this.skillCatalog.listForModel().length > 0 ? [createLoadSkillTool(this.skillCatalog)] : []),
-				...(this.extensionHost?.listTools().map((tool) => ({
+		const staticTools: AgentTool<import("@di-code/ai").TSchema, import("@di-code/agent").AgentToolResult>[] = [
+			createReadTool(options.allowedRoot),
+			createWriteTool(options.allowedRoot),
+			createEditTool(options.allowedRoot),
+			createBashTool(options.allowedRoot),
+			createGlobTool(options.allowedRoot),
+			createGrepTool(options.allowedRoot),
+			...(this.skillCatalog.listForModel().length > 0 ? [createLoadSkillTool(this.skillCatalog)] : []),
+			...(this.extensionHost
+				?.listTools()
+				.filter((tool) => !this.runtimePluginHost?.listTools().some((runtimeTool) => runtimeTool.name === tool.name))
+				.map((tool) => ({
 					name: tool.name,
 					description: tool.description,
 					parameters: tool.parameters,
@@ -209,8 +210,19 @@ export class AgentSession {
 						return [...result];
 					},
 				})) ?? []),
-				...(options.externalTools ?? []),
-			],
+			...(options.externalTools ?? []),
+		];
+		this.agent = new Agent({
+			provider: options.provider,
+			model: options.model,
+			thinkingLevel: this.thinkingLevelValue,
+			systemPrompt: options.systemPrompt,
+			contextProvider: this.runtimePluginHost?.getContextProvider({
+				systemPrompt: options.systemPrompt,
+				tools: staticTools,
+			}),
+			sessionId: this.sessionIdValue,
+			tools: staticTools,
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,
@@ -240,6 +252,7 @@ export class AgentSession {
 				}
 			}
 			if (this.extensionHost) await this.extensionHost.emit(event, signal);
+			if (this.runtimePluginHost) await this.runtimePluginHost.emit(event, signal);
 			await this.emitSession(event);
 		});
 	}
@@ -344,6 +357,11 @@ export class AgentSession {
 
 	get sessionFile(): string | undefined {
 		return this.sessionManager?.filePath;
+	}
+
+	/** Projects host-owned plugin state without writing arbitrary plugin data to Session JSONL. */
+	async projectPluginState(value: unknown): Promise<Readonly<Record<string, import("@di-code/ai").JsonValue>>> {
+		return (await this.runtimePluginHost?.projectSession(value)) ?? {};
 	}
 
 	get sessionDiagnostics(): readonly SessionDiagnostic[] {

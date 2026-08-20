@@ -454,6 +454,8 @@ di-code --no-skills "不要加载任何 Skill"
 2. interactive 模式中的 slash command；
 3. Agent 与会话生命周期事件处理器。
 
+阶段 3 的宿主适配器 `CodingAgentPluginHost` 还支持 runtime prompt sections、工具 middleware、frontend/subagent 注册和显式 Session projection。`AgentSession` 在每次 Provider 请求前解析不可变快照；插件更新不会改变当前请求，下一次请求才会看到新贡献。scope 关闭按逆序释放资源，重复关闭安全；Session JSONL 不会自动保存插件状态，只有通过 `projectPluginState()` 显式投影的数据才会进入产品层。
+
 插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。interactive 启动时，每个实际加载的插件会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出该插件新增的 tools 和 slash commands 数量。print 和 JSON 模式保持 `plugin_diagnostic` 输出。
 
 ### 使用项目本地插件

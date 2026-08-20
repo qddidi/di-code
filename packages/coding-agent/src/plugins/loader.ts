@@ -2,12 +2,14 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { PluginFactory } from "@di-code/plugin-runtime";
 import { createJiti } from "jiti";
 import { type ExtensionHost, loadExtensions } from "../extensions/runtime.ts";
 import type { ProjectTrustManager } from "../extensions/trust.ts";
 import type { ExtensionFactory } from "../extensions/types.ts";
 import { PluginManager } from "./manager.ts";
 import { readPackagePluginManifest, readPluginManifest, resolvePluginEntry } from "./manifest.ts";
+import { type CodingAgentPluginHost, createCodingAgentPluginHost } from "./runtime-host.ts";
 import type { DiscoveredPlugin, PluginDiagnostic, PluginDiagnosticStage } from "./types.ts";
 
 /** A plugin loading transition emitted after its manifest is discovered. */
@@ -35,6 +37,7 @@ export interface PluginLoadOptions {
 
 export interface PluginLoadResult {
 	readonly host: ExtensionHost;
+	readonly runtimeHost: CodingAgentPluginHost;
 	readonly loaded: readonly DiscoveredPlugin[];
 	readonly diagnostics: readonly PluginDiagnostic[];
 }
@@ -75,6 +78,12 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 		mode: options.mode,
 		paths: options.explicitPaths,
 	});
+	const runtimeHost = createCodingAgentPluginHost({
+		cwd,
+		mode: options.mode ?? "json",
+		projectTrusted: trusted,
+		reservedCommands: ["help", "clear", "model", "session", "theme", "settings", "compact", "usage", "retry"],
+	});
 	const diagnostics: PluginDiagnostic[] = extensionResult.diagnostics.map((diagnostic) => ({
 		sourcePath: diagnostic.path,
 		stage: diagnostic.stage,
@@ -112,7 +121,20 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 			const entry = await resolvePluginEntry(root, manifest.entry);
 			const module = await jiti.import<{ default?: unknown }>(entry);
 			if (typeof module.default !== "function") throw new Error("plugin entry must export a default factory function");
-			await extensionResult.host.registerExtension(entry, module.default as ExtensionFactory, manifest.id);
+			const factory = module.default as ExtensionFactory;
+			let runtimeLoaded = false;
+			try {
+				await runtimeHost.load(manifest.id, factory as unknown as PluginFactory);
+				runtimeLoaded = true;
+			} catch (cause) {
+				// A legacy factory may not understand the new API; try the frozen baseline below.
+				if (!String(cause instanceof Error ? cause.message : cause).includes("is not a function")) throw cause;
+			}
+			try {
+				await extensionResult.host.registerExtension(entry, factory, manifest.id);
+			} catch (cause) {
+				if (!runtimeLoaded) throw cause;
+			}
 			loaded.push({ manifest, root, sourcePath: manifestPath, projectLocal });
 			options.onPluginLoadStatus?.({
 				state: "loaded",
@@ -138,5 +160,5 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 			});
 		}
 	}
-	return { host: extensionResult.host, loaded, diagnostics };
+	return { host: extensionResult.host, runtimeHost, loaded, diagnostics };
 }
