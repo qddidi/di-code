@@ -58,6 +58,10 @@ export interface MainOptions extends PrintIo {
 	) => Promise<boolean>;
 	/** Test and embedding hook; production uses the process terminal. */
 	readonly createTerminal?: () => PluginTerminalFrontendHost;
+	/** Test and embedding hook for observing or supplying the dynamic plugin broker. */
+	readonly createDynamicPluginBroker?: (
+		options: ConstructorParameters<typeof DynamicPluginBroker>[0],
+	) => DynamicPluginBroker;
 }
 
 const MAX_SESSION_QUESTION_LENGTH = 72;
@@ -520,17 +524,27 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					`${JSON.stringify({ type: "plugin_diagnostic", pluginId: diagnostic.pluginId, stage: diagnostic.stage, sourcePath: diagnostic.sourcePath, severity: diagnostic.severity, message: diagnostic.message })}\n`,
 				);
 			}
-			const dynamicPluginBroker = new DynamicPluginBroker({
+			const dynamicPluginBrokerOptions = {
 				cwd: allowedRoot,
 				mode: command.mode,
+				model: runtime.model.id,
+				projectTrusted: persistedTrust === true,
 				allowDynamicPlugins: command.allowDynamicPlugins === true,
 				confirmRun: options.promptDynamicPluginRun,
 				onDiagnostic: (diagnostic) => {
 					if (command.mode === "interactive")
 						options.stderr(`Dynamic plugin [${diagnostic.stage}] ${diagnostic.message}\n`);
 				},
-			});
+			} satisfies ConstructorParameters<typeof DynamicPluginBroker>[0];
+			const dynamicPluginBroker =
+				options.createDynamicPluginBroker?.(dynamicPluginBrokerOptions) ??
+				new DynamicPluginBroker(dynamicPluginBrokerOptions);
 			const dynamicTools = dynamicPluginBroker.createTools();
+			const emitDynamicLifecycle = (
+				event:
+					| { readonly type: "session_start"; readonly cwd: string }
+					| { readonly type: "session_shutdown"; readonly reason: "user" | "error" },
+			): Promise<void> => dynamicPluginBroker.emit(event);
 			const interactiveMcpStatus = command.mode === "interactive";
 			const mcp = await loadProjectMcp({
 				cwd: allowedRoot,
@@ -552,6 +566,16 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 						}
 					: {}),
 			});
+			dynamicPluginBroker.setReservedToolNames([
+				"read",
+				"write",
+				"edit",
+				"bash",
+				"load_skill",
+				...extensions.runtimeHost.listTools().map((tool) => tool.name),
+				...mcp.tools.map((tool) => tool.name),
+				...dynamicTools.map((tool) => tool.name),
+			]);
 			for (const diagnostic of mcp.diagnostics) {
 				if (interactiveMcpStatus) {
 					if (diagnostic.serverId && (diagnostic.stage === "connect" || diagnostic.stage === "list_tools")) continue;
@@ -577,6 +601,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				sessionManager: manager,
 				externalTools: [...mcp.tools, ...dynamicTools],
 				runtimePluginHost: extensions.runtimeHost,
+				dynamicPluginBroker,
 			});
 			const imagePaths = command.imagePaths ?? [];
 			const promptRunner = {
@@ -585,10 +610,12 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 			};
 			if (command.mode === "json") {
 				await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });
+				await emitDynamicLifecycle({ type: "session_start", cwd: allowedRoot });
 				try {
 					return await runJsonMode(command.prompt, promptRunner, options);
 				} finally {
 					await session.disposeSubagents();
+					await emitDynamicLifecycle({ type: "session_shutdown", reason: "user" });
 					await dynamicPluginBroker.dispose();
 					await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 					await mcp.manager.close();
@@ -624,6 +651,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 								sessionManager: nextManager,
 								externalTools: [...mcp.tools, ...dynamicTools],
 								runtimePluginHost: extensions.runtimeHost,
+								dynamicPluginBroker,
 							});
 						},
 					},
@@ -640,6 +668,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 							sessionManager: nextManager,
 							externalTools: [...mcp.tools, ...dynamicTools],
 							runtimePluginHost: extensions.runtimeHost,
+							dynamicPluginBroker,
 						});
 					})),
 				];
@@ -692,6 +721,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					if (frontendId !== "builtin") {
 						await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });
 					}
+					await emitDynamicLifecycle({ type: "session_start", cwd: allowedRoot });
 					await lifecyclePromise(frontend.start(controller, terminal), "start");
 				} catch (cause) {
 					shutdownReason = "error";
@@ -707,6 +737,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 					controller.cancel();
 					controller.dispose();
 					await cleanup(() => controller.disposeSubagents());
+					await cleanup(() => emitDynamicLifecycle({ type: "session_shutdown", reason: shutdownReason }));
 					await cleanup(() => dynamicPluginBroker.dispose());
 					await cleanup(async () => lifecyclePromise(frontend.dispose(), "dispose"));
 					await cleanup(() => terminal.stop());
@@ -728,10 +759,12 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				return 0;
 			}
 			await extensions.runtimeHost.emit({ type: "session_start", cwd: allowedRoot });
+			await emitDynamicLifecycle({ type: "session_start", cwd: allowedRoot });
 			try {
 				return await runPrintMode(command.prompt, promptRunner, options);
 			} finally {
 				await session.disposeSubagents();
+				await emitDynamicLifecycle({ type: "session_shutdown", reason: "user" });
 				await dynamicPluginBroker.dispose();
 				await extensions.runtimeHost.emit({ type: "session_shutdown", reason: "user" });
 				await mcp.manager.close();

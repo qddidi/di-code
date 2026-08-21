@@ -4,10 +4,13 @@ import {
 	DYNAMIC_PLUGIN_PROTOCOL_VERSION,
 	DynamicPluginRuntime,
 	Package,
+	parseDynamicPluginCapabilityJsonl,
+	parseDynamicPluginCapabilityRecord,
 	parseDynamicPluginJsonl,
 	parseDynamicPluginJsonlRecord,
 	parseDynamicPluginRequest,
 	parseDynamicPluginResponse,
+	stringifyDynamicPluginCapabilityJsonl,
 	stringifyDynamicPluginJsonl,
 } from "../src/index.ts";
 
@@ -102,5 +105,41 @@ describe("dynamic plugin runtime protocol", () => {
 			params: { runId: "missing" },
 		});
 		expect(response).toMatchObject({ ok: false, error: { code: "not_found" } });
+	});
+
+	it("validates capability registration and revocation records", () => {
+		const registration = {
+			version: 1 as const,
+			id: "cap-1",
+			method: "capability_register" as const,
+			params: {
+				runId: "run-1",
+				pluginId: "temporary-tools",
+				capability: {
+					type: "tool" as const,
+					id: "temporary-tools__echo",
+					name: "temporary-tools__echo",
+					description: "echo",
+					parameters: { type: "object", properties: {}, additionalProperties: false },
+				},
+			},
+		};
+		const line = stringifyDynamicPluginCapabilityJsonl(registration);
+		expect(parseDynamicPluginCapabilityJsonl(line)).toEqual(registration);
+		expect(parseDynamicPluginJsonlRecord(stringifyDynamicPluginJsonl(registration))).toEqual(registration);
+		const runtime = new DynamicPluginRuntime();
+		const pkg = runtime.define(definition);
+		const run = runtime.startRun(pkg.id);
+		runtime.activateRun(run.id);
+		runtime.registerCapability(run.id, registration.params.capability);
+		expect(runtime.getRun(run.id)?.snapshot().capabilities).toEqual([registration.params.capability]);
+		runtime.revokeCapability(run.id, registration.params.capability.id);
+		expect(runtime.getRun(run.id)?.snapshot().capabilities).toEqual([]);
+		expect(() =>
+			parseDynamicPluginCapabilityRecord({
+				...registration,
+				params: { ...registration.params, capability: { ...registration.params.capability, name: "wrong" } },
+			}),
+		).toThrow("namespace");
 	});
 });

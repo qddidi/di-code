@@ -142,16 +142,26 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 				? await readPluginManifest(manifestPath).catch(async () =>
 						syntheticManifest(root, candidate.entryOverride as string),
 					)
-				: await readPluginManifest(manifestPath).catch(async () => readPackagePluginManifest(root));
+				: existsSync(manifestPath)
+					? await readPluginManifest(manifestPath)
+					: await readPackagePluginManifest(root);
 		} catch (cause) {
 			const message = cause instanceof Error ? cause.message : String(cause);
+			// Keep path escape failures on the historical entry-resolution diagnostic path.
+			// The shared parser still rejects them before any module import occurs.
+			const stage: Extract<PluginDiagnosticStage, "manifest" | "import"> = message.includes(
+				"plugin manifest entry must be relative",
+			)
+				? "import"
+				: "manifest";
+			const diagnosticMessage = stage === "import" ? "plugin entry must stay inside the plugin root" : message;
 			diagnostics.push({
 				sourcePath: manifestPath,
-				stage: "manifest",
+				stage,
 				severity: "error",
-				message,
+				message: diagnosticMessage,
 			});
-			options.onPluginLoadStatus?.({ state: "failed", sourcePath: manifestPath, stage: "manifest", message });
+			options.onPluginLoadStatus?.({ state: "failed", sourcePath: manifestPath, stage, message: diagnosticMessage });
 			continue;
 		}
 		const projectLocal = root.startsWith(resolve(cwd, ".di-code", "plugins"));

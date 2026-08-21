@@ -3,12 +3,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/session.ts";
 import { InteractiveController } from "../src/interactive/controller.ts";
 import {
+	connectWebSocketTransport,
 	createWebAuthorization,
 	parseWebClientMessage,
+	WebClient,
 	WebFrontendHost,
 	type WebServerMessage,
+	WebSocketTransport,
 	type WebTransport,
 } from "../src/web.ts";
+import { WebFrontendApp } from "../src/web-frontend.ts";
 
 class FakeTransport implements WebTransport {
 	readonly sent: WebServerMessage[] = [];
@@ -31,6 +35,68 @@ class FakeTransport implements WebTransport {
 	push(message: unknown): void {
 		const text = JSON.stringify(message);
 		for (const listener of this.messageListeners) listener(text);
+	}
+}
+
+class LinkedTransport extends FakeTransport {
+	peer?: LinkedTransport;
+	override send(message: string): void {
+		super.send(message);
+		this.peer?.push(JSON.parse(message));
+	}
+}
+
+class FakeSocket {
+	readonly sent: string[] = [];
+	private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+	addEventListener(type: "open" | "message" | "close", listener: (event: unknown) => void): void {
+		const set = this.listeners.get(type) ?? new Set();
+		set.add(listener);
+		this.listeners.set(type, set);
+	}
+	removeEventListener(type: "open" | "message" | "close", listener: (event: unknown) => void): void {
+		this.listeners.get(type)?.delete(listener);
+	}
+	send(message: string): void {
+		this.sent.push(message);
+	}
+	close(): void {
+		for (const listener of this.listeners.get("close") ?? []) listener({});
+	}
+	open(): void {
+		for (const listener of this.listeners.get("open") ?? []) listener({});
+	}
+	message(data: string): void {
+		for (const listener of this.listeners.get("message") ?? []) listener({ data });
+	}
+}
+
+class FakeElement {
+	className = "";
+	textContent: string | null = null;
+	value = "";
+	disabled = false;
+	readonly attributes = new Map<string, string>();
+	readonly children: FakeElement[] = [];
+	readonly listeners = new Map<string, (event: unknown) => void>();
+	setAttribute(name: string, value: string): void {
+		this.attributes.set(name, value);
+	}
+	append(...children: FakeElement[]): void {
+		this.children.push(...children);
+	}
+	replaceChildren(...children: FakeElement[]): void {
+		this.children.splice(0, this.children.length, ...children);
+	}
+	addEventListener(type: string, listener: (event: unknown) => void): void {
+		this.listeners.set(type, listener);
+	}
+}
+
+class FakeDocument {
+	readonly body = new FakeElement();
+	createElement(): FakeElement {
+		return new FakeElement();
 	}
 }
 
@@ -142,5 +208,88 @@ describe("WebFrontendHost", () => {
 		transport.push({ version: 1, kind: "action", requestId: "stale", baseEventId: 0, action: { type: "cancel" } });
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		expect(transport.sent.at(-1)).toMatchObject({ kind: "error", code: "STALE_EVENT" });
+	});
+
+	it("adapts browser WebSocket events and reconnects with the last event id", async () => {
+		const socket = new FakeSocket();
+		const transport = new WebSocketTransport(socket);
+		const received: string[] = [];
+		transport.onMessage((message) => received.push(message));
+		socket.message("hello");
+		expect(received).toEqual(["hello"]);
+		transport.send("outbound");
+		expect(socket.sent).toEqual(["outbound"]);
+		transport.close();
+		const clientTransport = new FakeTransport();
+		const client = new WebClient(clientTransport);
+		const firstConnect = client.connect("token", "web");
+		const firstRequestId = (clientTransport.sent.at(-1) as unknown as { requestId: string }).requestId;
+		clientTransport.push({
+			version: 1,
+			kind: "hello",
+			requestId: firstRequestId,
+			connectionId: "c",
+			sessionId: "s",
+			state: {},
+			slots: [],
+			eventId: 8,
+		});
+		await firstConnect;
+		const nextTransport = new FakeTransport();
+		const reconnect = client.reconnect(nextTransport, "token", "web");
+		const requestId = (nextTransport.sent.at(-1) as unknown as { requestId: string }).requestId;
+		nextTransport.push({
+			version: 1,
+			kind: "hello",
+			requestId,
+			connectionId: "c2",
+			sessionId: "s",
+			state: {},
+			slots: [],
+			eventId: 8,
+			replayedFrom: 8,
+		});
+		await expect(reconnect).resolves.toMatchObject({ replayedFrom: 8 });
+		client.close();
+	});
+
+	it("opens the browser transport only after the socket handshake", async () => {
+		let socket: FakeSocket | undefined;
+		class SocketConstructor extends FakeSocket {
+			constructor(_url: string) {
+				super();
+				socket = this;
+			}
+		}
+		const pending = connectWebSocketTransport("wss://example.test", { WebSocket: SocketConstructor });
+		socket?.open();
+		const transport = await pending;
+		const messages: string[] = [];
+		transport.onMessage((message) => messages.push(message));
+		socket?.message("{}");
+		expect(messages).toEqual(["{}"]);
+		transport.close();
+	});
+
+	it("renders a usable browser frontend and dispose leaves the host-owned session intact", async () => {
+		const host = createHost();
+		const server = new LinkedTransport();
+		const clientTransport = new LinkedTransport();
+		server.peer = clientTransport;
+		clientTransport.peer = server;
+		host.attach(server);
+		const root = new FakeElement();
+		const app = new WebFrontendApp({
+			client: new WebClient(clientTransport),
+			token: "browser-token",
+			frontendId: "web",
+			document: new FakeDocument(),
+			root,
+		});
+		await app.start();
+		expect(root.children).toHaveLength(2);
+		app.dispose();
+		expect(() => host.attach(new FakeTransport())).not.toThrow();
+		await host.dispose();
 	});
 });

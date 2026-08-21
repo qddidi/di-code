@@ -9,31 +9,55 @@ export type {
 	DynamicPackageDefinition,
 	DynamicPackageSnapshot,
 	DynamicPackageState,
+	DynamicPluginCancelRequest,
+	DynamicPluginCapability,
+	DynamicPluginCapabilityMethod,
+	DynamicPluginCapabilityRecord,
+	DynamicPluginCapabilityRegister,
+	DynamicPluginCapabilityRevoke,
+	DynamicPluginChildInvocationRecord,
+	DynamicPluginContext,
+	DynamicPluginEventCapability,
+	DynamicPluginHostRequest,
 	DynamicPluginInspection,
+	DynamicPluginInvocationAction,
+	DynamicPluginInvokeRequest,
+	DynamicPluginInvokeResult,
 	DynamicPluginLimits,
+	DynamicPluginMiddlewareCapability,
+	DynamicPluginMiddlewareNextRequest,
+	DynamicPluginMiddlewareNextResult,
+	DynamicPluginPromptCapability,
+	DynamicPluginRecord,
 	DynamicPluginRequest,
 	DynamicPluginResponse,
 	DynamicPluginRpcMethod,
 	DynamicPluginRpcRequest,
 	DynamicPluginRpcResponse,
+	DynamicPluginToolCapability,
 	PluginDefineRequest,
 	PluginRunRequest,
 	PluginStopRequest,
 } from "./dynamic/index.ts";
 export {
 	ActiveRun,
+	DYNAMIC_PLUGIN_MAX_CAPABILITY_BYTES,
 	DYNAMIC_PLUGIN_MAX_LINE_BYTES,
 	DYNAMIC_PLUGIN_MAX_SOURCE_BYTES,
 	DYNAMIC_PLUGIN_PROTOCOL_VERSION,
 	DynamicPluginRuntime,
 	encodeDynamicPluginJsonl,
 	Package,
+	parseDynamicPluginCapabilityJsonl,
+	parseDynamicPluginCapabilityRecord,
+	parseDynamicPluginChildInvocationRecord,
 	parseDynamicPluginJsonl,
 	parseDynamicPluginJsonlRecord,
 	parseDynamicPluginRecord,
 	parseDynamicPluginRequest,
 	parseDynamicPluginRequestLine,
 	parseDynamicPluginResponse,
+	stringifyDynamicPluginCapabilityJsonl,
 	stringifyDynamicPluginJsonl,
 } from "./dynamic/index.ts";
 export type {
@@ -565,10 +589,13 @@ export function parsePluginManifest(value: unknown): PluginManifest {
 	for (const field of ["id", "name", "version", "entry"] as const) nonEmpty(r[field], `plugin manifest ${field}`);
 	if (!(r.id as string).match(/^[a-z0-9]+(?:-[a-z0-9]+)*$/) || (r.id as string).length > 64)
 		throw new Error("plugin manifest id must use lowercase letters, numbers, and single hyphens");
+	const entry = r.entry as string;
 	if (
-		(r.entry as string).startsWith("/") ||
-		/^[A-Za-z]:[\\/]/.test(r.entry as string) ||
-		(r.entry as string).split(/[\\/]/).some((part) => part === "..")
+		entry.length > 512 ||
+		entry.startsWith("/") ||
+		entry.startsWith("\\") ||
+		/^[A-Za-z]:[\\/]/.test(entry) ||
+		entry.split(/[\\/]/).some((part) => part === "..")
 	)
 		throw new Error("plugin manifest entry must be relative to the plugin root");
 	if (!r.permissions || typeof r.permissions !== "object" || Array.isArray(r.permissions))
@@ -578,9 +605,11 @@ export function parsePluginManifest(value: unknown): PluginManifest {
 		throw new Error("invalid plugin filesystem permission");
 	if (
 		!Array.isArray(p.network) ||
-		!p.network.every((x) => typeof x === "string" && x.trim() !== "") ||
+		p.network.length > 64 ||
+		!p.network.every((x) => typeof x === "string" && x.trim() !== "" && x.length <= 512) ||
 		!Array.isArray(p.process) ||
-		!p.process.every((x) => typeof x === "string" && x.trim() !== "")
+		p.process.length > 64 ||
+		!p.process.every((x) => typeof x === "string" && x.trim() !== "" && x.length <= 128)
 	)
 		throw new Error("invalid plugin permissions");
 	if (!(p.process as string[]).every((command) => /^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(command)))
@@ -597,7 +626,10 @@ export function parsePluginManifest(value: unknown): PluginManifest {
 		throw new Error("plugin permissions.network only permits absolute HTTPS URLs");
 	if (
 		r.capabilities !== undefined &&
-		(!Array.isArray(r.capabilities) || !r.capabilities.every((item) => typeof item === "string" && item.trim() !== ""))
+		(!Array.isArray(r.capabilities) ||
+			r.capabilities.length > 64 ||
+			!r.capabilities.every((item) => typeof item === "string" && item.trim() !== "" && item.length <= 64) ||
+			new Set(r.capabilities).size !== r.capabilities.length)
 	)
 		throw new Error("plugin manifest capabilities must be an array of non-empty strings");
 	return {
@@ -605,7 +637,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
 		id: r.id as string,
 		name: r.name as string,
 		version: r.version as string,
-		entry: r.entry as string,
+		entry,
 		permissions: { filesystem: p.filesystem, network: p.network as string[], process: p.process as string[] },
 		capabilities: r.capabilities as string[] | undefined,
 	};

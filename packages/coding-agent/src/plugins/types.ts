@@ -1,4 +1,6 @@
-export const PLUGIN_API_VERSION = 1;
+import type { PluginManifest } from "@di-code/plugin-runtime";
+
+export { PLUGIN_API_VERSION } from "@di-code/plugin-runtime";
 
 export type PluginDiagnosticStage =
 	| "discover"
@@ -19,20 +21,7 @@ export interface PluginDiagnostic {
 	readonly message: string;
 }
 
-export interface PluginPermissions {
-	readonly filesystem: "none" | "read-project";
-	readonly network: readonly string[];
-	readonly process: readonly string[];
-}
-
-export interface PluginManifest {
-	readonly apiVersion: typeof PLUGIN_API_VERSION;
-	readonly id: string;
-	readonly name: string;
-	readonly version: string;
-	readonly entry: string;
-	readonly permissions: PluginPermissions;
-}
+export type { PluginManifest, PluginPermissions } from "@di-code/plugin-runtime";
 
 export interface DiscoveredPlugin {
 	readonly manifest: PluginManifest;

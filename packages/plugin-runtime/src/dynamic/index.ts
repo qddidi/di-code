@@ -3,10 +3,12 @@ import { createHash } from "node:crypto";
 export const DYNAMIC_PLUGIN_PROTOCOL_VERSION = 1 as const;
 export const DYNAMIC_PLUGIN_MAX_SOURCE_BYTES = 1_048_576;
 export const DYNAMIC_PLUGIN_MAX_LINE_BYTES = 2_097_152;
+export const DYNAMIC_PLUGIN_MAX_CAPABILITY_BYTES = 262_144;
 
 export type DynamicPackageState = "defined";
 export type ActiveRunState = "starting" | "active" | "stopping" | "stopped" | "failed";
 export type DynamicPluginRpcMethod = "plugin_define" | "plugin_run" | "plugin_stop";
+export type DynamicPluginCapabilityMethod = "capability_register" | "capability_revoke";
 
 export interface DynamicPluginLimits {
 	readonly timeoutMs: number;
@@ -43,7 +45,148 @@ export interface ActiveRunSnapshot {
 	readonly startedAt: number;
 	readonly stoppedAt?: number;
 	readonly failure?: string;
+	readonly capabilities: readonly DynamicPluginCapability[];
 }
+
+export type DynamicPluginCapability =
+	| DynamicPluginToolCapability
+	| DynamicPluginPromptCapability
+	| DynamicPluginMiddlewareCapability
+	| DynamicPluginEventCapability;
+export interface DynamicPluginToolCapability {
+	readonly type: "tool";
+	readonly id: string;
+	readonly name: string;
+	readonly description: string;
+	readonly parameters: Record<string, unknown>;
+}
+export interface DynamicPluginPromptCapability {
+	readonly type: "prompt";
+	readonly id: string;
+	readonly order: number;
+}
+export interface DynamicPluginMiddlewareCapability {
+	readonly type: "middleware";
+	readonly id: string;
+}
+export interface DynamicPluginEventCapability {
+	readonly type: "event";
+	readonly id: string;
+	readonly event: string;
+}
+
+/** JSON-safe context sent to a dynamic plugin invocation. The child adds its local AbortSignal. */
+export interface DynamicPluginContext {
+	readonly cwd: string;
+	readonly mode: "interactive" | "print" | "json";
+	readonly isProjectTrusted: boolean;
+	readonly model: string;
+}
+
+export type DynamicPluginInvocationAction = "tool" | "prompt" | "middleware" | "event";
+
+/** Host-to-child invocation record. Functions and signals never cross this boundary. */
+export interface DynamicPluginInvokeRequest {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly kind: "invoke";
+	readonly invokeId: string;
+	readonly capabilityId: string;
+	readonly action: DynamicPluginInvocationAction;
+	readonly context: DynamicPluginContext;
+	readonly payload: Record<string, unknown>;
+}
+
+export interface DynamicPluginCancelRequest {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly kind: "cancel";
+	readonly invokeId: string;
+}
+
+export interface DynamicPluginInvokeResult {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly kind: "invoke_result";
+	readonly invokeId: string;
+	readonly ok: boolean;
+	readonly result?: unknown;
+	readonly error?: string;
+}
+
+export interface DynamicPluginMiddlewareNextRequest {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly kind: "middleware_next";
+	readonly invokeId: string;
+	readonly nextId: string;
+	readonly execution: Record<string, unknown>;
+}
+
+export interface DynamicPluginMiddlewareNextResult {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly kind: "middleware_next_result";
+	readonly nextId: string;
+	readonly ok: boolean;
+	readonly result?: unknown;
+	readonly error?: string;
+}
+
+export type DynamicPluginHostRequest = DynamicPluginInvokeRequest | DynamicPluginCancelRequest;
+export type DynamicPluginChildInvocationRecord =
+	| DynamicPluginInvokeResult
+	| DynamicPluginMiddlewareNextRequest
+	| DynamicPluginMiddlewareNextResult;
+
+export function parseDynamicPluginChildInvocationRecord(value: unknown): DynamicPluginChildInvocationRecord {
+	const record = object(value, "dynamic plugin invocation record");
+	if (record.version !== DYNAMIC_PLUGIN_PROTOCOL_VERSION || typeof record.kind !== "string")
+		throw new Error("invalid dynamic plugin invocation record");
+	if (record.kind === "invoke_result") {
+		const invokeId = boundedString(record.invokeId, "invokeId", 128);
+		if (record.ok !== true && record.ok !== false) throw new Error("invoke result ok must be a boolean");
+		return record.ok
+			? { version: 1, kind: "invoke_result", invokeId, ok: true, result: record.result }
+			: { version: 1, kind: "invoke_result", invokeId, ok: false, error: boundedString(record.error, "error", 500) };
+	}
+	if (record.kind === "middleware_next") {
+		return {
+			version: 1,
+			kind: "middleware_next",
+			invokeId: boundedString(record.invokeId, "invokeId", 128),
+			nextId: boundedString(record.nextId, "nextId", 128),
+			execution: object(record.execution, "execution"),
+		};
+	}
+	if (record.kind === "middleware_next_result") {
+		if (record.ok !== true && record.ok !== false) throw new Error("middleware next result ok must be a boolean");
+		return record.ok
+			? {
+					version: 1,
+					kind: "middleware_next_result",
+					nextId: boundedString(record.nextId, "nextId", 128),
+					ok: true,
+					result: record.result,
+				}
+			: {
+					version: 1,
+					kind: "middleware_next_result",
+					nextId: boundedString(record.nextId, "nextId", 128),
+					ok: false,
+					error: boundedString(record.error, "error", 500),
+				};
+	}
+	throw new Error("unsupported dynamic plugin invocation record");
+}
+export interface DynamicPluginCapabilityRegister {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly id: string;
+	readonly method: "capability_register";
+	readonly params: { readonly runId: string; readonly pluginId: string; readonly capability: DynamicPluginCapability };
+}
+export interface DynamicPluginCapabilityRevoke {
+	readonly version: typeof DYNAMIC_PLUGIN_PROTOCOL_VERSION;
+	readonly id: string;
+	readonly method: "capability_revoke";
+	readonly params: { readonly runId: string; readonly pluginId: string; readonly capabilityId: string };
+}
+export type DynamicPluginCapabilityRecord = DynamicPluginCapabilityRegister | DynamicPluginCapabilityRevoke;
 
 export class Package {
 	readonly state: DynamicPackageState = "defined";
@@ -94,6 +237,7 @@ export class ActiveRun {
 	private _state: ActiveRunState = "starting";
 	private _stoppedAt?: number;
 	private _failure?: string;
+	private readonly _capabilities = new Map<string, DynamicPluginCapability>();
 	readonly id: string;
 	readonly packageId: string;
 	readonly pluginId: string;
@@ -127,6 +271,7 @@ export class ActiveRun {
 		if (this._state === "stopped" || this._state === "failed") return;
 		this.transition(["starting", "active", "stopping"], "stopped");
 		this._stoppedAt = now;
+		this._capabilities.clear();
 	}
 
 	fail(reason: string, now = Date.now()): void {
@@ -135,6 +280,24 @@ export class ActiveRun {
 		this.transition(["starting", "active", "stopping"], "failed");
 		this._failure = redact(reason).slice(0, 500);
 		this._stoppedAt = now;
+		this._capabilities.clear();
+	}
+
+	registerCapability(capability: DynamicPluginCapability): void {
+		if (this._state !== "starting" && this._state !== "active")
+			throw new Error(`Cannot register capability while run is ${this._state}`);
+		validateCapability(capability, this.pluginId);
+		if (this._capabilities.has(capability.id)) throw new Error(`Capability already registered: ${capability.id}`);
+		this._capabilities.set(capability.id, capability);
+	}
+
+	revokeCapability(capabilityId: string): void {
+		boundedString(capabilityId, "capabilityId", 128);
+		if (!this._capabilities.delete(capabilityId)) throw new Error(`Unknown capability: ${capabilityId}`);
+	}
+
+	clearCapabilities(): void {
+		this._capabilities.clear();
 	}
 
 	snapshot(): ActiveRunSnapshot {
@@ -146,6 +309,7 @@ export class ActiveRun {
 			startedAt: this.startedAt,
 			...(this._stoppedAt === undefined ? {} : { stoppedAt: this._stoppedAt }),
 			...(this._failure === undefined ? {} : { failure: this._failure }),
+			capabilities: [...this._capabilities.values()].map((capability) => cloneCapability(capability)),
 		};
 	}
 
@@ -196,6 +360,18 @@ export class DynamicPluginRuntime {
 	fail(runId: string, reason: string, now = Date.now()): ActiveRun {
 		const run = this.requireRun(runId);
 		run.fail(reason, now);
+		return run;
+	}
+
+	registerCapability(runId: string, capability: DynamicPluginCapability): ActiveRun {
+		const run = this.requireRun(runId);
+		run.registerCapability(capability);
+		return run;
+	}
+
+	revokeCapability(runId: string, capabilityId: string): ActiveRun {
+		const run = this.requireRun(runId);
+		run.revokeCapability(capabilityId);
 		return run;
 	}
 
@@ -290,6 +466,7 @@ export interface PluginStopRequest {
 }
 export type DynamicPluginRpcRequest = PluginDefineRequest | PluginRunRequest | PluginStopRequest;
 export type DynamicPluginRequest = DynamicPluginRpcRequest;
+export type DynamicPluginRecord = DynamicPluginRpcRequest | DynamicPluginRpcResponse | DynamicPluginCapabilityRecord;
 
 export type DynamicPluginRpcResponse =
 	| {
@@ -341,12 +518,15 @@ export function parseDynamicPluginJsonl(line: string): DynamicPluginRpcRequest {
 	}
 }
 
-export function stringifyDynamicPluginJsonl(record: DynamicPluginRpcRequest | DynamicPluginRpcResponse): string {
+export function stringifyDynamicPluginJsonl(record: DynamicPluginRecord): string {
 	const value = record as Record<string, unknown>;
 	if (value.version !== DYNAMIC_PLUGIN_PROTOCOL_VERSION || typeof value.id !== "string")
 		throw new Error("invalid dynamic plugin record");
-	if ("method" in value) parseDynamicPluginRequest(record as DynamicPluginRpcRequest);
-	else validateDynamicPluginResponse(record as DynamicPluginRpcResponse);
+	if ("method" in value) {
+		if (value.method === "capability_register" || value.method === "capability_revoke")
+			parseDynamicPluginCapabilityRecord(record);
+		else parseDynamicPluginRequest(record as DynamicPluginRpcRequest);
+	} else validateDynamicPluginResponse(record as DynamicPluginRpcResponse);
 	const line = JSON.stringify(record);
 	if (Buffer.byteLength(line, "utf8") + 1 > DYNAMIC_PLUGIN_MAX_LINE_BYTES)
 		throw new Error("dynamic plugin JSONL line exceeds size limit");
@@ -379,14 +559,18 @@ export function parseDynamicPluginResponse(value: unknown): DynamicPluginRpcResp
 	return { version: 1, id, ok: true, result: record.result as DynamicPackageSnapshot | ActiveRunSnapshot };
 }
 
-export function parseDynamicPluginRecord(value: unknown): DynamicPluginRpcRequest | DynamicPluginRpcResponse {
+export function parseDynamicPluginRecord(value: unknown): DynamicPluginRecord {
 	const record = object(value, "dynamic plugin record");
-	if ("method" in record) return parseDynamicPluginRequest(record);
+	if ("method" in record) {
+		if (record.method === "capability_register" || record.method === "capability_revoke")
+			return parseDynamicPluginCapabilityRecord(record);
+		return parseDynamicPluginRequest(record);
+	}
 	if ("ok" in record) return parseDynamicPluginResponse(record);
 	throw new Error("dynamic plugin record must be a request or response");
 }
 
-export function parseDynamicPluginJsonlRecord(line: string): DynamicPluginRpcRequest | DynamicPluginRpcResponse {
+export function parseDynamicPluginJsonlRecord(line: string): DynamicPluginRecord {
 	if (typeof line !== "string" || Buffer.byteLength(line, "utf8") > DYNAMIC_PLUGIN_MAX_LINE_BYTES)
 		throw new Error("dynamic plugin JSONL line exceeds size limit");
 	try {
@@ -396,6 +580,56 @@ export function parseDynamicPluginJsonlRecord(line: string): DynamicPluginRpcReq
 			cause,
 		});
 	}
+}
+
+/** Parses a capability registration/revocation emitted by a dynamic child process. */
+export function parseDynamicPluginCapabilityRecord(value: unknown): DynamicPluginCapabilityRecord {
+	const record = object(value, "dynamic plugin capability record");
+	if (record.version !== DYNAMIC_PLUGIN_PROTOCOL_VERSION)
+		throw new Error("unsupported dynamic plugin protocol version");
+	const id = boundedString(record.id, "capability request id", 128);
+	const params = object(record.params, "capability request params");
+	const runId = boundedString(params.runId, "runId", 128);
+	const pluginId = boundedString(params.pluginId, "pluginId", 64);
+	if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(pluginId)) throw new Error("pluginId must use lowercase hyphenated form");
+	if (record.method === "capability_revoke") {
+		return {
+			version: 1,
+			id,
+			method: record.method,
+			params: { runId, pluginId, capabilityId: boundedString(params.capabilityId, "capabilityId", 128) },
+		};
+	}
+	if (record.method !== "capability_register") throw new Error("unsupported dynamic plugin capability method");
+	return {
+		version: 1,
+		id,
+		method: record.method,
+		params: { runId, pluginId, capability: parseCapability(params.capability, pluginId) },
+	};
+}
+
+export function parseDynamicPluginCapabilityJsonl(line: string): DynamicPluginCapabilityRecord {
+	if (typeof line !== "string" || Buffer.byteLength(line, "utf8") > DYNAMIC_PLUGIN_MAX_LINE_BYTES)
+		throw new Error("dynamic plugin JSONL line exceeds size limit");
+	try {
+		return parseDynamicPluginCapabilityRecord(JSON.parse(line) as unknown);
+	} catch (cause) {
+		throw new Error(
+			`invalid dynamic plugin capability JSONL: ${redact(cause instanceof Error ? cause.message : String(cause))}`,
+			{
+				cause,
+			},
+		);
+	}
+}
+
+export function stringifyDynamicPluginCapabilityJsonl(record: DynamicPluginCapabilityRecord): string {
+	const parsed = parseDynamicPluginCapabilityRecord(record);
+	const line = JSON.stringify(parsed);
+	if (Buffer.byteLength(line, "utf8") + 1 > DYNAMIC_PLUGIN_MAX_LINE_BYTES)
+		throw new Error("dynamic plugin JSONL line exceeds size limit");
+	return `${line}\n`;
 }
 
 function validateDynamicPluginResponse(value: DynamicPluginRpcResponse): void {
@@ -409,6 +643,45 @@ function validateDynamicPluginResponse(value: DynamicPluginRpcResponse): void {
 	}
 	if (record.ok !== true || !record.result || typeof record.result !== "object")
 		throw new Error("invalid dynamic plugin response");
+}
+
+function parseCapability(value: unknown, pluginId: string): DynamicPluginCapability {
+	const record = object(value, "capability");
+	const type = record.type;
+	const id = boundedString(record.id, "capability.id", 128);
+	if (type === "tool") {
+		const name = boundedString(record.name, "capability.name", 128);
+		if (!name.startsWith(`${pluginId}__`)) throw new Error(`dynamic tool must use ${pluginId}__ namespace`);
+		const description = boundedString(record.description, "capability.description", 2_000);
+		const parameters = object(record.parameters, "capability.parameters");
+		if (parameters.type !== "object") throw new Error("dynamic tool parameters schema must have type object");
+		if (Buffer.byteLength(JSON.stringify(parameters), "utf8") > DYNAMIC_PLUGIN_MAX_CAPABILITY_BYTES)
+			throw new Error("dynamic capability schema exceeds size limit");
+		return { type, id, name, description, parameters: cloneRecord(parameters) };
+	}
+	if (type === "prompt") {
+		const order = record.order;
+		if (typeof order !== "number" || !Number.isFinite(order) || Math.abs(order) > 1_000_000)
+			throw new Error("dynamic prompt order must be finite");
+		return { type, id, order };
+	}
+	if (type === "middleware") return { type, id };
+	if (type === "event") return { type, id, event: boundedString(record.event, "capability.event", 128) };
+	throw new Error("unsupported dynamic capability type");
+}
+
+function validateCapability(capability: DynamicPluginCapability, pluginId: string): void {
+	parseCapability(capability, pluginId);
+}
+
+function cloneRecord(record: Record<string, unknown>): Record<string, unknown> {
+	return JSON.parse(JSON.stringify(record)) as Record<string, unknown>;
+}
+
+function cloneCapability(capability: DynamicPluginCapability): DynamicPluginCapability {
+	return capability.type === "tool"
+		? { ...capability, parameters: cloneRecord(capability.parameters) }
+		: { ...capability };
 }
 
 function parseDefinition(params: Record<string, unknown>): DynamicPackageDefinition {

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { workspaceStorageKey } from "../src/core/user-data.ts";
 import { formatSessionLabel, runMain, StartupStatusRenderer } from "../src/main.ts";
+import { DynamicPluginBroker } from "../src/plugins/dynamic-broker.ts";
 
 function createIo() {
 	return { stdout: vi.fn(), stderr: vi.fn() };
@@ -41,6 +42,20 @@ class FixtureTerminal implements PluginTerminalFrontendHost {
 	clearFromCursor(): void {}
 	clearScreen(): void {}
 	setTitle(_title: string): void {}
+}
+
+class LifecycleBroker extends DynamicPluginBroker {
+	private readonly lifecycleEvents: string[];
+
+	constructor(options: ConstructorParameters<typeof DynamicPluginBroker>[0], events: string[]) {
+		super(options);
+		this.lifecycleEvents = events;
+	}
+
+	override async emit(event: { readonly type: string }, signal?: AbortSignal): Promise<void> {
+		this.lifecycleEvents.push(event.type);
+		await super.emit(event, signal);
+	}
 }
 
 describe("StartupStatusRenderer", () => {
@@ -165,6 +180,27 @@ describe("runMain", () => {
 		expect(records.map((record) => record.event.type)).toContain("agent_end");
 	});
 
+	it.each([
+		["print", ["--print", "hello"]],
+		["json", ["--mode", "json", "hello"]],
+	] as const)("bridges dynamic session lifecycle events through %s mode", async (_mode, args) => {
+		const events: string[] = [];
+		const io = createIo();
+		const exitCode = await runMain(args, {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "done" }] }]),
+			createDynamicPluginBroker: (options) => new LifecycleBroker(options, events),
+		});
+
+		expect(exitCode).toBe(0);
+		expect(events[0]).toBe("session_start");
+		expect(events.at(-1)).toBe("session_shutdown");
+		expect(events).toContain("agent_start");
+	});
+
 	it("runs a selected plugin frontend with controller events, restricted UI data, and terminal cleanup", async () => {
 		const pluginRoot = join(root, ".di-code", "plugins", "fixture");
 		await mkdir(pluginRoot, { recursive: true });
@@ -207,6 +243,7 @@ describe("runMain", () => {
 			};`,
 		);
 		const terminal = new FixtureTerminal(20);
+		const lifecycleEvents: string[] = [];
 
 		expect(
 			await runMain(["--trust-project", "--profile", "terminal", "--ui", "fixture"], {
@@ -216,10 +253,14 @@ describe("runMain", () => {
 				agentDir,
 				createRuntime: createRuntime([{ type: "success", content: [{ type: "text", text: "done" }] }]),
 				createTerminal: () => terminal,
+				createDynamicPluginBroker: (options) => new LifecycleBroker(options, lifecycleEvents),
 			}),
 		).toBe(0);
 		expect(terminal.output).toContain("panel:Fixture status");
 		expect(terminal.output).toContain("session_event");
+		expect(lifecycleEvents[0]).toBe("session_start");
+		expect(lifecycleEvents.at(-1)).toBe("session_shutdown");
+		expect(lifecycleEvents).toContain("agent_start");
 		expect(terminal.starts).toBe(1);
 		expect(terminal.stops).toBeGreaterThanOrEqual(1);
 	});

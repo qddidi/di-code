@@ -98,6 +98,125 @@ export interface WebTransport {
 	onClose(listener: () => void): () => void;
 }
 
+/** Minimal WebSocket shape shared by browsers and popular Node WebSocket clients. */
+export interface WebSocketLike {
+	readonly readyState?: number;
+	send(message: string): void;
+	close?(code?: number, reason?: string): void;
+	addEventListener?(type: "open" | "message" | "close", listener: (event: unknown) => void): void;
+	removeEventListener?(type: "open" | "message" | "close", listener: (event: unknown) => void): void;
+	on?(type: "open" | "message" | "close", listener: (event: unknown) => void): void;
+	off?(type: "open" | "message" | "close", listener: (event: unknown) => void): void;
+	onopen?: (() => void) | null;
+	onmessage?: ((event: unknown) => void) | null;
+	onclose?: ((event: unknown) => void) | null;
+}
+
+function webSocketPayload(event: unknown): string {
+	if (typeof event === "string") return event;
+	if (event instanceof Uint8Array) return new TextDecoder().decode(event);
+	const record = objectRecord(event);
+	if (record && typeof record.data === "string") return record.data;
+	if (record && record.data instanceof Uint8Array) return new TextDecoder().decode(record.data);
+	return String(event);
+}
+
+function webSocketListener(
+	socket: WebSocketLike,
+	type: "open" | "message" | "close",
+	listener: (event: unknown) => void,
+): () => void {
+	if (socket.addEventListener) {
+		socket.addEventListener(type, listener);
+		return () => socket.removeEventListener?.(type, listener);
+	}
+	if (socket.on) {
+		socket.on(type, listener);
+		return () => socket.off?.(type, listener);
+	}
+	const property = type === "message" ? "onmessage" : type === "close" ? "onclose" : "onopen";
+	const eventProperties = socket as unknown as Record<string, unknown>;
+	const previous = eventProperties[property];
+	eventProperties[property] = listener;
+	return () => {
+		if (eventProperties[property] === listener) eventProperties[property] = previous ?? null;
+	};
+}
+
+/** Adapts a browser WebSocket or a Node `ws` instance to the host-neutral transport. */
+export class WebSocketTransport implements WebTransport {
+	private readonly socket: WebSocketLike;
+	private readonly removeMessage: () => void;
+	private readonly removeClose: () => void;
+
+	constructor(socket: WebSocketLike) {
+		this.socket = socket;
+		this.messageListeners = new Set();
+		this.closeListeners = new Set();
+		this.removeMessage = webSocketListener(socket, "message", (event) => {
+			const payload = webSocketPayload(event);
+			for (const listener of this.messageListeners) listener(payload);
+		});
+		this.removeClose = webSocketListener(socket, "close", () => {
+			for (const listener of this.closeListeners) listener();
+		});
+	}
+
+	private readonly messageListeners: Set<(message: string) => void>;
+	private readonly closeListeners: Set<() => void>;
+
+	send(message: string): void {
+		this.socket.send(message);
+	}
+
+	close(code?: number, reason?: string): void {
+		this.removeMessage();
+		this.removeClose();
+		this.socket.close?.(code, reason);
+	}
+
+	onMessage(listener: (message: string) => void): () => void {
+		this.messageListeners.add(listener);
+		return () => this.messageListeners.delete(listener);
+	}
+
+	onClose(listener: () => void): () => void {
+		this.closeListeners.add(listener);
+		return () => this.closeListeners.delete(listener);
+	}
+}
+
+export interface WebSocketConstructor {
+	new (url: string, protocols?: string | string[]): WebSocketLike;
+}
+
+/** Opens a browser WebSocket and resolves once its handshake is ready. */
+export function connectWebSocketTransport(
+	url: string,
+	options: { readonly protocols?: string | string[]; readonly WebSocket?: WebSocketConstructor } = {},
+): Promise<WebSocketTransport> {
+	const WebSocketClass = options.WebSocket ?? (globalThis as { WebSocket?: WebSocketConstructor }).WebSocket;
+	if (!WebSocketClass) return Promise.reject(new Error("WebSocket is not available in this runtime."));
+	return new Promise((resolve, reject) => {
+		const socket = new WebSocketClass(url, options.protocols);
+		let settled = false;
+		const removeClose = webSocketListener(socket, "close", () => {
+			if (!settled) {
+				settled = true;
+				reject(new Error("WebSocket closed before connection."));
+			}
+		});
+		const record = socket;
+		const onOpen = () => {
+			if (settled) return;
+			settled = true;
+			removeClose();
+			resolve(new WebSocketTransport(socket));
+		};
+		webSocketListener(record, "open", onOpen);
+	});
+}
+
 export interface WebAuthorization {
 	readonly token: string;
 	readonly allowedFrontendIds: readonly string[];
@@ -606,19 +725,21 @@ export type WebClientEvent =
 
 /** Small browser-side state adapter. It never owns or disposes the Host. */
 export class WebClient {
-	private readonly transport: WebTransport;
+	private transport: WebTransport;
 	private readonly listeners = new Set<(event: WebClientEvent) => void>();
 	private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (cause: Error) => void }>();
-	private readonly removeMessage: () => void;
-	private readonly removeClose: () => void;
+	private removeMessage: () => void;
+	private removeClose: () => void;
 	private closed = false;
+	private transportClosed = false;
 	private _state: unknown;
 	private _slots: readonly WebSlot[] = [];
 	private _eventId = 0;
 	constructor(transport: WebTransport) {
 		this.transport = transport;
-		this.removeMessage = transport.onMessage((raw) => this.accept(raw));
-		this.removeClose = transport.onClose(() => this.fail(new Error("Web transport closed.")));
+		this.removeMessage = () => undefined;
+		this.removeClose = () => undefined;
+		this.installTransport(transport);
 	}
 	get state(): unknown {
 		return this._state;
@@ -634,6 +755,7 @@ export class WebClient {
 		return () => this.listeners.delete(listener);
 	}
 	connect(token: string, frontendId: string, lastEventId?: number): Promise<WebServerHello> {
+		this.transportClosed = false;
 		return this.request({
 			version: WEB_PROTOCOL_VERSION,
 			kind: "connect",
@@ -642,6 +764,16 @@ export class WebClient {
 			frontendId,
 			...(lastEventId === undefined ? {} : { lastEventId }),
 		}).then((message) => message as WebServerHello);
+	}
+
+	/** Replaces a disconnected transport and requests a snapshot/replay from the last event. */
+	reconnect(transport: WebTransport, token: string, frontendId: string): Promise<WebServerHello> {
+		if (this.closed) return Promise.reject(new Error("Web client is closed."));
+		this.removeTransport();
+		this.transport = transport;
+		this.transportClosed = false;
+		this.installTransport(transport);
+		return this.connect(token, frontendId, this._eventId);
 	}
 	action(action: WebAction, baseEventId = this._eventId): Promise<void> {
 		return this.request({
@@ -655,8 +787,7 @@ export class WebClient {
 	close(): void {
 		if (this.closed) return;
 		this.closed = true;
-		this.removeMessage();
-		this.removeClose();
+		this.removeTransport();
 		this.transport.close?.(1000, "client closed");
 		for (const pending of this.pending.values()) pending.reject(new Error("Web client is closed."));
 		this.pending.clear();
@@ -718,13 +849,22 @@ export class WebClient {
 		for (const listener of this.listeners) listener(event);
 	}
 	private fail(cause: Error): void {
-		if (this.closed) return;
-		this.closed = true;
-		this.removeMessage();
-		this.removeClose();
+		if (this.closed || this.transportClosed) return;
+		this.transportClosed = true;
+		this.removeTransport();
 		for (const pending of this.pending.values()) pending.reject(cause);
 		this.pending.clear();
 		this.emit({ type: "error", code: "INTERNAL_ERROR", message: cause.message });
+	}
+	private installTransport(transport: WebTransport): void {
+		this.removeMessage = transport.onMessage((raw) => this.accept(raw));
+		this.removeClose = transport.onClose(() => this.fail(new Error("Web transport closed.")));
+	}
+	private removeTransport(): void {
+		this.removeMessage();
+		this.removeClose();
+		this.removeMessage = () => undefined;
+		this.removeClose = () => undefined;
 	}
 }
 

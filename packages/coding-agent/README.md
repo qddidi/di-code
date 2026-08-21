@@ -290,7 +290,9 @@ di-code --continue "继续上一次工作"
 
 插件和扩展也可以注册额外 slash command，名称与内置命令冲突时以加载诊断为准。
 
-动态插件由同一个 Agent 通过 `plugin_inspect`、`plugin_define`、`plugin_run`、`plugin_update`、`plugin_stop` 和 `plugin_remove` 工具管理。动态源代码只在 interactive 模式且显式传入 `--allow-dynamic-plugins` 后，经每次确认才会在独立 Node 子进程中运行；print、JSON 和 RPC 模式默认拒绝。broker 对子进程执行超时、取消、崩溃和 JSONL 协议校验，并在更新失败时保留旧 run。子进程不是操作系统沙箱，动态代码仍按当前用户权限执行。
+动态插件由同一个 Agent 通过 `plugin_inspect`、`plugin_define`、`plugin_run`、`plugin_update`、`plugin_stop` 和 `plugin_remove` 工具管理。动态源代码只在 interactive 模式且显式传入 `--allow-dynamic-plugins` 后，经每次确认才会在独立 Node 子进程中运行；print、JSON 和 RPC 模式默认拒绝。broker 对子进程执行超时、取消、崩溃和 JSONL 协议校验；运行中的子进程可以注册或撤销经宿主校验的 namespaced tool、prompt、middleware 和 event capability，并通过 `invoke`/`invoke_result` 双向记录实际执行这些 handler，middleware 的 `next()` 通过宿主回调完成。宿主只发送受限 `DynamicPluginContext`，取消会传播到子进程的 `AbortSignal`；停止或失败时贡献和挂起调用会被清理，更新失败时保留旧 run。子进程不是操作系统沙箱，动态代码仍按当前用户权限执行。
+
+CLI 的 print、JSON 和 interactive 启动路径都会把 `session_start` 转发给动态 event capability，并在 broker 回收前发送 `session_shutdown`；interactive 内置 frontend 也遵循同一生命周期顺序。若动态 run 在 `session_start` 之后才激活，broker 会向该 run 重放一次当前 Session 的 `session_start`；`session_shutdown` 后激活的 run 不会收到过期启动事件。
 
 | 按键 | 作用 |
 | --- | --- |
@@ -610,9 +612,28 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 ### Web 前端投影
 
-公开 Web 投影从 `@di-code/coding-agent` 导出 `WebFrontendHost`、`WebTransport` 和版本化消息解析器。宿主将浏览器连接绑定到现有 `InteractiveController`；浏览器只能提交 `allowedActions` 白名单动作，不能取得 Agent、Provider 或 Session 对象。连接使用短期授权 token、frontend ID 和 slot 白名单，token 过期或 frontend 未授权时会拒绝握手。
+公开 Web 投影从 `@di-code/coding-agent` 导出 `WebFrontendHost`、`WebTransport`、`WebSocketTransport`、`WebClient` 和 `WebFrontendApp`。宿主将浏览器连接绑定到现有 `InteractiveController`；浏览器只能提交 `allowedActions` 白名单动作，不能取得 Agent、Provider 或 Session 对象。连接使用短期授权 token、frontend ID 和 slot 白名单，token 过期或 frontend 未授权时会拒绝握手。
 
 事件带单调递增的 `eventId`。页面断线只释放传输连接，重连可携带 `lastEventId` 重放仍在窗口内的事件；窗口外的事件会要求客户端以新的 `hello` 快照同步。页面销毁不应调用 Host 的 `dispose()`，只有宿主关闭 Session 时才释放 Controller 和全部连接。slot action 必须同时出现在授权 slot 和宿主注册的 handler 中。
+
+浏览器页面可以直接使用内置的 DOM frontend。它不会导入 Node API，也不拥有 Host：
+
+```ts
+import { createWebFrontendApp } from "@di-code/coding-agent";
+
+const app = await createWebFrontendApp({
+  url: "wss://localhost:8787/di-code",
+  token: shortLivedToken,
+  frontendId: "web",
+  root: document.body,
+  document,
+});
+
+// WebSocket 断线后创建新的 WebSocket，再调用 app.reconnect(transport)。
+window.addEventListener("beforeunload", () => app.dispose());
+```
+
+`createWebFrontendApp()` 使用浏览器原生 `WebSocket`；Node 宿主可传入兼容 `WebSocketLike` 的构造器。`app.dispose()` 只关闭页面的 `WebClient` 和 DOM 订阅，不调用 `WebFrontendHost.dispose()`，因此页面刷新或关闭不会取消 Agent/Session。
 
 ## 安全边界与故障排查
 

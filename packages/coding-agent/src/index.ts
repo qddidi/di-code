@@ -13,3 +13,4 @@ export * from "./mcp/tool-adapter.ts";
 export * from "./plugins/index.ts";
 export * from "./subagents/index.ts";
 export * from "./web.ts";
+export * from "./web-frontend.ts";

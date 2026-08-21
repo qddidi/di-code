@@ -21,6 +21,7 @@ import type {
 	UserContent,
 } from "@di-code/ai";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
+import type { DynamicPluginBroker } from "../plugins/dynamic-broker.ts";
 import type { CodingAgentPluginHost } from "../plugins/runtime-host.ts";
 import { type SubagentEvent, SubagentService } from "../subagents/service.ts";
 import type { SkillResource } from "./resources/types.ts";
@@ -65,6 +66,7 @@ export interface AgentSessionOptions {
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
 	readonly runtimePluginHost?: CodingAgentPluginHost;
+	readonly dynamicPluginBroker?: DynamicPluginBroker;
 	readonly subagentDepth?: number;
 	readonly subagents?:
 		| false
@@ -126,6 +128,7 @@ export class AgentSession {
 	private readonly skills: readonly SkillResource[];
 	private readonly skillCatalog: SkillCatalog;
 	private readonly runtimePluginHost?: CodingAgentPluginHost;
+	private readonly dynamicPluginBroker?: DynamicPluginBroker;
 	private readonly subagentService?: SubagentService;
 	private model: Model;
 	private thinkingLevelValue?: ThinkingLevel;
@@ -167,6 +170,7 @@ export class AgentSession {
 			})),
 		);
 		this.runtimePluginHost = options.runtimePluginHost;
+		this.dynamicPluginBroker = options.dynamicPluginBroker;
 		this.model = options.model;
 		this.thinkingLevelValue =
 			options.thinkingLevel !== undefined && this.model.reasoningEfforts?.includes(options.thinkingLevel)
@@ -243,15 +247,39 @@ export class AgentSession {
 			});
 			staticTools.push(...this.subagentService.createTools());
 		}
+		const runtimeContextProvider = this.runtimePluginHost?.getContextProvider({
+			systemPrompt: options.systemPrompt,
+			tools: staticTools,
+		});
+		const dynamicContextProvider = this.dynamicPluginBroker?.getContextProvider();
+		const contextProvider =
+			runtimeContextProvider || dynamicContextProvider
+				? {
+						resolve: async (signal?: AbortSignal) => {
+							const [runtimeContext, dynamicContext] = await Promise.all([
+								runtimeContextProvider?.resolve(signal),
+								dynamicContextProvider?.resolve(signal),
+							]);
+							return {
+								systemPrompt:
+									[
+										runtimeContext?.systemPrompt ?? (!runtimeContextProvider ? options.systemPrompt : undefined),
+										dynamicContext?.systemPrompt,
+									]
+										.filter(Boolean)
+										.join("\n\n") || undefined,
+								tools: [...(runtimeContext?.tools ?? staticTools), ...(dynamicContext?.tools ?? [])],
+								toolMiddleware: [...(runtimeContext?.toolMiddleware ?? []), ...(dynamicContext?.toolMiddleware ?? [])],
+							};
+						},
+					}
+				: undefined;
 		this.agent = new Agent({
 			provider: options.provider,
 			model: options.model,
 			thinkingLevel: this.thinkingLevelValue,
 			systemPrompt: options.systemPrompt,
-			contextProvider: this.runtimePluginHost?.getContextProvider({
-				systemPrompt: options.systemPrompt,
-				tools: staticTools,
-			}),
+			contextProvider,
 			sessionId: this.sessionIdValue,
 			tools: staticTools,
 			now: this.now,
@@ -283,6 +311,7 @@ export class AgentSession {
 				}
 			}
 			if (this.runtimePluginHost) await this.runtimePluginHost.emit(event, signal);
+			if (this.dynamicPluginBroker) await this.dynamicPluginBroker.emit(event, signal);
 			await this.emitSession(event);
 		});
 	}
