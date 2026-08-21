@@ -17,6 +17,7 @@ import {
 	type ThinkingLevel,
 } from "@di-code/ai";
 import { isLocale, type Locale } from "./i18n.ts";
+import type { RuntimeProfileOverrides } from "./plugins/profile.ts";
 
 export interface StartupRuntime {
 	readonly provider: Provider;
@@ -39,6 +40,7 @@ export interface StartupConfiguration {
 	/** User-level per-provider/model thinking-level preferences. */
 	readonly thinkingLevels?: ThinkingLevelPreferences;
 	readonly locale?: Locale;
+	readonly profileOverrides?: RuntimeProfileOverrides;
 }
 
 export interface StartupDefaults {
@@ -88,6 +90,7 @@ interface SettingsFile {
 			readonly models?: unknown;
 		}
 	>;
+	readonly profile?: { readonly frontend?: string; readonly pluginIds?: readonly string[] };
 }
 
 export function resolveStartupArgs(args: readonly string[]): readonly string[] {
@@ -377,6 +380,7 @@ function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 	const defaultModel =
 		record.defaultModel === undefined ? undefined : requiredString(record.defaultModel, "defaultModel", settingsPath);
 	const thinkingLevels = parseThinkingLevels(record.thinkingLevels, settingsPath);
+	const profile = parseProfileOverride(record.profile, settingsPath);
 	if (record.locale !== undefined && !isLocale(record.locale)) {
 		throw new Error(`${settingsPath}: locale must be "en" or "zh-CN"`);
 	}
@@ -386,6 +390,28 @@ function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 		...(defaultModel === undefined ? {} : { defaultModel }),
 		...(thinkingLevels === undefined ? {} : { thinkingLevels }),
 		...(record.locale === undefined ? {} : { locale: record.locale }),
+		...(profile === undefined ? {} : { profile }),
+	};
+}
+
+function parseProfileOverride(value: unknown, settingsPath: string): SettingsFile["profile"] | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		throw new Error(`${settingsPath}: profile must be an object`);
+	const record = value as Record<string, unknown>;
+	const frontend = record.frontend;
+	if (frontend !== undefined && (typeof frontend !== "string" || frontend.trim() === ""))
+		throw new Error(`${settingsPath}: profile.frontend must be a non-empty string`);
+	const pluginIds = record.pluginIds;
+	if (
+		pluginIds !== undefined &&
+		(!Array.isArray(pluginIds) ||
+			!pluginIds.every((id) => typeof id === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)))
+	)
+		throw new Error(`${settingsPath}: profile.pluginIds must contain valid plugin IDs`);
+	return {
+		...(frontend === undefined ? {} : { frontend: frontend.trim() }),
+		...(pluginIds === undefined ? {} : { pluginIds: [...pluginIds] as string[] }),
 	};
 }
 
@@ -447,12 +473,24 @@ function mergeSettings(
 		projectSettings?.defaultModel ??
 		(projectSettings?.defaultProvider === undefined ? globalSettings?.defaultModel : undefined);
 	const locale = globalSettings?.locale;
+	const profile =
+		globalSettings?.profile === undefined && projectSettings?.profile === undefined
+			? undefined
+			: {
+					...(globalSettings?.profile?.frontend === undefined && projectSettings?.profile?.frontend === undefined
+						? {}
+						: { frontend: projectSettings?.profile?.frontend ?? globalSettings?.profile?.frontend }),
+					...(globalSettings?.profile?.pluginIds === undefined && projectSettings?.profile?.pluginIds === undefined
+						? {}
+						: { pluginIds: projectSettings?.profile?.pluginIds ?? globalSettings?.profile?.pluginIds }),
+				};
 	return {
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
 		...(globalSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: globalSettings.thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
+		...(profile === undefined ? {} : { profile }),
 	};
 }
 
@@ -465,6 +503,7 @@ export async function saveGlobalLocale(agentDir: string, locale: Locale): Promis
 		...(existingSettings?.defaultProvider === undefined ? {} : { defaultProvider: existingSettings.defaultProvider }),
 		...(existingSettings?.defaultModel === undefined ? {} : { defaultModel: existingSettings.defaultModel }),
 		...(existingSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: existingSettings.thinkingLevels }),
+		...(existingSettings?.profile === undefined ? {} : { profile: existingSettings.profile }),
 		locale,
 	};
 	await mkdir(agentDir, { recursive: true, mode: 0o700 });
@@ -586,6 +625,7 @@ export async function removeGlobalProviderApiKey(agentDir: string, providerId: s
 			: { defaultModel: existingSettings.defaultModel }),
 		...(existingSettings.thinkingLevels === undefined ? {} : { thinkingLevels: existingSettings.thinkingLevels }),
 		...(existingSettings.locale === undefined ? {} : { locale: existingSettings.locale }),
+		...(existingSettings.profile === undefined ? {} : { profile: existingSettings.profile }),
 	};
 	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
 	return true;
@@ -829,6 +869,14 @@ export async function loadStartupConfiguration(
 		...(settings.thinkingLevels === undefined ? {} : { thinkingLevels: settings.thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
 		...(defaults === undefined ? {} : { defaults }),
+		...(globalSettings?.profile === undefined && projectSettings?.profile === undefined
+			? {}
+			: {
+					profileOverrides: {
+						...(globalSettings?.profile === undefined ? {} : { user: globalSettings.profile }),
+						...(projectSettings?.profile === undefined ? {} : { project: projectSettings.profile }),
+					},
+				}),
 	};
 }
 

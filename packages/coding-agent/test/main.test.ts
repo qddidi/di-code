@@ -14,11 +14,15 @@ function createIo() {
 }
 
 class FixtureTerminal implements PluginTerminalFrontendHost {
-	readonly columns = 80;
+	readonly columns: number;
 	readonly rows = 24;
 	readonly output: string[] = [];
 	starts = 0;
 	stops = 0;
+
+	constructor(columns = 80) {
+		this.columns = columns;
+	}
 
 	start(onInput: (data: string) => void, _onResize: () => void): void {
 		this.starts++;
@@ -183,7 +187,7 @@ describe("runMain", () => {
 				api.registerInteractiveFrontend({
 					id: "fixture",
 					displayName: "Fixture terminal",
-					capabilities: ["streaming", "tool-status", "cancel", "retry", "commands", "model-selection", "session-selection", "compaction"],
+					capabilities: ["multiline-input", "streaming", "tool-status", "cancel", "retry", "commands", "model-selection", "session-selection", "compaction"],
 					create: () => ({
 						start: async (controller, terminal) => new Promise((resolve) => {
 							const subscription = controller.subscribe((event) => terminal.write(event.type));
@@ -202,7 +206,7 @@ describe("runMain", () => {
 				});
 			};`,
 		);
-		const terminal = new FixtureTerminal();
+		const terminal = new FixtureTerminal(20);
 
 		expect(
 			await runMain(["--trust-project", "--profile", "terminal", "--ui", "fixture"], {
@@ -233,6 +237,228 @@ describe("runMain", () => {
 			}),
 		).rejects.toThrow('Interactive frontend "missing" is not registered');
 		expect(terminal.starts).toBe(0);
+		expect(terminal.stops).toBe(1);
+	});
+
+	it("protects cleanup when a missing frontend follows a plugin disposal failure", async () => {
+		const pluginRoot = join(root, ".di-code", "plugins", "cleanup-plugin");
+		await mkdir(pluginRoot, { recursive: true });
+		await writeFile(
+			join(pluginRoot, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "cleanup-plugin",
+				name: "Cleanup plugin",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginRoot, "index.mjs"),
+			`export default (api) => api.effect(() => ({ dispose: () => { throw new Error("plugin cleanup failed"); } }));`,
+		);
+		const terminal = new FixtureTerminal();
+		await expect(
+			runMain(["--trust-project", "--interactive", "--ui", "missing"], {
+				...createIo(),
+				version: "0.0.0",
+				allowedRoot: root,
+				agentDir,
+				createRuntime: createRuntime([]),
+				createTerminal: () => terminal,
+			}),
+		).rejects.toThrow("Interactive startup and cleanup failed");
+		expect(terminal.stops).toBe(1);
+	});
+
+	it("rejects a custom frontend that cannot provide the core controller actions", async () => {
+		const pluginRoot = join(root, ".di-code", "plugins", "incomplete");
+		await mkdir(pluginRoot, { recursive: true });
+		await writeFile(
+			join(pluginRoot, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "incomplete",
+				name: "Incomplete",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginRoot, "index.mjs"),
+			`export default (api) => api.registerInteractiveFrontend({
+				id: "incomplete",
+				displayName: "Incomplete",
+				capabilities: ["streaming"],
+				create: () => ({ start: async () => {}, dispose: async () => {} })
+			});`,
+		);
+		const terminal = new FixtureTerminal();
+
+		await expect(
+			runMain(["--trust-project", "--interactive", "--ui", "incomplete"], {
+				...createIo(),
+				version: "0.0.0",
+				allowedRoot: root,
+				agentDir,
+				createRuntime: createRuntime([]),
+				createTerminal: () => terminal,
+			}),
+		).rejects.toThrow("missing required capabilities");
+		expect(terminal.starts).toBe(0);
+		expect(terminal.stops).toBe(1);
+	});
+
+	it("applies trusted project profile plugin IDs through the real startup path", async () => {
+		const allowedRoot = join(root, ".di-code", "plugins", "allowed");
+		const blockedRoot = join(root, ".di-code", "plugins", "blocked");
+		await mkdir(allowedRoot, { recursive: true });
+		await mkdir(blockedRoot, { recursive: true });
+		for (const [directory, id, text] of [
+			[allowedRoot, "allowed", "allowed plugin"],
+			[blockedRoot, "blocked", "blocked plugin"],
+		] as const) {
+			await writeFile(
+				join(directory, "plugin.json"),
+				JSON.stringify({
+					apiVersion: 1,
+					id,
+					name: id,
+					version: "1.0.0",
+					entry: "index.mjs",
+					permissions: { filesystem: "none", network: [], process: [] },
+				}),
+			);
+			await writeFile(
+				join(directory, "index.mjs"),
+				`export default (api) => api.registerTool({ name: "${id}__status", description: "status", parameters: { type: "object", properties: {}, additionalProperties: false }, execute: async () => [{ type: "text", text: "${text}" }] });`,
+			);
+		}
+		const io = createIo();
+		const exitCode = await runMain(["--trust-project", "--print", "check status"], {
+			...io,
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			startupConfiguration: {
+				environment: {},
+				providers: [],
+				profileOverrides: { project: { pluginIds: ["allowed"] } },
+			},
+			createRuntime: createRuntime([
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "allowed-call", name: "allowed__status", arguments: {} }],
+				},
+				{ type: "success", content: [{ type: "text", text: "profile filtered" }] },
+			]),
+		});
+		expect(exitCode).toBe(0);
+		expect(io.stdout).toHaveBeenCalledWith("profile filtered\n");
+		expect(io.stderr).not.toHaveBeenCalled();
+	});
+
+	it("continues host cleanup when a selected frontend dispose fails", async () => {
+		const pluginRoot = join(root, ".di-code", "plugins", "dispose-failure");
+		const marker = join(root, "frontend-disposed.txt");
+		await mkdir(pluginRoot, { recursive: true });
+		await writeFile(
+			join(pluginRoot, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "dispose-failure",
+				name: "Dispose failure",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginRoot, "index.mjs"),
+			`import { writeFile } from "node:fs/promises";
+			export default (api) => {
+				api.effect(() => ({ dispose: () => writeFile(${JSON.stringify(marker)}, "cleaned", "utf8") }));
+				api.registerInteractiveFrontend({
+					id: "dispose-failure",
+					displayName: "Dispose failure",
+					capabilities: ["multiline-input", "streaming", "tool-status", "cancel", "retry", "commands", "model-selection", "session-selection", "compaction"],
+					create: () => ({ start: async () => {}, dispose: async () => { throw new Error("frontend dispose failed"); } })
+				});
+			};`,
+		);
+		const terminal = new FixtureTerminal();
+
+		await expect(
+			runMain(["--trust-project", "--interactive", "--ui", "dispose-failure"], {
+				...createIo(),
+				version: "0.0.0",
+				allowedRoot: root,
+				agentDir,
+				createRuntime: createRuntime([]),
+				createTerminal: () => terminal,
+			}),
+		).rejects.toThrow("Interactive cleanup failed");
+		expect(terminal.stops).toBe(1);
+		expect(await readFile(marker, "utf8")).toBe("cleaned");
+	});
+
+	it("drives the core controller actions from a custom frontend", async () => {
+		const pluginRoot = join(root, ".di-code", "plugins", "actions");
+		await mkdir(pluginRoot, { recursive: true });
+		await writeFile(
+			join(pluginRoot, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "actions",
+				name: "Actions",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginRoot, "index.mjs"),
+			`export default (api) => {
+				api.registerCommand({ name: "actions-command", description: "actions", handler: async () => {} });
+				api.registerInteractiveFrontend({
+					id: "actions",
+					displayName: "Actions",
+					capabilities: ["multiline-input", "streaming", "tool-status", "cancel", "retry", "commands", "model-selection", "session-selection", "compaction"],
+					create: () => ({
+						start: async (controller, terminal) => {
+							const pending = controller.submit("cancel me\\nwith two lines");
+							controller.cancel();
+							await pending;
+							await controller.retry();
+							await controller.runCommand("actions-command", "");
+							controller.selectModel("faux-model");
+							await controller.createSession();
+							try { await controller.requestCompaction(); } catch (error) { terminal.write("compaction-error:" + String(error)); }
+							terminal.write("actions-complete");
+						},
+						dispose: async () => {}
+					})
+				});
+			};`,
+		);
+		const terminal = new FixtureTerminal(20);
+		const result = await runMain(["--trust-project", "--interactive", "--ui", "actions"], {
+			...createIo(),
+			version: "0.0.0",
+			allowedRoot: root,
+			agentDir,
+			createRuntime: createRuntime([
+				{ type: "success", content: [{ type: "text", text: "cancelled response" }] },
+				{ type: "success", content: [{ type: "text", text: "retried response" }] },
+			]),
+			createTerminal: () => terminal,
+		});
+		expect(result).toBe(0);
+		expect(terminal.output.join("")).toContain("actions-complete");
+		expect(terminal.output.join("")).toContain("compaction-error:");
+		expect(terminal.stops).toBeGreaterThanOrEqual(1);
 	});
 
 	it("sends a CLI image attachment to the provider with its text prompt", async () => {
@@ -271,12 +497,23 @@ describe("runMain", () => {
 		expect(io.stdout).toHaveBeenCalledWith("diagram described\n");
 	});
 
-	it("loads trusted project extension tools into the CLI AgentSession", async () => {
-		const extensionDirectory = join(root, ".di-code", "extensions");
-		await mkdir(extensionDirectory, { recursive: true });
+	it("loads trusted project plugin tools into the CLI AgentSession", async () => {
+		const pluginDirectory = join(root, ".di-code", "plugins", "project-status");
+		await mkdir(pluginDirectory, { recursive: true });
 		await writeFile(
-			join(extensionDirectory, "status.mjs"),
-			'export default (api) => api.registerTool({ name: "project-status", description: "Return project status", parameters: { type: "object", properties: {}, additionalProperties: false }, execute: async () => [{ type: "text", text: "extension ready" }] });',
+			join(pluginDirectory, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "project-status",
+				name: "Project Status",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginDirectory, "index.mjs"),
+			'export default (api) => api.registerTool({ name: "project-status__status", description: "Return project status", parameters: { type: "object", properties: {}, additionalProperties: false }, execute: async () => [{ type: "text", text: "plugin ready" }] });',
 		);
 		const io = createIo();
 		const exitCode = await runMain(["--trust-project", "--print", "check status"], {
@@ -287,14 +524,14 @@ describe("runMain", () => {
 			createRuntime: createRuntime([
 				{
 					type: "success",
-					content: [{ type: "tool_call", id: "project-status-call", name: "project-status", arguments: {} }],
+					content: [{ type: "tool_call", id: "project-status-call", name: "project-status__status", arguments: {} }],
 				},
-				{ type: "success", content: [{ type: "text", text: "Project extension completed." }] },
+				{ type: "success", content: [{ type: "text", text: "Project plugin completed." }] },
 			]),
 		});
 
 		expect(exitCode).toBe(0);
-		expect(io.stdout).toHaveBeenCalledWith("Project extension completed.\n");
+		expect(io.stdout).toHaveBeenCalledWith("Project plugin completed.\n");
 		expect(io.stderr).not.toHaveBeenCalled();
 	});
 
@@ -518,7 +755,7 @@ describe("runMain", () => {
 
 	it("does not prompt when an explicit trust flag is supplied", async () => {
 		const promptProjectTrust = vi.fn().mockResolvedValue(false);
-		await mkdir(join(root, ".di-code", "extensions"), { recursive: true });
+		await mkdir(join(root, ".di-code", "plugins"), { recursive: true });
 
 		await runMain(["--trust-project", "--interactive"], {
 			...createIo(),

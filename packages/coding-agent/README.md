@@ -221,6 +221,7 @@ Options:
   --no-skills        不加载任何 Skill
   --no-context-files 不发现或加载 AGENTS.md
   --trust-project    信任当前项目的本地 Skills 和插件
+  --allow-dynamic-plugins  允许 interactive 模式逐次确认运行动态插件
   --untrust-project  撤销当前项目的本地信任
   plugin <action>    安装、列出、启用、禁用、更新或移除插件
   -h, --help         显示帮助
@@ -260,7 +261,7 @@ di-code --continue "继续上一次工作"
 
 `--help` 和 `--version` 必须单独使用。非交互模式必须有 prompt；`--continue` 不能和 `--session` 一起使用；`--print` 不能和 `--mode json` 或 interactive 模式组合。
 
-`--profile terminal` 固定使用 interactive 模式，默认 frontend 为 `builtin`；`--profile headless` 不允许 interactive 或 `--ui`。`--ui <id>` 只用于 interactive 模式，选择一个已经由可信、已加载插件注册的 frontend。ID 不存在、factory 失败或返回对象不含 `start()` / `dispose()` 时，启动会失败而不会降级到内置 TUI。frontend 的 `start()` 必须在它释放终端时才 resolve；无论用户退出或启动失败，宿主都会取消活跃 prompt，停止终端并关闭 MCP 与 plugin scope。
+`--profile terminal` 固定使用 interactive 模式，默认 frontend 为 `builtin`；`--profile headless` 不允许 interactive 或 `--ui`。`--ui <id>` 只用于 interactive 模式，选择一个已经由可信、已加载插件注册的 frontend。自定义 frontend 必须声明 `multiline-input`、`streaming`、`tool-status`、`cancel`、`retry`、`commands`、`model-selection`、`session-selection` 和 `compaction`；能力不完整、ID 不存在、factory 失败或返回对象不含 `start()` / `dispose()` 时，启动会失败而不会降级到内置 TUI。frontend 的 `start()` 必须在它释放终端时才 resolve；无论用户退出或启动失败，宿主都会取消活跃 prompt、恢复终端并关闭 MCP 与 plugin scope。
 
 ## 交互模式
 
@@ -288,6 +289,8 @@ di-code --continue "继续上一次工作"
 | `/skill:<name>` | 手动调用一个已加载的 Skill，可附带具体请求（见下文 Skills 部分） |
 
 插件和扩展也可以注册额外 slash command，名称与内置命令冲突时以加载诊断为准。
+
+动态插件由同一个 Agent 通过 `plugin_inspect`、`plugin_define`、`plugin_run`、`plugin_update`、`plugin_stop` 和 `plugin_remove` 工具管理。动态源代码只在 interactive 模式且显式传入 `--allow-dynamic-plugins` 后，经每次确认才会在独立 Node 子进程中运行；print、JSON 和 RPC 模式默认拒绝。broker 对子进程执行超时、取消、崩溃和 JSONL 协议校验，并在更新失败时保留旧 run。子进程不是操作系统沙箱，动态代码仍按当前用户权限执行。
 
 | 按键 | 作用 |
 | --- | --- |
@@ -465,7 +468,7 @@ di-code --no-skills "不要加载任何 Skill"
 
 阶段 5 将该契约接入 CLI：可信插件可注册完整 frontend，`--profile` / `--ui` 决定实际选择。普通插件只能提供 `PluginInteractivePanel` 的数据和 `PluginToolDetailRenderer` 的纯结果格式化函数；它们没有输入焦点、终端对象或布局控制权。
 
-阶段 7 提供宿主拥有的 `SubagentService`。模型可通过 `subagent`、`subagent_list`、`send_message`、`wait` 和 `interrupt` 管理受限子 Agent；默认使用进程内 provider，并复用同一个 `Agent` 工具循环。`subagent` 可显式选择已注册的 `providerId`。每个子任务受最大深度、并发数、超时和 UTF-8 结果大小限制；宿主也会为插件 provider 收口超时、取消、失败和凭据脱敏。父 Session 以 `version: 2` 的 `subagent` JSONL 记录保存 start/end 状态，记录不会进入模型上下文；RPC 只转发并校验关联的子 Agent 事件；退出时宿主先取消子任务，再清理 frontend、MCP 和插件 scope。
+阶段 7 提供宿主拥有的 `SubagentService`。模型可通过 `subagent`、`subagent_list`、`send_message`、`wait` 和 `interrupt` 管理受限子 Agent；`subagent_list` 只返回仍在运行的任务，终态任务会立即从活动列表回收。近期终态结果会被有界缓存，以便后续 `wait` 读取；新活动 run 重用同一 ID 时会清除旧缓存，且 `wait` 与 `interrupt` 始终优先活动 run。对已结束任务重复 `interrupt` 是安全的无操作。默认使用进程内 provider，并复用同一个 `Agent` 工具循环。`subagent` 可显式选择已注册的 `providerId`。每个子任务受最大深度、并发数、超时和 UTF-8 结果大小限制；宿主也会为插件 provider 收口超时、取消、失败和凭据脱敏。父 Session 以 `version: 2` 的 `subagent` JSONL 记录保存 start/end 状态，记录不会进入模型上下文；RPC 只转发并校验关联的子 Agent 事件；退出时宿主先取消子任务，再清理 frontend、MCP 和插件 scope。
 
 插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。interactive 启动时，每个实际加载的插件会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出该插件新增的 tools 和 slash commands 数量。print 和 JSON 模式保持 `plugin_diagnostic` 输出。
 

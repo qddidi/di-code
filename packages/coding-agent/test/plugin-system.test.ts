@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	ExtensionHost,
+	CodingAgentPluginHost,
 	loadPlugins,
 	PluginManager,
 	parsePluginManifest,
@@ -73,7 +73,74 @@ describe("plugin manifests and loader", () => {
 		);
 		const result = await loadPlugins({ cwd: root, agentDir: join(root, "agent"), projectTrusted: true });
 		expect(result.loaded.map((entry) => entry.manifest.id)).toEqual(["published"]);
-		expect(result.host.listCommands().map((command) => command.name)).toEqual(["published"]);
+		expect(result.runtimeHost.listCommands().map((command) => command.name)).toEqual(["published"]);
+	});
+	it("invokes plugin factories only with the runtime API", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-runtime-loader-"));
+		roots.push(root);
+		await plugin(
+			root,
+			"runtime-only",
+			"index.mjs",
+			"export default (api) => { if (!(\"registerSessionProjection\" in api)) throw new Error(\"legacy API\"); api.registerCommand({ name: 'runtime-only', description: 'runtime-only', handler: async () => {} }); };",
+		);
+
+		const result = await loadPlugins({ cwd: root, agentDir: join(root, "agent"), projectTrusted: true });
+
+		expect(result.loaded.map((entry) => entry.manifest.id)).toEqual(["runtime-only"]);
+		expect(result.diagnostics).toEqual([]);
+		expect(result.runtimeHost.listCommands().map((command) => command.name)).toEqual(["runtime-only"]);
+	});
+	it("loads explicit entry files directly, including outside plugin roots", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-explicit-plugin-"));
+		roots.push(root);
+		const entry = join(root, "fixture.mjs");
+		await writeFile(
+			entry,
+			"export default (api) => api.registerCommand({ name: 'explicit', description: 'explicit', handler: async () => {} });",
+		);
+
+		const result = await loadPlugins({
+			cwd: root,
+			agentDir: join(root, "agent"),
+			projectTrusted: false,
+			explicitPaths: [entry],
+		});
+
+		expect(result.diagnostics).toEqual([]);
+		expect(result.loaded).toHaveLength(1);
+		expect(result.runtimeHost.listCommands().map((command) => command.name)).toEqual(["explicit"]);
+	});
+	it("loads an explicit plugin root without requiring global enablement", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-explicit-root-"));
+		roots.push(root);
+		const pluginRoot = join(root, "external-plugin");
+		await mkdir(pluginRoot, { recursive: true });
+		await writeFile(
+			join(pluginRoot, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "external",
+				name: "external",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(pluginRoot, "index.mjs"),
+			"export default (api) => api.registerCommand({ name: 'external', description: 'external', handler: async () => {} });",
+		);
+
+		const result = await loadPlugins({
+			cwd: root,
+			agentDir: join(root, "agent"),
+			projectTrusted: false,
+			explicitPaths: [pluginRoot],
+		});
+
+		expect(result.diagnostics).toEqual([]);
+		expect(result.runtimeHost.listCommands().map((command) => command.name)).toEqual(["external"]);
 	});
 	it("rejects malformed IDs and unsafe permission declarations", () => {
 		expect(() =>
@@ -125,7 +192,32 @@ describe("plugin manifests and loader", () => {
 		expect(skipped.loaded).toEqual([]);
 		const loaded = await loadPlugins({ cwd: root, agentDir: join(root, "agent"), projectTrusted: true });
 		expect(loaded.diagnostics).toEqual([]);
-		expect(loaded.host.listCommands().map((command) => command.name)).toEqual(["typed"]);
+		expect(loaded.runtimeHost.listCommands().map((command) => command.name)).toEqual(["typed"]);
+	});
+
+	it("filters discovered plugins by the resolved profile plugin IDs", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-profile-plugins-"));
+		roots.push(root);
+		await plugin(
+			root,
+			"allowed",
+			"index.mjs",
+			"export default (api) => api.registerCommand({ name: 'allowed', description: 'allowed', handler: async () => {} });",
+		);
+		await plugin(
+			root,
+			"blocked",
+			"index.mjs",
+			"export default (api) => api.registerCommand({ name: 'blocked', description: 'blocked', handler: async () => {} });",
+		);
+		const result = await loadPlugins({
+			cwd: root,
+			agentDir: join(root, "agent"),
+			projectTrusted: true,
+			pluginIds: ["allowed"],
+		});
+		expect(result.loaded.map((entry) => entry.manifest.id)).toEqual(["allowed"]);
+		expect(result.runtimeHost.listCommands().map((command) => command.name)).toEqual(["allowed"]);
 	});
 
 	it("reports loading, success, and import failures without changing plugin isolation", async () => {
@@ -168,14 +260,14 @@ describe("plugin manifests and loader", () => {
 	});
 
 	it("isolates handler errors and redacts token-like diagnostic values", async () => {
-		const host = new ExtensionHost({ cwd: "D:/plugin", mode: "json", projectTrusted: true });
-		await host.registerExtension("test", (api) =>
+		const host = new CodingAgentPluginHost({ cwd: "D:/plugin", mode: "json", projectTrusted: true });
+		await host.load("test", (api) => {
 			api.on("agent_end", () => {
 				throw new Error("token=private-value");
-			}),
-		);
+			});
+		});
 		await host.emit({ type: "agent_end", messages: [] });
-		expect(host.listRuntimeDiagnostics()).toEqual([
+		expect(host.diagnostics).toEqual([
 			expect.objectContaining({ stage: "handler", message: expect.stringContaining("token=[redacted]") }),
 		]);
 	});

@@ -21,7 +21,6 @@ import type {
 	UserContent,
 } from "@di-code/ai";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
-import type { ExtensionHost } from "../extensions/runtime.ts";
 import type { CodingAgentPluginHost } from "../plugins/runtime-host.ts";
 import { type SubagentEvent, SubagentService } from "../subagents/service.ts";
 import type { SkillResource } from "./resources/types.ts";
@@ -65,7 +64,6 @@ export interface AgentSessionOptions {
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
-	readonly extensionHost?: ExtensionHost;
 	readonly runtimePluginHost?: CodingAgentPluginHost;
 	readonly subagentDepth?: number;
 	readonly subagents?:
@@ -127,7 +125,6 @@ export class AgentSession {
 	private provider: Provider;
 	private readonly skills: readonly SkillResource[];
 	private readonly skillCatalog: SkillCatalog;
-	private readonly extensionHost?: ExtensionHost;
 	private readonly runtimePluginHost?: CodingAgentPluginHost;
 	private readonly subagentService?: SubagentService;
 	private model: Model;
@@ -169,7 +166,6 @@ export class AgentSession {
 				diagnostics: [],
 			})),
 		);
-		this.extensionHost = options.extensionHost;
 		this.runtimePluginHost = options.runtimePluginHost;
 		this.model = options.model;
 		this.thinkingLevelValue =
@@ -209,19 +205,6 @@ export class AgentSession {
 			createGlobTool(options.allowedRoot),
 			createGrepTool(options.allowedRoot),
 			...(this.skillCatalog.listForModel().length > 0 ? [createLoadSkillTool(this.skillCatalog)] : []),
-			...(this.extensionHost
-				?.listTools()
-				.filter((tool) => !this.runtimePluginHost?.listTools().some((runtimeTool) => runtimeTool.name === tool.name))
-				.map((tool) => ({
-					name: tool.name,
-					description: tool.description,
-					parameters: tool.parameters,
-					execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
-						const result = await this.extensionHost?.runTool(tool.name, toolCallId, parameters, signal);
-						if (result === undefined) throw new Error(`Extension tool "${tool.name}" is unavailable.`);
-						return [...result];
-					},
-				})) ?? []),
 			...(options.externalTools ?? []),
 		];
 		if (options.subagents !== false) {
@@ -299,7 +282,6 @@ export class AgentSession {
 					await this.emitQueueUpdate();
 				}
 			}
-			if (this.extensionHost) await this.extensionHost.emit(event, signal);
 			if (this.runtimePluginHost) await this.runtimePluginHost.emit(event, signal);
 			await this.emitSession(event);
 		});

@@ -9,9 +9,9 @@ import { describe, it } from "vitest";
 import { clipboardImageDirectory } from "../src/core/clipboard-image.ts";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
-import { ExtensionHost } from "../src/extensions/runtime.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
+import { CodingAgentPluginHost } from "../src/plugins/runtime-host.ts";
 import { resolveStartupRuntime } from "../src/startup.ts";
 
 const PASTE_IMAGE_INPUT = process.platform === "win32" ? "\x1bv" : "\x16";
@@ -733,9 +733,9 @@ describe("InteractiveMode", () => {
 	it("runs extension slash commands and emits session lifecycle exactly once", async () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
-		const host = new ExtensionHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
+		const host = new CodingAgentPluginHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
 		const events: string[] = [];
-		await host.registerExtension("test", (api) => {
+		await host.load("test", (api) => {
 			api.registerCommand({
 				name: "hello",
 				description: "hello",
@@ -751,7 +751,7 @@ describe("InteractiveMode", () => {
 			});
 		});
 		const terminal = new TestTerminal();
-		const mode = new InteractiveMode({ session, tui: new TUI(terminal), extensionHost: host });
+		const mode = new InteractiveMode({ session, tui: new TUI(terminal), runtimePluginHost: host });
 		mode.start();
 		terminal.sendInput("/hello world");
 		terminal.sendInput("\r");
@@ -1666,8 +1666,8 @@ describe("InteractiveMode", () => {
 	it("opens slash autocomplete on slash, includes extension commands, and keeps the menu outside the editor", async () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
-		const host = new ExtensionHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
-		await host.registerExtension("test", (api) => {
+		const host = new CodingAgentPluginHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
+		await host.load("test", (api) => {
 			api.registerCommand({
 				name: "greet",
 				description: "Extension greeting",
@@ -1676,7 +1676,7 @@ describe("InteractiveMode", () => {
 		});
 		const terminal = new TestTerminal(false, 80, 10);
 		const tui = new TUI(terminal);
-		const mode = new InteractiveMode({ session, tui, extensionHost: host });
+		const mode = new InteractiveMode({ session, tui, runtimePluginHost: host });
 		mode.start();
 
 		terminal.sendInput("/g");

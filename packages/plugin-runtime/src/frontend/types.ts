@@ -1,5 +1,6 @@
 /** Capabilities that a complete interactive frontend may advertise. */
 export type InteractiveFrontendCapability =
+	| "multiline-input"
 	| "streaming"
 	| "tool-status"
 	| "cancel"
@@ -9,6 +10,26 @@ export type InteractiveFrontendCapability =
 	| "session-selection"
 	| "compaction"
 	| (string & {});
+
+/** Core interactions every replaceable terminal frontend must support. */
+export const REQUIRED_INTERACTIVE_FRONTEND_CAPABILITIES = [
+	"multiline-input",
+	"streaming",
+	"tool-status",
+	"cancel",
+	"retry",
+	"commands",
+	"model-selection",
+	"session-selection",
+	"compaction",
+] as const satisfies readonly InteractiveFrontendCapability[];
+
+export function missingInteractiveFrontendCapabilities(
+	capabilities: readonly InteractiveFrontendCapability[],
+): readonly InteractiveFrontendCapability[] {
+	const declared = new Set(capabilities);
+	return REQUIRED_INTERACTIVE_FRONTEND_CAPABILITIES.filter((capability) => !declared.has(capability));
+}
 
 /** Data a normal plugin may offer for an active frontend to render in its own layout. */
 export interface PluginInteractivePanel {

@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { PluginHost, parsePluginManifest } from "../src/index.ts";
+import {
+	missingInteractiveFrontendCapabilities,
+	PluginHost,
+	parsePluginManifest,
+	REQUIRED_INTERACTIVE_FRONTEND_CAPABILITIES,
+} from "../src/index.ts";
 
 describe("plugin runtime package boundary", () => {
+	it("defines and validates the core interactive frontend capability contract", () => {
+		expect(REQUIRED_INTERACTIVE_FRONTEND_CAPABILITIES).toContain("multiline-input");
+		expect(missingInteractiveFrontendCapabilities(["streaming"])).toEqual(
+			expect.arrayContaining(["multiline-input", "tool-status", "compaction"]),
+		);
+		expect(missingInteractiveFrontendCapabilities(REQUIRED_INTERACTIVE_FRONTEND_CAPABILITIES)).toEqual([]);
+	});
 	it("atomically commits contributions and releases them in reverse order", async () => {
 		const host = new PluginHost({ reservedCommands: ["help"] });
 		const order: string[] = [];

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProjectTrustManager } from "../src/extensions/trust.ts";
 import { runMain } from "../src/main.ts";
 import {
 	addMcpConfig,
@@ -14,6 +13,7 @@ import {
 	loadMcpConfig,
 	removeMcpConfig,
 } from "../src/mcp/config.ts";
+import { ProjectTrustManager } from "../src/plugins/trust.ts";
 
 const roots: string[] = [];
 const fixture = fileURLToPath(new URL("../../mcp/test/fixture-server.mjs", import.meta.url));

@@ -250,6 +250,16 @@ describe("Pi-style startup configuration", () => {
 		);
 	});
 
+	it("loads user and project profile overrides for the trusted startup path", async () => {
+		await writeGlobalSettings({ providers: {}, profile: { frontend: "global-ui", pluginIds: ["global-plugin"] } });
+		await writeSettings({ providers: {}, profile: { frontend: "project-ui", pluginIds: ["project-plugin"] } });
+		const configuration = await loadStartupConfiguration(root, {}, globalDir);
+		expect(configuration.profileOverrides).toEqual({
+			user: { frontend: "global-ui", pluginIds: ["global-plugin"] },
+			project: { frontend: "project-ui", pluginIds: ["project-plugin"] },
+		});
+	});
+
 	it("persists a global locale without removing Provider settings", async () => {
 		await writeGlobalSettings({ locale: "en", providers: { faux: { api: "faux", models: [{ id: "faux-model" }] } } });
 

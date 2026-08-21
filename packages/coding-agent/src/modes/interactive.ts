@@ -23,7 +23,6 @@ import {
 } from "../core/clipboard-image.ts";
 import { extractImageAttachments } from "../core/image-input.ts";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
-import type { ExtensionHost } from "../extensions/runtime.ts";
 import { DEFAULT_LOCALE, type Locale, translate } from "../i18n.ts";
 import type { CodingAgentPluginHost } from "../plugins/runtime-host.ts";
 import {
@@ -108,7 +107,6 @@ export interface InteractiveModeOptions {
 	readonly tui: TUI;
 	readonly onExit?: () => void;
 	readonly sessions?: readonly InteractiveSessionChoice[];
-	readonly extensionHost?: ExtensionHost;
 	readonly runtimePluginHost?: CodingAgentPluginHost;
 	readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	/** User data directory that owns clipboard image temporaries. */
@@ -131,7 +129,6 @@ export class InteractiveMode {
 	private session: AgentSession;
 	private readonly tui: TUI;
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
-	private readonly extensionHost?: ExtensionHost;
 	private readonly runtimePluginHost?: CodingAgentPluginHost;
 	private readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	private readonly agentDir: string;
@@ -162,7 +159,6 @@ export class InteractiveMode {
 		this.tui = options.tui;
 		this.onExit = options.onExit;
 		this.sessionChoices = [...(options.sessions ?? [])];
-		this.extensionHost = options.extensionHost;
 		this.runtimePluginHost = options.runtimePluginHost;
 		this.providerOnboarding = options.providerOnboarding;
 		this.agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
@@ -227,7 +223,6 @@ export class InteractiveMode {
 		if (this.started) throw new Error("Interactive mode is already started");
 		this.started = true;
 		this.shutdownEmitted = false;
-		void this.extensionHost?.emit({ type: "session_start", cwd: this.session.allowedRoot });
 		void this.runtimePluginHost?.emit({ type: "session_start", cwd: this.session.allowedRoot });
 		this.projection.replaceTranscript(this.session.transcript);
 		this.projection.setUsage(this.session.usage);
@@ -263,7 +258,6 @@ export class InteractiveMode {
 		this.tui.stop({ finalLines: this.root.renderTranscript(this.tui.columns) });
 		if (!this.shutdownEmitted) {
 			this.shutdownEmitted = true;
-			void this.extensionHost?.emit({ type: "session_shutdown", reason: "user" });
 			void this.runtimePluginHost?.emit({ type: "session_shutdown", reason: "user" });
 		}
 	}
@@ -866,13 +860,6 @@ export class InteractiveMode {
 						});
 					break;
 				}
-				if (this.extensionHost?.listCommands().some((entry) => entry.name === command)) {
-					void this.extensionHost.runCommand(command, args).catch((cause) => {
-						this.projection.setError(cause instanceof Error ? cause.message : String(cause));
-						this.refresh();
-					});
-					break;
-				}
 				this.projection.setError(`Unknown command: /${command}`);
 			}
 		}
@@ -948,12 +935,7 @@ export class InteractiveMode {
 			name: `skill:${skill.name}`,
 			description: skill.description,
 		}));
-		return [
-			...builtinSlashCommands(this.locale),
-			...(this.runtimePluginHost?.listCommands() ?? []),
-			...(this.extensionHost?.listCommands() ?? []),
-			...skills,
-		];
+		return [...builtinSlashCommands(this.locale), ...(this.runtimePluginHost?.listCommands() ?? []), ...skills];
 	}
 
 	private isLoadedSkillCommand(input: string): boolean {

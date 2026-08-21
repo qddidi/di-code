@@ -1,16 +1,21 @@
-// Frozen migration baseline. This legacy loader remains until the runtime loader is introduced.
-import { existsSync } from "node:fs";
+// Runtime plugin loader for manifest packages and explicit development entries.
+import { createHash } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { PluginFactory } from "@di-code/plugin-runtime";
 import { createJiti } from "jiti";
-import { type ExtensionHost, loadExtensions } from "../extensions/runtime.ts";
-import type { ProjectTrustManager } from "../extensions/trust.ts";
-import type { ExtensionFactory } from "../extensions/types.ts";
 import { PluginManager } from "./manager.ts";
 import { readPackagePluginManifest, readPluginManifest, resolvePluginEntry } from "./manifest.ts";
 import { type CodingAgentPluginHost, createCodingAgentPluginHost } from "./runtime-host.ts";
+import type { ProjectTrustManager } from "./trust.ts";
 import type { DiscoveredPlugin, PluginDiagnostic, PluginDiagnosticStage } from "./types.ts";
+
+interface PluginCandidate {
+	readonly root: string;
+	readonly explicit: boolean;
+	readonly entryOverride?: string;
+}
 
 /** A plugin loading transition emitted after its manifest is discovered. */
 export type PluginLoadStatus =
@@ -31,12 +36,12 @@ export interface PluginLoadOptions {
 	readonly trustManager?: ProjectTrustManager;
 	readonly mode?: "interactive" | "print" | "json";
 	readonly explicitPaths?: readonly string[];
+	readonly pluginIds?: readonly string[];
 	/** Observes packaged plugin import outcomes without affecting the loader. */
 	readonly onPluginLoadStatus?: (status: PluginLoadStatus) => void;
 }
 
 export interface PluginLoadResult {
-	readonly host: ExtensionHost;
 	readonly runtimeHost: CodingAgentPluginHost;
 	readonly loaded: readonly DiscoveredPlugin[];
 	readonly diagnostics: readonly PluginDiagnostic[];
@@ -66,41 +71,78 @@ async function discoverPluginRoots(cwd: string, agentDir: string, trusted: boole
 	return result.sort((a, b) => a.localeCompare(b));
 }
 
+function explicitPluginCandidates(cwd: string, paths: readonly string[]): PluginCandidate[] {
+	return paths.map((path) => {
+		const resolved = resolve(cwd, path);
+		try {
+			if (statSync(resolved).isFile()) return { root: dirname(resolved), explicit: true, entryOverride: resolved };
+		} catch {
+			// Let manifest/entry diagnostics report missing explicit paths consistently below.
+		}
+		return { root: resolved, explicit: true };
+	});
+}
+
+function syntheticManifest(root: string, entry: string): Awaited<ReturnType<typeof readPluginManifest>> {
+	const base = entry
+		.replace(/^.*[\\/]/, "")
+		.replace(/\.[^.]+$/, "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 64);
+	const suffix = createHash("sha256").update(root).digest("hex").slice(0, 8);
+	const id = `${base || "explicit"}-${suffix}`.slice(0, 64);
+	return {
+		apiVersion: 1,
+		id,
+		name: id,
+		version: "0.0.0",
+		entry: relative(root, entry),
+		permissions: { filesystem: "none", network: [], process: [] },
+	};
+}
+
 export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoadResult> {
 	const cwd = resolve(options.cwd);
 	const agentDir = resolve(options.agentDir ?? join(cwd, ".di-code"));
 	const trusted =
 		options.projectTrusted ?? (options.trustManager ? (await options.trustManager.get(cwd)) === true : false);
-	const extensionResult = await loadExtensions({
-		cwd,
-		projectTrusted: trusted,
-		trustManager: options.trustManager,
-		mode: options.mode,
-		paths: options.explicitPaths,
-	});
 	const runtimeHost = createCodingAgentPluginHost({
 		cwd,
 		mode: options.mode ?? "json",
 		projectTrusted: trusted,
 		reservedCommands: ["help", "clear", "model", "session", "theme", "settings", "compact", "usage", "retry"],
 	});
-	const diagnostics: PluginDiagnostic[] = extensionResult.diagnostics.map((diagnostic) => ({
-		sourcePath: diagnostic.path,
-		stage: diagnostic.stage,
-		severity: "error",
-		message: diagnostic.message,
-	}));
+	const diagnostics: PluginDiagnostic[] = [];
 	const enabledGlobal = new Set(
 		(await new PluginManager({ agentDir }).list()).filter((plugin) => plugin.enabled).map((plugin) => plugin.id),
 	);
-	const pluginRoots = await discoverPluginRoots(cwd, agentDir, trusted);
+	const discoveredCandidates: PluginCandidate[] = (await discoverPluginRoots(cwd, agentDir, trusted)).map((root) => ({
+		root,
+		explicit: false,
+	}));
+	const explicitCandidates = explicitPluginCandidates(cwd, options.explicitPaths ?? []);
+	const pluginCandidates = [...discoveredCandidates, ...explicitCandidates].filter(
+		(candidate, index, all) =>
+			all.findIndex((other) => other.root === candidate.root && other.entryOverride === candidate.entryOverride) ===
+			index,
+	);
+	pluginCandidates.sort(
+		(a, b) => a.root.localeCompare(b.root) || (a.entryOverride ?? "").localeCompare(b.entryOverride ?? ""),
+	);
 	const loaded: DiscoveredPlugin[] = [];
 	const jiti = createJiti(import.meta.url, { moduleCache: false });
-	for (const root of pluginRoots) {
-		const manifestPath = join(root, "plugin.json");
+	for (const candidate of pluginCandidates) {
+		const { root } = candidate;
+		const manifestPath = candidate.entryOverride ?? join(root, "plugin.json");
 		let manifest: Awaited<ReturnType<typeof readPluginManifest>>;
 		try {
-			manifest = await readPluginManifest(manifestPath).catch(async () => readPackagePluginManifest(root));
+			manifest = candidate.entryOverride
+				? await readPluginManifest(manifestPath).catch(async () =>
+						syntheticManifest(root, candidate.entryOverride as string),
+					)
+				: await readPluginManifest(manifestPath).catch(async () => readPackagePluginManifest(root));
 		} catch (cause) {
 			const message = cause instanceof Error ? cause.message : String(cause);
 			diagnostics.push({
@@ -113,34 +155,29 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 			continue;
 		}
 		const projectLocal = root.startsWith(resolve(cwd, ".di-code", "plugins"));
-		if (!projectLocal && !enabledGlobal.has(manifest.id)) continue;
+		if (!candidate.explicit && !projectLocal && !enabledGlobal.has(manifest.id)) continue;
+		if (
+			!candidate.explicit &&
+			options.pluginIds !== undefined &&
+			options.pluginIds.length > 0 &&
+			!options.pluginIds.includes(manifest.id)
+		)
+			continue;
 		options.onPluginLoadStatus?.({ state: "loading", pluginId: manifest.id });
-		const toolCount = extensionResult.host.listTools().length;
-		const commandCount = extensionResult.host.listCommands().length;
+		const toolCount = runtimeHost.listTools().length;
+		const commandCount = runtimeHost.listCommands().length;
 		try {
-			const entry = await resolvePluginEntry(root, manifest.entry);
+			const entry = candidate.entryOverride ?? (await resolvePluginEntry(root, manifest.entry));
 			const module = await jiti.import<{ default?: unknown }>(entry);
 			if (typeof module.default !== "function") throw new Error("plugin entry must export a default factory function");
-			const factory = module.default as ExtensionFactory;
-			let runtimeLoaded = false;
-			try {
-				await runtimeHost.load(manifest.id, factory as unknown as PluginFactory);
-				runtimeLoaded = true;
-			} catch (cause) {
-				// A legacy factory may not understand the new API; try the frozen baseline below.
-				if (!String(cause instanceof Error ? cause.message : cause).includes("is not a function")) throw cause;
-			}
-			try {
-				await extensionResult.host.registerExtension(entry, factory, manifest.id);
-			} catch (cause) {
-				if (!runtimeLoaded) throw cause;
-			}
+			const factory = module.default as PluginFactory;
+			await runtimeHost.load(manifest.id, factory);
 			loaded.push({ manifest, root, sourcePath: manifestPath, projectLocal });
 			options.onPluginLoadStatus?.({
 				state: "loaded",
 				pluginId: manifest.id,
-				tools: extensionResult.host.listTools().length - toolCount,
-				commands: extensionResult.host.listCommands().length - commandCount,
+				tools: runtimeHost.listTools().length - toolCount,
+				commands: runtimeHost.listCommands().length - commandCount,
 			});
 		} catch (cause) {
 			const message = cause instanceof Error ? cause.message : String(cause);
@@ -160,5 +197,5 @@ export async function loadPlugins(options: PluginLoadOptions): Promise<PluginLoa
 			});
 		}
 	}
-	return { host: extensionResult.host, runtimeHost, loaded, diagnostics };
+	return { runtimeHost, loaded, diagnostics };
 }

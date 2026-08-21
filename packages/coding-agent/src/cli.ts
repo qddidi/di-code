@@ -29,6 +29,7 @@ export type CliCommand =
 			noContextFiles?: true;
 			skillPaths?: readonly string[];
 			projectTrust?: boolean;
+			allowDynamicPlugins?: true;
 	  };
 
 export class CliUsageError extends Error {
@@ -79,6 +80,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	let noSkills = false;
 	let noContextFiles = false;
 	let projectTrust: boolean | undefined;
+	let allowDynamicPlugins = false;
 	const skillPaths: string[] = [];
 	const imagePaths: string[] = [];
 	const promptParts: string[] = [];
@@ -130,6 +132,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 				throw new CliUsageError("Cannot combine --trust-project with --untrust-project.");
 			}
 			projectTrust = nextTrust;
+			continue;
+		}
+		if (argument === "--allow-dynamic-plugins") {
+			allowDynamicPlugins = true;
 			continue;
 		}
 		if (argument === "--skill") {
@@ -215,6 +221,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		...(profile ? { profile } : {}),
 		...(ui ? { ui } : {}),
 		...(projectTrust === undefined ? {} : { projectTrust }),
+		...(allowDynamicPlugins ? { allowDynamicPlugins: true as const } : {}),
 	};
 }
 
@@ -301,6 +308,7 @@ ${t("options")}
   --no-context-files ${t("noContextFiles")}
   --trust-project    ${t("trustProject")}
   --untrust-project  ${t("untrustProject")}
+  --allow-dynamic-plugins  Allow approved dynamic plugin runs in interactive mode
   plugin <action>    ${t("plugin")}
   mcp add|list|get|remove ${t("mcp")}
   -h, --help         ${t("help")}

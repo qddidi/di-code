@@ -6,13 +6,28 @@ import { createInterface } from "node:readline/promises";
 import { ProcessTerminal } from "@di-code/tui";
 import packageMetadata from "../package.json" with { type: "json" };
 import { runMain } from "./main.ts";
+import type { DynamicPluginApproval } from "./plugins/dynamic-broker.ts";
 import { runProviderOnboarding, shouldStartProviderOnboarding } from "./provider-onboarding.ts";
 import { loadStartupConfiguration, resolveStartupArgs, resolveStartupRuntime } from "./startup.ts";
 
 async function promptProjectTrust(cwd: string): Promise<boolean> {
 	const readline = createInterface({ input: process.stdin, output: process.stdout });
 	try {
-		const answer = await readline.question(`Trust project-local Skills, plugins, and extensions in ${cwd}? [y/N] `);
+		const answer = await readline.question(
+			`Trust project-local Skills, plugins, and MCP configuration in ${cwd}? [y/N] `,
+		);
+		return /^(?:y|yes)$/i.test(answer.trim());
+	} finally {
+		readline.close();
+	}
+}
+
+async function promptDynamicPluginRun(approval: DynamicPluginApproval): Promise<boolean> {
+	const readline = createInterface({ input: process.stdin, output: process.stdout });
+	try {
+		const answer = await readline.question(
+			`Run dynamic plugin ${approval.pluginId}@${approval.version} (${approval.sourceBytes} bytes, capabilities: ${approval.capabilities.join(", ") || "none"}, sha256: ${approval.sourceHash})? [y/N] `,
+		);
 		return /^(?:y|yes)$/i.test(answer.trim());
 	} finally {
 		readline.close();
@@ -37,6 +52,7 @@ try {
 		startupConfiguration: configuration,
 		isInteractiveTerminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
 		promptProjectTrust,
+		promptDynamicPluginRun,
 		stdout: (text) => process.stdout.write(text),
 		stderr: (text) => process.stderr.write(text),
 	});

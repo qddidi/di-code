@@ -12,9 +12,9 @@ Each `PluginHost.load(pluginId, factory)` runs the factory against a private sta
 
 Tool names must use `<plugin-id>__<tool-name>`. Command names are checked against host-reserved names and existing contributions. Manifest permissions are declarations for trust and audit, not a Node.js sandbox.
 
-The runtime package does not load `.di-code/extensions/` and does not adapt the frozen legacy `ExtensionAPI`/`ExtensionHost`. Hosts may keep that migration baseline separately while adopting this API.
+Migration note: the runtime package does not load the retired `.di-code/extensions/` directory or adapt the retired `ExtensionAPI`/`ExtensionHost`; those names are retained here only to document the removed compatibility baseline.
 
-The package root exports the host-neutral `InteractiveFrontend`, `PluginInteractiveFrontend`, `PluginFrontendController`, and `PluginTerminalFrontendHost` contracts. A selected frontend receives terminal ownership from its host; `start()` resolves only after it releases that terminal, and `dispose()` is awaited during host cleanup. It does not receive Provider, Agent internals, Session storage, or process stdio.
+The package root exports the host-neutral `InteractiveFrontend`, `PluginInteractiveFrontend`, `PluginFrontendController`, and `PluginTerminalFrontendHost` contracts. A replaceable frontend must declare the core capabilities `multiline-input`, `streaming`, `tool-status`, `cancel`, `retry`, `commands`, `model-selection`, `session-selection`, and `compaction`; the coding-agent host rejects incomplete declarations before creating the frontend. A selected frontend receives terminal ownership from its host; `start()` resolves only after it releases that terminal, and `dispose()` is awaited during host cleanup. It does not receive Provider, Agent internals, Session storage, or process stdio.
 
 Normal plugins may instead register `PluginInteractivePanel` data and `PluginToolDetailRenderer` functions. The active frontend receives copies through `PluginFrontendController.ui` and chooses whether to render them. Panels cannot claim input, write ANSI, or rearrange host layout; result renderers are pure formatters for completed tool results.
 
@@ -23,5 +23,11 @@ Normal plugins may instead register `PluginInteractivePanel` data and `PluginToo
 Plugins may register a `SubagentProvider`, but the host owns the request and the Agent loop. `SubagentStartRequest` fixes the parent Session, working directory, selected model, visible tools/plugins, depth, timeout, and maximum result bytes. A provider returns a `SubagentRun` with `wait()`, `sendMessage()`, and idempotent `cancel()`; it must distinguish `completed`, `failed`, and `cancelled` and must not create a second orchestration loop outside the host. The host validates the provider id and parent Session, and wraps provider runs so timeout, cancellation, result-size and credential-redaction limits still apply when a provider does not enforce them itself.
 
 The coding-agent host supplies an in-process provider and the model tools `subagent`, `subagent_list`, `send_message`, `wait`, and `interrupt`. Depth and concurrency are bounded, results are UTF-8 truncated and diagnostic text is credential-redacted. Providers are not a sandbox: filesystem, process, network, and further delegation remain subject to the child Session's explicit tool policy.
+
+## Dynamic plugin protocol
+
+The runtime also owns the in-memory dynamic plugin protocol. `DynamicPluginRuntime.define()` creates an immutable `Package` containing the source hash, declared capabilities, runtime version, and bounded execution limits; it does not execute source, write files, install packages, or start a child process. `startRun()` creates an `ActiveRun` in `starting` state. A host broker may transition it to `active`, `stopping`, `stopped`, or `failed`; terminal transitions and repeated `stop()`/`fail()` calls are idempotent.
+
+`plugin_define`, `plugin_run`, and `plugin_stop` use versioned JSONL records (`version: 1`, request `id`, method, and validated params). `parseDynamicPluginJsonl()` rejects unsupported versions, malformed records, duplicate capabilities, invalid plugin IDs, oversized source, and oversized lines. `stringifyDynamicPluginJsonl()` enforces the same line limit. The protocol only describes state and metadata; approval, subprocess lifecycle, timeouts, and capability enforcement belong to a product host such as `@di-code/coding-agent`.
 
 源码、示例和问题反馈：<https://github.com/qddidi/di-code>

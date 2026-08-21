@@ -41,6 +41,8 @@ const DEFAULT_MAX_DEPTH = 2;
 const DEFAULT_MAX_CONCURRENT = 4;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_RESULT_BYTES = 32 * 1024;
+// Keep recent terminal results available to the wait tool after active runs are reclaimed.
+const TERMINAL_RESULT_CACHE_SIZE = 128;
 
 function errorMessage(cause: unknown): string {
 	return redactCredentials(cause instanceof Error ? cause.message : String(cause)).slice(0, 1_000);
@@ -262,6 +264,7 @@ export class SubagentService {
 	>;
 	private readonly providers: ReadonlyMap<string, SubagentProvider>;
 	private readonly runs = new Map<string, SubagentRun>();
+	private readonly terminalResults = new Map<string, SubagentResult>();
 	private activeCount = 0;
 
 	constructor(options: SubagentServiceOptions) {
@@ -292,6 +295,21 @@ export class SubagentService {
 
 	list(): readonly SubagentRun[] {
 		return [...this.runs.values()];
+	}
+
+	private rememberTerminalResult(result: SubagentResult): void {
+		this.terminalResults.delete(result.id);
+		this.terminalResults.set(result.id, result);
+		if (this.terminalResults.size <= TERMINAL_RESULT_CACHE_SIZE) return;
+		const oldestId = this.terminalResults.keys().next().value;
+		if (oldestId !== undefined) this.terminalResults.delete(oldestId);
+	}
+
+	private completeRun(run: SubagentRun, result: SubagentResult): void {
+		if (this.runs.get(run.id) !== run) return;
+		this.runs.delete(run.id);
+		this.activeCount--;
+		this.rememberTerminalResult(result);
 	}
 
 	async start(
@@ -401,6 +419,7 @@ export class SubagentService {
 			throw cause;
 		}
 		this.runs.set(run.id, run);
+		this.terminalResults.delete(run.id);
 		inProcess?.begin();
 		const abortListener = signal ? () => void run.cancel() : undefined;
 		if (signal && abortListener) signal.addEventListener("abort", abortListener, { once: true });
@@ -409,7 +428,7 @@ export class SubagentService {
 			.wait()
 			.then(
 				(result) => {
-					this.activeCount--;
+					this.completeRun(run, result);
 					return this.config.emit?.({
 						type: "subagent_end",
 						runId: run.id,
@@ -420,7 +439,10 @@ export class SubagentService {
 					});
 				},
 				() => {
-					this.activeCount--;
+					if (this.runs.get(run.id) === run) {
+						this.runs.delete(run.id);
+						this.activeCount--;
+					}
 				},
 			)
 			.catch(() => undefined)
@@ -438,13 +460,20 @@ export class SubagentService {
 	}
 
 	async interrupt(id: string): Promise<void> {
-		await this.get(id).cancel();
+		const run = this.runs.get(id);
+		if (run) {
+			await run.cancel();
+			return;
+		}
+		if (this.terminalResults.has(id)) return;
+		throw new Error(`Unknown subagent "${id}".`);
 	}
 
 	async dispose(): Promise<void> {
 		const runs = [...this.runs.values()];
 		await Promise.all(runs.map((run) => run.cancel()));
 		await Promise.all(runs.map((run) => run.wait().catch(() => undefined)));
+		this.terminalResults.clear();
 	}
 
 	createTools(): readonly AgentTool<TSchema, AgentToolResult>[] {
@@ -517,7 +546,9 @@ export class SubagentService {
 				execute: async (_id: string, args: Record<string, unknown>, signal?: AbortSignal) => {
 					const id = (args as { id?: unknown }).id;
 					if (typeof id !== "string" || id.trim() === "") throw new Error("wait.id must be non-empty");
-					const result = await this.get(id).wait(signal);
+					const activeRun = this.runs.get(id);
+					const result = activeRun ? await activeRun.wait(signal) : this.terminalResults.get(id);
+					if (!result) throw new Error(`Unknown subagent "${id}".`);
 					return text(
 						JSON.stringify({
 							id: result.id,

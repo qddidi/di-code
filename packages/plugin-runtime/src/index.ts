@@ -4,6 +4,39 @@ import type { PluginInteractiveFrontend, PluginInteractivePanel, PluginToolDetai
 import type { SubagentProvider } from "./subagents.ts";
 
 export type {
+	ActiveRunSnapshot,
+	ActiveRunState,
+	DynamicPackageDefinition,
+	DynamicPackageSnapshot,
+	DynamicPackageState,
+	DynamicPluginInspection,
+	DynamicPluginLimits,
+	DynamicPluginRequest,
+	DynamicPluginResponse,
+	DynamicPluginRpcMethod,
+	DynamicPluginRpcRequest,
+	DynamicPluginRpcResponse,
+	PluginDefineRequest,
+	PluginRunRequest,
+	PluginStopRequest,
+} from "./dynamic/index.ts";
+export {
+	ActiveRun,
+	DYNAMIC_PLUGIN_MAX_LINE_BYTES,
+	DYNAMIC_PLUGIN_MAX_SOURCE_BYTES,
+	DYNAMIC_PLUGIN_PROTOCOL_VERSION,
+	DynamicPluginRuntime,
+	encodeDynamicPluginJsonl,
+	Package,
+	parseDynamicPluginJsonl,
+	parseDynamicPluginJsonlRecord,
+	parseDynamicPluginRecord,
+	parseDynamicPluginRequest,
+	parseDynamicPluginRequestLine,
+	parseDynamicPluginResponse,
+	stringifyDynamicPluginJsonl,
+} from "./dynamic/index.ts";
+export type {
 	InteractiveFrontend,
 	InteractiveFrontendCapability,
 	PluginFrontendController,
@@ -12,6 +45,10 @@ export type {
 	PluginTerminalFrontendHost,
 	PluginToolDetailRenderer,
 	PluginUiContributions,
+} from "./frontend/index.ts";
+export {
+	missingInteractiveFrontendCapabilities,
+	REQUIRED_INTERACTIVE_FRONTEND_CAPABILITIES,
 } from "./frontend/index.ts";
 export type {
 	SubagentInput,
@@ -152,7 +189,10 @@ const empty = (): Mutable => ({
 	sessionProjections: [],
 	handlers: new Map(),
 });
-const message = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause)).slice(0, 500);
+const message = (cause: unknown): string => {
+	const text = cause instanceof Error ? cause.message : String(cause);
+	return text.replace(/(api[_-]?key|token|secret|authorization)\s*=[^\s]+/gi, "$1=[redacted]").slice(0, 500);
+};
 function idempotent(action: () => void | Promise<void>): () => void | Promise<void> {
 	let done = false;
 	return () => {

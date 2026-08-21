@@ -137,6 +137,15 @@ describe("parseCliArgs", () => {
 		);
 	});
 
+	it("parses the explicit dynamic plugin execution switch", () => {
+		expect(parseCliArgs(["--allow-dynamic-plugins", "hello"])).toEqual({
+			kind: "run",
+			mode: "print",
+			prompt: "hello",
+			allowDynamicPlugins: true,
+		});
+	});
+
 	it("parses continue as an explicit request to resume the most recent session", () => {
 		expect(parseCliArgs(["--continue", "hello"])).toEqual({
 			kind: "run",
