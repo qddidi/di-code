@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const entryPath = resolve(process.cwd(), "dist/entry.js");
+const entryPath = resolve(process.cwd(), "src/entry.ts");
 
 async function runCli(
 	args: string[],
@@ -28,11 +28,15 @@ async function runCli(
 			delete environment.DEEPSEEK_API_KEY;
 		}
 		return await new Promise((resolveResult, reject) => {
-			const child = spawn(process.execPath, [entryPath, ...args, ...(needsSession ? ["--session", sessionPath] : [])], {
-				cwd: process.cwd(),
-				env: environment,
-				stdio: ["ignore", "pipe", "pipe"],
-			});
+			const child = spawn(
+				process.execPath,
+				["--experimental-strip-types", entryPath, ...args, ...(needsSession ? ["--session", sessionPath] : [])],
+				{
+					cwd: process.cwd(),
+					env: environment,
+					stdio: ["ignore", "pipe", "pipe"],
+				},
+			);
 			let stdout = "";
 			let stderr = "";
 			child.stdout.on("data", (chunk: Buffer) => {
