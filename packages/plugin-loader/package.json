@@ -1,0 +1,29 @@
+{
+	"name": "@di-code/plugin-loader",
+	"version": "0.1.7",
+	"description": "Namespace plugin definition validation for di-code",
+	"private": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@di-code/plugin-runtime": "0.1.7"
+	}
+}

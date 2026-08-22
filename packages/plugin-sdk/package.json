@@ -1,0 +1,30 @@
+{
+	"name": "@di-code/plugin-sdk",
+	"version": "0.1.7",
+	"description": "Public SDK entry point for di-code plugins",
+	"private": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@di-code/plugin-loader": "0.1.7",
+		"@di-code/plugin-runtime": "0.1.7"
+	}
+}

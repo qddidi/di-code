@@ -1,7 +1,13 @@
 {
 	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
-		"noEmit": true
+		"noEmit": true,
+		"baseUrl": ".",
+		"paths": {
+			"@di-code/plugin-runtime": ["packages/plugin-runtime/src/index.ts"],
+			"@di-code/plugin-loader": ["packages/plugin-loader/src/index.ts"],
+			"@di-code/plugin-sdk": ["packages/plugin-sdk/src/index.ts"]
+		}
 	},
 	"include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"],
 	"exclude": ["**/node_modules/**", "**/dist/**"]

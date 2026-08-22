@@ -7,7 +7,7 @@
 		"packages/*"
 	],
 	"scripts": {
-		"build": "npm run build --workspace @di-code/tui && npm run build --workspace @di-code/ai && npm run build --workspace @di-code/agent && npm run build --workspace @di-code/skills && npm run build --workspace @di-code/mcp && npm run build --workspace @di-code/coding-agent && npm run build --workspace @di-code/orchestrator",
+		"build": "npm run build --workspace @di-code/tui && npm run build --workspace @di-code/ai && npm run build --workspace @di-code/agent && npm run build --workspace @di-code/plugin-runtime && npm run build --workspace @di-code/plugin-loader && npm run build --workspace @di-code/plugin-sdk && npm run build --workspace @di-code/skills && npm run build --workspace @di-code/mcp && npm run build --workspace @di-code/coding-agent && npm run build --workspace @di-code/orchestrator",
 		"check": "biome check . && tsc --noEmit -p tsconfig.json",
 		"dev": "node --env-file-if-exists=.env --experimental-strip-types packages/coding-agent/src/entry.ts",
 		"version:prepare": "node scripts/version-packages.mjs",

@@ -42,7 +42,7 @@ codex/plugin-runtime-rebuild
 
 ```text
 你正在 D:\pi\di-code 实现一个严格分阶段的 TypeScript npm workspace 变更。
-先阅读根 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读根 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 遵守 ESM/NodeNext/strict/verbatimModuleSyntax/erasableSyntaxOnly、Biome tab、120 列、公共边界和安全约束。
 本阶段只改当前提示词列出的文件/目录；保留用户已有的无关工作区改动；不要编辑 dist、coverage、.di-code、.env、会话或凭据。
@@ -85,7 +85,7 @@ codex/plugin-runtime-rebuild
 
 ```text
 你正在 D:\pi\di-code 执行阶段 0：冻结基线和决策记录。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 只做审计和测试基线，不实现新 Runtime。
@@ -110,7 +110,7 @@ codex/plugin-runtime-rebuild
 
 ```text
 你正在 D:\pi\di-code 执行阶段 1：workspace 和公共契约骨架。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 新增 @di-code/plugin-runtime、@di-code/plugin-loader、@di-code/plugin-sdk 三个 workspace。
@@ -135,7 +135,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 2：Context、Service Registry 和 Fiber。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 在 @di-code/plugin-runtime 实现 Root/Child Context、ServiceRegistry、Fiber 状态机和 disposer。
@@ -158,7 +158,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 3：EventBus、诊断和 capability。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 在 @di-code/plugin-runtime 增加 typed EventBus、PluginLogger、DiagnosticSink、CapabilityView。
@@ -181,7 +181,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 4：Contribution Registry 集合。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 实现统一 ContributionRegistry，并定义 Provider/Tool/Command/Prompt/SessionStore/SessionFactory/Compaction/Renderer/RpcMethod/Resource 的最小公共类型。
@@ -204,7 +204,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 5：Composition Parser 和 Loader。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 在 @di-code/plugin-loader 实现 composition 读取、base/mode/user/project layer 合并、Entry Tree、group/disabled、insert/remove/replace/enable/disable/move patch、依赖拓扑排序和 inventory。
@@ -227,7 +227,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 6：manifest、package exports、trust 和安装。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 实现 manifest 校验、namespace export unwrap、apiVersion、package exports 边界、project trust、local/npm/git staging install 和 versioned registry。
@@ -249,7 +249,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 7：最小 profile（runtime + faux + agent + memory + print）。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 新增最小 profile，只包含 Bootstrap、runtime、diagnostics、process-exit、provider-registry、provider-faux、agent-loop、session-memory、mode-print。
@@ -273,7 +273,7 @@ plugin-runtime 不依赖 coding-agent；plugin-loader 只依赖 plugin-runtime�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 8：Provider 和模型迁移。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 把 openai/anthropic/deepseek/kimi/zhipu/faux、model catalog、credential-env、runtime-selection、provider-onboarding 迁移为独立 plugin entries。
@@ -296,7 +296,7 @@ main/entry 只向 ProviderRegistry 查询，不得 import provider files。
 
 ```text
 你正在 D:\pi\di-code 执行阶段 9：Agent、Session 和 compaction 迁移。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 新增/迁移 agent-loop、agent-session、session-store-jsonl、session-tree、session-query、usage-meter、context-budget、compaction-basic、system-prompt、resource-loader、skills plugins。
@@ -318,7 +318,7 @@ AgentSession 不再创建任何内建工具数组，不接收 ExtensionHost；�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 10：编码工具和策略迁移。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 将 workspace、read、write、edit、bash、glob、grep、load-skill、approval、policy、tool-output 拆为 plugin entries。
@@ -340,7 +340,7 @@ AgentSession 不再创建任何内建工具数组，不接收 ExtensionHost；�
 
 ```text
 你正在 D:\pi\di-code 执行阶段 11：CLI、TUI、mode 和 command 迁移。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 迁移 cli-parser、command-core/session/model/settings/compact、mode-interactive/print/json、tui-renderer/theme/output-json。
@@ -363,7 +363,7 @@ interactive 的 Session choices、cancel/retry/theme/keybindings 通过 Context 
 
 ```text
 你正在 D:\pi\di-code 执行阶段 12：RPC、MCP 和 orchestrator 迁移。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 迁移 rpc-protocol-v1、rpc-server、rpc-events、mcp-config/client/tools、orchestrator-host。
@@ -386,7 +386,7 @@ MCP transport/manager 的 close/cancel/SSRF/path/headers 测试保留；orchestr
 
 ```text
 你正在 D:\pi\di-code 执行阶段 13：默认 profile、插件管理和可观测性。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 把所有 built-in entries 写入 base/interactive/print/json/rpc composition；加入 plugin-manager、plugin-inventory、plugin-trace、plugin-dump-composition。
@@ -408,7 +408,7 @@ MCP transport/manager 的 close/cancel/SSRF/path/headers 测试保留；orchestr
 
 ```text
 你正在 D:\pi\di-code 执行阶段 14：删除旧插件系统。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 先运行全仓库 rg，列出 plugins、extensions、ExtensionHost、loadPlugins、loadExtensions、registerExtension、extensionHost 的所有引用。
@@ -431,7 +431,7 @@ MCP transport/manager 的 close/cancel/SSRF/path/headers 测试保留；orchestr
 
 ```text
 你正在 D:\pi\di-code 执行阶段 15：可插拔专项、故障注入和发布门禁。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 新增 plugin-composability.e2e.ts、plugin-chaos.e2e.ts、published-plugin-smoke.e2e.ts。
@@ -454,7 +454,7 @@ MCP transport/manager 的 close/cancel/SSRF/path/headers 测试保留；orchestr
 
 ```text
 你正在 D:\pi\di-code 执行阶段 16：文档、包 README 和发布。
-先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md、docs/可插拔运行时重构VibeCoding实施步骤.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
+先阅读 AGENTS.md、README.md、目标包 README、docs/可插拔运行时重构方案.md，以及 docs/可插拔运行时重构实施状态.md（不存在时创建）。
 先检查 git status --short、最近相关 commit 和当前 diff；保留用户已有改动，并报告重叠文件。
 本阶段只修改允许范围；遵守 strict/ESM/安全约束；不要编辑 dist、coverage、.di-code、.env、会话或凭据，不使用 any、任意 eval 或 shell 拼接。
 同步根 README 的架构/启动/配置/安全概览，docs/插件使用指南.md 的 manifest/loading/trust/capability/lifecycle/API，docs/开发教程.md 的 workspace/测试/Vibe Coding 流程，以及每个公开 package README。
