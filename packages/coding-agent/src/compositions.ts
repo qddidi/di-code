@@ -5,7 +5,7 @@ import {
 	type CompositionEntry,
 	PluginInstallManager,
 	type PluginModule,
-	resolvePluginEntry,
+	resolvePackagePluginExport,
 } from "@di-code/plugin-loader";
 
 export type DefaultCompositionName = "base" | "interactive" | "print" | "json" | "rpc";
@@ -175,7 +175,7 @@ export async function resolveManagedCompositionEntries(
 			.filter((plugin) => plugin.enabled)
 			.map(async (plugin) => ({
 				id: `managed.${plugin.id}`,
-				name: pathToFileURL(await resolvePluginEntry(plugin.installedPath, plugin.manifest.entry)).href,
+				name: pathToFileURL(await resolvePackagePluginExport(plugin.installedPath, plugin.manifest.entry)).href,
 				dependsOn: ["Bootstrap"],
 				required: false,
 			})),

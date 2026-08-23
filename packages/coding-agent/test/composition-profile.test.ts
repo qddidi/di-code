@@ -73,15 +73,18 @@ describe("default compositions", () => {
 		try {
 			await mkdir(source, { recursive: true });
 			await writeFile(
-				join(source, "plugin.json"),
+				join(source, "package.json"),
 				JSON.stringify({
-					apiVersion: 1,
-					id: "managed-plugin",
-					name: "Managed plugin",
+					name: "managed-plugin",
 					version: "1.0.0",
-					entry: "index.mjs",
-					permissions: { filesystem: "none", network: [], process: [] },
-					capabilities: {},
+					type: "module",
+					exports: { "./plugin": "./index.mjs" },
+					diCode: {
+						apiVersion: 1,
+						plugins: ["./plugin"],
+						permissions: { filesystem: "none", network: [], process: [] },
+						capabilities: {},
+					},
 				}),
 			);
 			await writeFile(
@@ -127,7 +130,6 @@ describe("default compositions", () => {
 		const source = await readFile(join(process.cwd(), "src", "entry.ts"), "utf8");
 
 		expect(source).toContain('import { runInteractiveProfile } from "./interactive-profile.ts";');
-		expect(source).not.toContain('from "./legacy-main.ts"');
 	});
 });
 
@@ -141,15 +143,18 @@ describe("plugin-manager composition command", () => {
 		try {
 			await mkdir(source, { recursive: true });
 			await writeFile(
-				join(source, "plugin.json"),
+				join(source, "package.json"),
 				JSON.stringify({
-					apiVersion: 1,
-					id: "managed",
-					name: "Managed",
+					name: "managed",
 					version: "1.0.0",
-					entry: "index.mjs",
-					permissions: { filesystem: "none", network: [], process: [] },
-					capabilities: { filesystem: true },
+					type: "module",
+					exports: { "./plugin": "./index.mjs" },
+					diCode: {
+						apiVersion: 1,
+						plugins: ["./plugin"],
+						permissions: { filesystem: "none", network: [], process: [] },
+						capabilities: { filesystem: true },
+					},
 				}),
 			);
 			await writeFile(

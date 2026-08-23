@@ -456,42 +456,11 @@ di-code --no-skills "不要加载任何 Skill"
 
 插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和 capability audit 信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装可信来源的插件。默认 profile 只将已启用的受管 namespace plugin 加入 Loader；禁用项不会解析或 import，`--trace-plugins` 可显示实际 phase 和失败诊断。
 
-### 旧项目本地插件兼容 API
-
-以下路径仅用于迁移期兼容，默认 `di-code` composition 不会加载它；Stage 14 将移除此旧 API。新插件应使用下文的受管 namespace plugin 安装流程。
-
-项目插件位置固定：
-
-```text
-<project>/.di-code/plugins/<plugin-id>/
-  plugin.json
-  src/index.ts
-```
-
-最小 `plugin.json`：
-
-```json
-{
-  "apiVersion": 1,
-  "id": "project-status",
-  "name": "Project Status",
-  "version": "0.1.0",
-  "entry": "./src/index.ts",
-  "permissions": {
-    "filesystem": "none",
-    "network": [],
-    "process": []
-  }
-}
-```
-
-旧入口必须默认导出一个 factory 函数。旧产品路径只会在当前项目已获信任时导入；默认 composition 不会选择它。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
-
-完整的 TypeBox schema、工具、slash command、生命周期事件及安全责任，请阅读仓库文档：[插件使用指南](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)。
+插件以 `package.json` 的 `diCode.plugins` 单一 namespace entry 和对应 `exports` 声明。Loader 拒绝 `default` export，并以 `@di-code/plugin-runtime` 的 Context/Fiber、Registry 和 EventBus 管理贡献。完整 package shape、SDK、trust 与安全责任见[插件使用指南](../../docs/插件使用指南.md)。
 
 ### 管理全局插件
 
-全局托管插件安装在用户的 `~/.di-code/` 下，只有已启用的插件会在启动时加载：
+全局托管插件安装在用户的 `~/.di-code/plugins/installed/` 下，只有已启用的插件会在启动时加载：
 
 ```powershell
 # 本地目录、npm 包或 git URL 都可以作为来源
@@ -610,16 +579,16 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 - 在可信项目根目录运行；`bash` 不是沙箱，插件也没有沙箱。
 - 向导会将输入的 API key 保存到用户全局 `~/.di-code/settings.json`；不要放入 prompt、Skill、插件源码、会话、图片、项目配置或 Git。
-- 项目 Skill、插件和扩展默认不加载；交互式 TTY 首次发现这些目录时会询问一次，`--trust-project` / `--untrust-project` 可显式控制。该决定是“是否导入项目本地代码/指令”的选择，不会赋予额外系统权限。
+- 项目 Skill 和 MCP 配置默认不加载；交互式 TTY 首次发现这些内容时会询问一次，`--trust-project` / `--untrust-project` 可显式控制。该决定不会导入旧项目本地插件目录，也不会赋予额外系统权限。
 - Provider、模型、图片、配置和工具参数都会校验；外部项目内容和模型输出仍应视作不可信输入。
 
 | 问题 | 优先检查 |
 | --- | --- |
 | `Provider is not configured` | 设置 `DI_CODE_PROVIDER` 及对应 API key；或在 TTY 中运行 `di-code` 使用向导；离线测试使用 `faux` |
 | `Unknown model` | 确认 `DI_CODE_MODEL` 属于当前 `DI_CODE_PROVIDER` |
-| 项目 Skill / 插件没有加载 | Skill 目录是否为 `.di-code/skills` 或 `.agents/skills`，插件目录是否为 `.di-code/plugins`；交互式启动时确认 trust 提示，或运行 `di-code --trust-project --interactive` |
+| 项目 Skill / MCP 没有加载 | Skill 目录是否为 `.di-code/skills` 或 `.agents/skills`，或检查 `.mcp.json`；交互式启动时确认 trust 提示，或运行 `di-code --trust-project --interactive` |
 | `Unknown skill` | Skill 是否有正确 `SKILL.md` frontmatter，名称是否匹配 `/skill:<name>`；检查是否被 `--no-skills` 禁用 |
-| `plugin_diagnostic` | 检查 `plugin.json`、默认导出、入口路径及 stderr 的 JSON 诊断；详见插件指南 |
+| plugin Loader 诊断 | 检查 `package.json.diCode.plugins`、对应 `exports`、namespace `name`/`apply` 与 `di-code --dump-composition` 输出；详见插件指南 |
 | 图片被拒绝 | 确认格式、4 张/5 MiB 限制，以及模型 `input` 包含 `image` |
 | 文件工具无法访问路径 | 从工作根目录启动，且目标未越出根目录；二进制文件不支持 |
 

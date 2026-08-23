@@ -22,7 +22,6 @@ import type {
 } from "@di-code/ai";
 import { createBuiltinToolSnapshot, createDefaultToolCapabilities } from "@di-code/builtins";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
-import type { ExtensionHost } from "../extensions/runtime.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
@@ -57,7 +56,6 @@ export interface AgentSessionOptions {
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
-	readonly extensionHost?: ExtensionHost;
 	/** External tools already validated by the product integration layer. */
 	readonly externalTools?: readonly AgentTool[];
 }
@@ -108,7 +106,6 @@ export class AgentSession {
 	private provider: Provider;
 	private readonly skills: readonly SkillResource[];
 	private readonly skillCatalog: SkillCatalog;
-	private readonly extensionHost?: ExtensionHost;
 	private model: Model;
 	private thinkingLevelValue?: ThinkingLevel;
 	private readonly sessionIdValue: string;
@@ -148,7 +145,6 @@ export class AgentSession {
 				diagnostics: [],
 			})),
 		);
-		this.extensionHost = options.extensionHost;
 		this.model = options.model;
 		this.thinkingLevelValue =
 			options.thinkingLevel !== undefined && this.model.reasoningEfforts?.includes(options.thinkingLevel)
@@ -185,19 +181,10 @@ export class AgentSession {
 			thinkingLevel: this.thinkingLevelValue,
 			systemPrompt: options.systemPrompt,
 			sessionId: this.sessionIdValue,
-			tools: createBuiltinToolSnapshot(createDefaultToolCapabilities(options.allowedRoot, this.skillCatalog), [
-				...(this.extensionHost?.listTools().map((tool) => ({
-					name: tool.name,
-					description: tool.description,
-					parameters: tool.parameters,
-					execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
-						const result = await this.extensionHost?.runTool(tool.name, toolCallId, parameters, signal);
-						if (result === undefined) throw new Error(`Extension tool "${tool.name}" is unavailable.`);
-						return [...result];
-					},
-				})) ?? []),
-				...(options.externalTools ?? []),
-			]),
+			tools: createBuiltinToolSnapshot(
+				createDefaultToolCapabilities(options.allowedRoot, this.skillCatalog),
+				options.externalTools,
+			),
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,
@@ -218,7 +205,7 @@ export class AgentSession {
 			this.addUsage(event.message.usage);
 			await this.emitSession({ type: "usage_update", usage: this.usage });
 		});
-		this.agent.subscribe(async (event, signal) => {
+		this.agent.subscribe(async (event, _signal) => {
 			if (event.type === "message_end" && event.message.role === "user") {
 				const queued = this.steeringMessages[0];
 				if (queued && textFromUserMessage(event.message) === queued.deliveredText) {
@@ -226,7 +213,6 @@ export class AgentSession {
 					await this.emitQueueUpdate();
 				}
 			}
-			if (this.extensionHost) await this.extensionHost.emit(event, signal);
 			await this.emitSession(event);
 		});
 	}

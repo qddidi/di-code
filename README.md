@@ -571,19 +571,13 @@ import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 
 默认 CLI 会为交互会话创建或恢复用户目录 `~/.di-code/sessions/<工作区哈希>/` 下的版本化 JSONL 文件。当前格式为 v2：记录只追加，每条记录可引用任意已提交父节点，因此同一文件可保存多个对话分支。`/tree` 以紧凑单栏树显示路径和节点摘要，当前选择由 `›` 标识：选择历史用户消息时会恢复其文本到编辑器，并从该消息之前的上下文发送新 prompt；选择 assistant、tool result 或 summary 时从所选节点继续。按 `s` 会先切换到所选路径，再使用现有上下文压缩生成 summary；成功后下一条 prompt 会从该 summary 分支继续。摘要仍需要有效压缩切点。图片附件只恢复文本，需重新附加。导航仅改变模型上下文，不回滚文件、命令或外部服务副作用。Session 文件 v1 不会迁移，打开时会以 `UNSUPPORTED_VERSION` 拒绝。会话仍支持锁文件保护、损坏诊断、并发追加和每分支的上下文摘要压缩；完整磁盘历史和发送给模型的压缩上下文保持分离。`SessionManager` 与 `AgentSession` 也可作为 SDK 使用。已有项目内 `.di-code/sessions/` 文件不会自动移动；需要保留或共享它们时，通过 `--session <path>` 显式打开。
 
-历史 project-local Extension API 可注册模型工具、interactive 模式 slash command 和 Agent/会话生命周期事件处理器；默认 composition 不再加载该兼容路径。默认启动只解析已启用的受管 namespace plugin：
-
-```text
-.di-code/plugins/<plugin-id>/
-```
-
-旧 project-local plugin 的兼容文档保留到 Stage 14 删除旧系统；它不是默认 `di-code` 启动路径。当前交互式 TTY 只会在发现项目 Skills 或 MCP 配置时请求 trust：
+默认启动只通过 Composition 解析已启用的受管 namespace plugin。交互式 TTY 只会在发现项目 Skills 或 MCP 配置时请求 trust：
 
 ```powershell
 npm run dev -- --trust-project --interactive
 ```
 
-受管插件在进程内执行，**不是权限沙箱**；manifest 的 `permissions` 用于声明和 capability audit，不会阻止插件自行访问文件、网络或子进程。默认 profile 仅将已启用插件加入 Loader；禁用项既不解析 entry，也不会 import。只安装可信来源的插件，并在插件实现中自行处理路径边界、输入校验、超时、取消和凭据保护。
+受管插件在进程内执行，**不是权限沙箱**；`package.json` 的 `diCode.permissions` 用于声明和 capability audit，不会阻止插件自行访问文件、网络或子进程。默认 profile 仅将已启用插件加入 Loader；禁用项既不解析 entry，也不会 import。只安装可信来源的插件，并在插件实现中自行处理路径边界、输入校验、超时、取消和凭据保护。
 
 默认运行时由 `base` 与选定的 `interactive`、`print`、`json` 或 `rpc` composition 组合。`plugin` 管理命令本身也由 composition entry 注册，不需要 Provider。除 `list` 外，可用 `get <id>` 查看不含安装路径或来源的公开状态。`--trace-plugins` 和 `--dump-composition` 只按需挂载开发观测 entries；它们输出实际 resolved tree、Loader phase、owner Fiber、capability audit 与脱敏失败诊断，不输出 composition 配置、凭据或 Provider 请求体。
 

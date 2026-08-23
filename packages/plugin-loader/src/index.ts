@@ -87,8 +87,8 @@ function parseCapabilities(value: unknown): PluginCapabilities {
 	return Object.freeze({ ...value }) as PluginCapabilities;
 }
 
-/** Validates the durable manifest before a plugin is imported. */
-export function parsePluginManifest(value: unknown): PluginManifest {
+/** Validates package metadata before its namespace entry is imported. */
+function parsePackagePluginManifest(value: unknown): PluginManifest {
 	if (!isRecord(value)) throw new Error("plugin manifest must be an object");
 	if (value.apiVersion !== PLUGIN_API_VERSION) throw new Error(`plugin API version must be ${PLUGIN_API_VERSION}`);
 	const id = requiredString(value, "id");
@@ -108,15 +108,6 @@ export function parsePluginManifest(value: unknown): PluginManifest {
 	};
 }
 
-export async function readPluginManifest(manifestPath: string): Promise<PluginManifest> {
-	try {
-		return parsePluginManifest(JSON.parse(await readFile(manifestPath, "utf8")));
-	} catch (cause) {
-		if (cause instanceof Error && cause.message.startsWith("plugin manifest")) throw cause;
-		throw new Error("plugin manifest is not valid JSON");
-	}
-}
-
 export async function readPackagePluginManifest(root: string): Promise<PluginManifest> {
 	let packageJson: unknown;
 	try {
@@ -133,7 +124,7 @@ export async function readPackagePluginManifest(root: string): Promise<PluginMan
 	const exportsValue = packageJson.exports;
 	if (!isRecord(exportsValue) || !Object.hasOwn(exportsValue, entries[0]))
 		throw new Error(`plugin package export ${entries[0]} is not declared`);
-	return parsePluginManifest({
+	return parsePackagePluginManifest({
 		apiVersion: diCode.apiVersion,
 		id: typeof packageJson.name === "string" ? packageJson.name.replace(/^@[^/]+\//, "") : "package-plugin",
 		name: packageJson.name,
@@ -194,10 +185,6 @@ export async function resolvePluginEntry(root: string, entry: string, checkPacka
 		throw new Error("plugin entry symlink escapes the plugin root");
 	if (!(await lstat(resolvedEntry)).isFile()) throw new Error("plugin entry must be a file");
 	return resolvedEntry;
-}
-
-export function pluginRootFromManifest(manifestPath: string): string {
-	return dirname(manifestPath);
 }
 
 export function isPluginDefinition(value: unknown): value is PluginDefinition {
@@ -697,10 +684,8 @@ export class PluginInstallManager {
 		}
 	}
 	private async installFromRoot(sourceRoot: string, source: string, temporaryRoot?: string): Promise<ManagedPlugin> {
-		const manifest = await readPluginManifest(join(sourceRoot, "plugin.json")).catch(() =>
-			readPackagePluginManifest(sourceRoot),
-		);
-		if (manifest.entry.startsWith("./")) await resolvePluginEntry(sourceRoot, manifest.entry);
+		const manifest = await readPackagePluginManifest(sourceRoot);
+		await resolvePackagePluginExport(sourceRoot, manifest.entry);
 		const destination = resolve(this.managedRoot, manifest.id);
 		assertManagedPath(destination, this.managedRoot);
 		const staging = temporaryRoot ?? resolve(this.managedRoot, `.staging-${process.pid}-${Date.now()}`);

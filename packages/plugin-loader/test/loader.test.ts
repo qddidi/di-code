@@ -12,41 +12,19 @@ import {
 	PluginInstallManager,
 	ProjectTrustStore,
 	parseComposition,
-	parsePluginManifest,
 	readPackagePluginManifest,
-	readPluginManifest,
 	resolvePackagePluginExport,
-	resolvePluginEntry,
 	topologicallySortEntries,
 } from "../src/index.ts";
 import * as fixture from "./fixtures/namespace-plugin.ts";
 
 describe("namespace plugin loader contract", () => {
-	it("validates package manifests and rejects unsafe declarations", () => {
-		const manifest = parsePluginManifest({
-			apiVersion: 1,
-			id: "fixture-plugin",
-			name: "Fixture Plugin",
-			version: "1.0.0",
-			entry: "./plugin.ts",
-			permissions: { filesystem: "none", network: [], process: [] },
-		});
-		expect(manifest.id).toBe("fixture-plugin");
-		expect(() => parsePluginManifest({ ...manifest, entry: "../escape.ts" })).toThrow(/relative/);
-		expect(() =>
-			parsePluginManifest({
-				...manifest,
-				permissions: { filesystem: "none", network: ["http://example.com"], process: [] },
-			}),
-		).toThrow(/HTTPS/);
-	});
-
 	it("reads package diCode metadata and keeps entry inside the package root", async () => {
 		const root = new URL("./fixtures/composition-plugin/", import.meta.url);
 		const rootPath = fileURLToPath(root);
 		const manifest = await readPackagePluginManifest(rootPath);
 		expect(manifest.id).toBe("composition-plugin");
-		expect(await resolvePluginEntry(rootPath, manifest.entry)).toMatch(/plugin\.ts$/);
+		expect(await resolvePackagePluginExport(rootPath, manifest.entry)).toMatch(/plugin\.ts$/);
 	});
 	it("loads a published namespace package only through its declared export", async () => {
 		const rootPath = fileURLToPath(new URL("./fixtures/published-namespace/", import.meta.url));
@@ -57,10 +35,6 @@ describe("namespace plugin loader contract", () => {
 	it("rejects missing package exports before import", async () => {
 		const rootPath = fileURLToPath(new URL("./fixtures/missing-export/", import.meta.url));
 		await expect(readPackagePluginManifest(rootPath)).rejects.toThrow(/not declared/iu);
-	});
-	it("rejects a malformed manifest fixture", async () => {
-		const manifestPath = fileURLToPath(new URL("./fixtures/malformed-manifest.json", import.meta.url));
-		await expect(readPluginManifest(manifestPath)).rejects.toThrow(/id must use/iu);
 	});
 	it("loads a real namespace export fixture without a default", () => {
 		const definition = getPluginDefinition(fixture);
@@ -211,14 +185,17 @@ describe("Plugin installation and trust", () => {
 		const source = join(root, "source");
 		await mkdir(source, { recursive: true });
 		await writeFile(
-			join(source, "plugin.json"),
+			join(source, "package.json"),
 			JSON.stringify({
-				apiVersion: 1,
-				id: "rollback",
 				name: "rollback",
 				version: "1.0.0",
-				entry: "index.mjs",
-				permissions: { filesystem: "none", network: [], process: [] },
+				type: "module",
+				exports: { "./plugin": "./index.mjs" },
+				diCode: {
+					apiVersion: 1,
+					plugins: ["./plugin"],
+					permissions: { filesystem: "none", network: [], process: [] },
+				},
 			}),
 		);
 		await writeFile(

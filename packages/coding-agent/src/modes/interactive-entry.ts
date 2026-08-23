@@ -12,7 +12,6 @@ export interface InteractiveModeEntryOptions {
 	readonly commandRegistry: CommandRegistry;
 	readonly context: InteractiveContextService;
 	readonly onExit: () => void;
-	readonly extensionHost?: import("../extensions/runtime.ts").ExtensionHost;
 	readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	readonly initialPrompt: string;
 	readonly onCreated?: (mode: InteractiveMode) => void;
@@ -30,7 +29,6 @@ export function runInteractiveMode(options: InteractiveModeEntryOptions): number
 		commandRegistry: options.commandRegistry,
 		context: options.context,
 		onExit: options.onExit,
-		...(options.extensionHost ? { extensionHost: options.extensionHost } : {}),
 		...(options.providerOnboarding ? { providerOnboarding: options.providerOnboarding } : {}),
 	});
 	options.onCreated?.(mode);

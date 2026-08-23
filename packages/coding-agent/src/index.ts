@@ -6,12 +6,10 @@ export * from "./core/session/session-storage.ts";
 export * from "./core/session/types.ts";
 export * from "./core/session.ts";
 export * from "./core/system-prompt.ts";
-export * from "./extensions/index.ts";
 export * from "./mcp/config.ts";
 export * from "./mcp/entries.ts";
 export * from "./mcp/loader.ts";
 export * from "./mcp/tool-adapter.ts";
-export * from "./plugins/index.ts";
 export { type PluginInventoryService, pluginInventory, pluginInventoryKey } from "./runtime/plugin-inventory-entry.ts";
 export {
 	type PluginManagementAction,

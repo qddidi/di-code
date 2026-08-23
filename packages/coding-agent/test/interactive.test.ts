@@ -9,7 +9,6 @@ import { describe, it } from "vitest";
 import { clipboardImageDirectory } from "../src/core/clipboard-image.ts";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
-import { ExtensionHost } from "../src/extensions/runtime.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
 import { resolveStartupRuntime } from "../src/startup.ts";
@@ -730,36 +729,6 @@ describe("InteractiveChat streaming layout", () => {
 });
 
 describe("InteractiveMode", () => {
-	it("runs extension slash commands and emits session lifecycle exactly once", async () => {
-		const faux = createFauxProvider({ responses: [] });
-		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
-		const host = new ExtensionHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
-		const events: string[] = [];
-		await host.registerExtension("test", (api) => {
-			api.registerCommand({
-				name: "hello",
-				description: "hello",
-				handler: async (ctx) => {
-					events.push(`command:${ctx.args}`);
-				},
-			});
-			api.on("session_start", () => {
-				events.push("start");
-			});
-			api.on("session_shutdown", () => {
-				events.push("shutdown");
-			});
-		});
-		const terminal = new TestTerminal();
-		const mode = new InteractiveMode({ session, tui: new TUI(terminal), extensionHost: host });
-		mode.start();
-		terminal.sendInput("/hello world");
-		terminal.sendInput("\r");
-		await flush();
-		mode.stop();
-		mode.stop();
-		assert.deepEqual(events, ["start", "command:world", "shutdown"]);
-	});
 	it("rolls back terminal state when startup fails", () => {
 		const faux = createFauxProvider({ responses: [] });
 		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
@@ -1660,36 +1629,6 @@ describe("InteractiveMode", () => {
 
 		assert.equal(tui.hasOverlay(), false);
 		assert.equal(session.transcript.length, 0);
-		mode.stop();
-	});
-
-	it("opens slash autocomplete on slash, includes extension commands, and keeps the menu outside the editor", async () => {
-		const faux = createFauxProvider({ responses: [] });
-		const session = new AgentSession({ allowedRoot: process.cwd(), provider: faux.provider, model: faux.model });
-		const host = new ExtensionHost({ cwd: process.cwd(), mode: "interactive", projectTrusted: true });
-		await host.registerExtension("test", (api) => {
-			api.registerCommand({
-				name: "greet",
-				description: "Extension greeting",
-				handler: () => {},
-			});
-		});
-		const terminal = new TestTerminal(false, 80, 10);
-		const tui = new TUI(terminal);
-		const mode = new InteractiveMode({ session, tui, extensionHost: host });
-		mode.start();
-
-		terminal.sendInput("/g");
-		await waitFor(
-			() => tui.hasOverlay() && tui.render(terminal.columns).some((line) => line.includes("Extension greeting")),
-		);
-
-		const frame = tui.render(terminal.columns);
-		const menuRow = frame.findIndex((line) => line.includes("Extension greeting"));
-		const editorTop = frame.findIndex((line) => line.includes(" Compose "));
-		const editorBottom = frame.findIndex((line, index) => index > editorTop && line.startsWith("└"));
-		assert.equal(menuRow >= 0, true);
-		assert.equal(menuRow < editorTop || menuRow > editorBottom, true);
 		mode.stop();
 	});
 

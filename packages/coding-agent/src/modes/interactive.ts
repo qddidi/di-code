@@ -24,7 +24,6 @@ import {
 } from "../core/clipboard-image.ts";
 import { extractImageAttachments } from "../core/image-input.ts";
 import type { AgentSession, AgentSessionEvent } from "../core/session.ts";
-import type { ExtensionHost } from "../extensions/runtime.ts";
 import { DEFAULT_LOCALE, type Locale, translate } from "../i18n.ts";
 import {
 	type InteractiveProviderOnboardingOptions,
@@ -108,7 +107,6 @@ export interface InteractiveModeOptions {
 	readonly tui: TUI;
 	readonly onExit?: () => void;
 	readonly sessions?: readonly InteractiveSessionChoice[];
-	readonly extensionHost?: ExtensionHost;
 	readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	/** User data directory that owns clipboard image temporaries. */
 	readonly agentDir?: string;
@@ -154,7 +152,6 @@ export class InteractiveMode {
 	private session: AgentSession;
 	private readonly tui: TUI;
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
-	private readonly extensionHost?: ExtensionHost;
 	private readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
 	private readonly agentDir: string;
 	private readonly readClipboardImagePath: (directory?: string) => Promise<string | null>;
@@ -174,7 +171,6 @@ export class InteractiveMode {
 	private overlay?: OverlayHandle;
 	private autocompleteOverlay?: OverlayHandle;
 	private spinnerTimer?: ReturnType<typeof setInterval>;
-	private shutdownEmitted = false;
 	private preserveClipboardFiles = false;
 	private locale: Locale;
 	private readonly commandRegistry?: CommandRegistry;
@@ -194,7 +190,6 @@ export class InteractiveMode {
 			},
 		}));
 		this.sessionChoices = [...(options.sessions ?? contextChoices)];
-		this.extensionHost = options.extensionHost;
 		this.providerOnboarding = options.providerOnboarding;
 		this.agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 		this.locale = options.locale ?? DEFAULT_LOCALE;
@@ -264,8 +259,6 @@ export class InteractiveMode {
 	start(initialPrompt?: string): void {
 		if (this.started) throw new Error("Interactive mode is already started");
 		this.started = true;
-		this.shutdownEmitted = false;
-		void this.extensionHost?.emit({ type: "session_start", cwd: this.session.allowedRoot });
 		this.projection.replaceTranscript(this.session.transcript);
 		this.projection.setUsage(this.session.usage);
 		this.subscribeToSession();
@@ -298,10 +291,6 @@ export class InteractiveMode {
 		this.unsubscribeSession = undefined;
 		void this.cleanupClipboardFiles();
 		this.tui.stop({ finalLines: this.root.renderTranscript(this.tui.columns) });
-		if (!this.shutdownEmitted) {
-			this.shutdownEmitted = true;
-			void this.extensionHost?.emit({ type: "session_shutdown", reason: "user" });
-		}
 	}
 
 	/** Cancels the active prompt without changing Session history. */
@@ -874,7 +863,7 @@ export class InteractiveMode {
 		this.runRegisteredCommand(command, args);
 	}
 
-	private runRegisteredCommand(command: string, args: string): number {
+	private runRegisteredCommand(command: string, _args: string): number {
 		switch (command) {
 			case "help":
 				this.projection.setStatus(
@@ -920,16 +909,8 @@ export class InteractiveMode {
 					else void this.submit(this.lastFailedPrompt, true);
 				} else this.projection.setStatus(translate(this.locale, "nothingToRetry"));
 				break;
-			default: {
-				if (this.extensionHost?.listCommands().some((entry) => entry.name === command)) {
-					void this.extensionHost.runCommand(command, args).catch((cause) => {
-						this.projection.setError(cause instanceof Error ? cause.message : String(cause));
-						this.refresh();
-					});
-					break;
-				}
+			default:
 				this.projection.setError(`Unknown command: /${command}`);
-			}
 		}
 		this.refresh();
 		return 0;
@@ -1008,11 +989,7 @@ export class InteractiveMode {
 			name: command.name,
 			description: typeof command.description === "function" ? command.description(this.locale) : command.description,
 		}));
-		return [
-			...(registryCommands ?? builtinSlashCommands(this.locale)),
-			...(this.extensionHost?.listCommands() ?? []),
-			...skills,
-		];
+		return [...(registryCommands ?? builtinSlashCommands(this.locale)), ...skills];
 	}
 
 	private isLoadedSkillCommand(input: string): boolean {
