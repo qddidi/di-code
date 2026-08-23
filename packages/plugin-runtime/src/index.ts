@@ -944,6 +944,8 @@ export function createFiber(context: Context, pluginName: string, id?: string): 
 	return fiber;
 }
 
+export * from "./contribution-registry.ts";
+
 export async function activatePlugin<TConfig>(
 	context: Context,
 	definition: PluginDefinition<TConfig>,
