@@ -305,6 +305,8 @@ di-code --continue "继续上一次工作"
 
 交互式启动默认会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 创建 v2 JSONL 会话。记录为 append-only（只追加）格式，可引用任意已提交父节点，因此一份文件可以保存多个分支；重启默认恢复物理文件末端记录所在的分支。`/tree` 只在 interactive 模式提供专用树浏览器：以紧凑单栏树显示节点摘要和当前路径，当前选择以 `›` 标识；选择用户消息会将其文本恢复到编辑器，并从它的父节点创建新的 sibling 分支；选择 assistant、tool result 或 summary 则将该节点作为活动叶节点。`s` 会在所选路径上执行现有上下文压缩，成功后的 summary 成为下一条 prompt 的分支父节点；没有有效压缩切点时会明确失败。图片附件不会自动恢复，导航只改变模型可见上下文，不能回滚工作区副作用。v1 或未知版本的会话文件不迁移，打开时返回 `UNSUPPORTED_VERSION`。完整磁盘历史和发送给模型的压缩上下文分开保存，summary 只作用于其所在分支。`/session` 与 `--continue` 只显示或恢复当前工作区的默认会话；`--session` 可以打开任意指定路径。已有项目内 `.di-code/sessions/` 文件不会自动移动，仍可用 `--session <path>` 显式打开。
 
+产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。作为 SDK 直接构造 `AgentSession` 时，未传入 `tools` 会使用兼容 adapter 提供内建工具；新集成应传入显式工具快照或使用 Composition factory。
+
 会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在本地历史中的密钥或敏感材料。
 
 ### 图片

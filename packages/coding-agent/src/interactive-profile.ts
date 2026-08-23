@@ -2,6 +2,7 @@ import { access, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import {
+	agentSessionKey,
 	commandRegistryKey,
 	type InteractiveContextService,
 	keybindingRegistryKey,
@@ -27,6 +28,7 @@ import type { InteractiveSessionChoice } from "./modes/interactive.ts";
 import { type InteractiveModeEntryOptions, runInteractiveMode } from "./modes/interactive-entry.ts";
 import { runProviderOnboarding, shouldStartProviderOnboarding } from "./provider-onboarding.ts";
 import { pluginInventoryKey } from "./runtime/plugin-inventory-entry.ts";
+import { installAgentSessionFactory } from "./runtime/session-factory.ts";
 import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 
 export interface InteractiveProfileOptions {
@@ -208,12 +210,16 @@ export async function runInteractiveProfile(
 		const unsubscribe = context.events.subscribe((event) => options.onRuntimeEvent?.(event));
 		const loader = createCompositionLoader({
 			context,
-			entries: [...resolveDefaultComposition("interactive"), ...(await resolveManagedCompositionEntries(agentDir))],
+			entries: [
+				...resolveDefaultComposition("interactive", { allowedRoot: cwd }),
+				...(await resolveManagedCompositionEntries(agentDir)),
+			],
 			importModule: options.importModule ?? importCompositionModule,
 			projectTrusted,
 		});
 		let closed = false;
 		let closeMcp: (() => Promise<void>) | undefined;
+		let removeSessionFactory: (() => void | Promise<void>) | undefined;
 		const close = async (): Promise<void> => {
 			if (closed) return;
 			closed = true;
@@ -221,6 +227,7 @@ export async function runInteractiveProfile(
 				await closeMcp?.();
 			} finally {
 				try {
+					await removeSessionFactory?.();
 					await loader.dispose();
 				} finally {
 					await context.dispose();
@@ -230,6 +237,7 @@ export async function runInteractiveProfile(
 		};
 		try {
 			await loader.load();
+			removeSessionFactory = installAgentSessionFactory(context);
 			context.require(pluginInventoryKey).set(loader.tree.snapshot());
 			const resources = await loadResources({
 				cwd,
@@ -250,8 +258,8 @@ export async function runInteractiveProfile(
 				.create(mcp.servers, ["read", "write", "edit", "glob", "grep", "bash", "load_skill"]);
 			const manager = await openInteractiveSession(command, cwd, agentDir);
 			const systemPrompt = buildSystemPrompt({ cwd, ...resources });
-			const createSession = (sessionManager: SessionManager): AgentSession =>
-				new AgentSession({
+			const createSession = async (sessionManager: SessionManager): Promise<AgentSession> => {
+				const session = await context.require(agentSessionKey).create({
 					allowedRoot: cwd,
 					provider: runtime.provider,
 					model: runtime.model,
@@ -260,7 +268,11 @@ export async function runInteractiveProfile(
 					sessionManager,
 					externalTools,
 				});
-			const session = createSession(manager);
+				if (!(session instanceof AgentSession))
+					throw new Error("SessionFactory returned an incompatible interactive session.");
+				return session;
+			};
+			const session = await createSession(manager);
 			const directory = sessionDirectory(agentDir, cwd);
 			const sessionChoices: readonly InteractiveSessionChoice[] = [
 				{
@@ -268,7 +280,9 @@ export async function runInteractiveProfile(
 					label: translate(configuration.locale ?? DEFAULT_LOCALE, "newSession"),
 					description: translate(configuration.locale ?? DEFAULT_LOCALE, "newSessionDescription"),
 					open: async () =>
-						createSession(await SessionManager.create({ filePath: newSessionPath(directory), cwd, deferCreate: true })),
+						await createSession(
+							await SessionManager.create({ filePath: newSessionPath(directory), cwd, deferCreate: true }),
+						),
 				},
 				...(await interactiveSessionChoices(directory, manager.filePath, async (filePath) =>
 					createSession(await SessionManager.open(filePath)),

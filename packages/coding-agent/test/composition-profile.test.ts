@@ -37,7 +37,18 @@ describe("default compositions", () => {
 	it("loads the interactive mode through Loader without the print/json Agent loop", async () => {
 		const context = createRootContext({ id: "interactive-composition", mode: "interactive", trustedProject: true });
 		const entries = [
-			...defaultCompositions.base.filter((entry) => entry.id === "Bootstrap" || entry.id === "command-core"),
+			...defaultCompositions.base.filter((entry) =>
+				[
+					"Bootstrap",
+					"command-core",
+					"runtime",
+					"provider-registry",
+					"tool-registry",
+					"context-budget",
+					"compaction-basic",
+					"system-prompt",
+				].includes(entry.id),
+			),
 			...defaultCompositions.interactive,
 		];
 		const loader = createCompositionLoader({

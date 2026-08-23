@@ -29,7 +29,7 @@ const allowedRoot = resolve(process.cwd());
 const context = createRootContext({ id: "rpc-profile", mode: "rpc", trustedProject: true });
 const loader = createCompositionLoader({
 	context,
-	entries: resolveDefaultComposition("rpc"),
+	entries: resolveDefaultComposition("rpc", { allowedRoot }),
 	importModule: importCompositionModule,
 	projectTrusted: true,
 });
@@ -46,7 +46,7 @@ try {
 	const configuration = await loadStartupConfiguration(allowedRoot);
 	const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
 	await loader.load();
-	const removeFactory = installAgentSessionFactory(context.require(agentSessionKey));
+	const removeFactory = installAgentSessionFactory(context);
 	try {
 		const session = await context.require(agentSessionKey).create({
 			allowedRoot,
@@ -65,7 +65,7 @@ try {
 		server.start();
 		await server.finished();
 	} finally {
-		removeFactory();
+		await removeFactory();
 	}
 } catch (cause) {
 	const message = cause instanceof Error ? cause.message : "Unknown RPC startup error";

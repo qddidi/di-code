@@ -109,6 +109,11 @@ const agentLoopEntry = {
 export const defaultCompositions: Readonly<Record<DefaultCompositionName, readonly CompositionEntry[]>> = {
 	base: baseEntries,
 	interactive: [
+		{
+			id: "agent-session",
+			name: "@di-code/builtins/agent-session",
+			dependsOn: ["provider-registry", "tool-registry", "context-budget", "system-prompt", "compaction-basic"],
+		},
 		{ id: "command-session", name: "@di-code/builtins/command-session", dependsOn: ["command-core"] },
 		{ id: "command-model", name: "@di-code/builtins/command-model", dependsOn: ["command-core"] },
 		{ id: "command-settings", name: "@di-code/builtins/command-settings", dependsOn: ["command-core"] },
@@ -152,13 +157,18 @@ const observabilityEntries = [
 /** Resolves the production base plus exactly one mode, with opt-in development observability. */
 export function resolveDefaultComposition(
 	name: DefaultCompositionName,
-	options: { readonly observability?: boolean } = {},
+	options: { readonly observability?: boolean; readonly allowedRoot?: string } = {},
 ): readonly CompositionEntry[] {
-	return Object.freeze([
+	const entries = [
 		...defaultCompositions.base,
 		...defaultCompositions[name],
 		...(options.observability ? observabilityEntries : []),
-	]);
+	].map((entry) =>
+		entry.id === "workspace" && options.allowedRoot !== undefined
+			? { ...entry, config: { allowedRoot: options.allowedRoot } }
+			: entry,
+	);
+	return Object.freeze(entries);
 }
 
 /**

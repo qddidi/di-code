@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentTool } from "@di-code/agent";
+import type { AgentTool, AgentToolResult } from "@di-code/agent";
 import {
 	Agent,
 	type AgentListener,
@@ -17,19 +17,22 @@ import type {
 	Model,
 	Provider,
 	ThinkingLevel,
+	TSchema,
 	Usage,
 	UserContent,
 } from "@di-code/ai";
-import { createBuiltinToolSnapshot, createDefaultToolCapabilities } from "@di-code/builtins";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
+import { resolveSessionTools } from "./session-tools.ts";
 
 export interface AgentSessionCompactionOptions {
 	readonly enabled?: boolean;
 	readonly keepRecentTokens?: number;
 }
+
+export type AgentSessionTool = AgentTool<TSchema, AgentToolResult>;
 
 export interface SessionUsage {
 	readonly requestCount: number;
@@ -49,6 +52,8 @@ export interface AgentSessionOptions {
 	readonly allowedRoot: string;
 	readonly provider: Provider;
 	readonly model: Model;
+	/** Immutable tool snapshot selected by the owning SessionFactory. */
+	readonly tools?: readonly AgentSessionTool[];
 	/** Valid initial override for the selected model's thinking level. */
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly systemPrompt?: string;
@@ -56,8 +61,6 @@ export interface AgentSessionOptions {
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
-	/** External tools already validated by the product integration layer. */
-	readonly externalTools?: readonly AgentTool[];
 }
 
 export type AgentSessionEvent =
@@ -181,10 +184,7 @@ export class AgentSession {
 			thinkingLevel: this.thinkingLevelValue,
 			systemPrompt: options.systemPrompt,
 			sessionId: this.sessionIdValue,
-			tools: createBuiltinToolSnapshot(
-				createDefaultToolCapabilities(options.allowedRoot, this.skillCatalog),
-				options.externalTools,
-			),
+			tools: resolveSessionTools(options.allowedRoot, this.skills, options.tools),
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,
