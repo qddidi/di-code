@@ -1,12 +1,8 @@
 import type { PluginInventory } from "@di-code/plugin-loader";
-import { createServiceKey, type PluginDefinition } from "@di-code/plugin-runtime";
+import type { PluginDefinition } from "@di-code/plugin-runtime";
+import { pluginInventoryKey } from "./plugin-inventory-service.ts";
 
-export interface PluginInventoryService {
-	readonly set: (inventory: PluginInventory) => void;
-	readonly snapshot: () => PluginInventory | undefined;
-}
-
-export const pluginInventoryKey = createServiceKey<PluginInventoryService>("plugin-inventory");
+export { type PluginInventoryService, pluginInventoryKey } from "./plugin-inventory-service.ts";
 
 /** Stores the Loader-owned inventory without duplicating lifecycle state. */
 export const pluginInventory: PluginDefinition = {

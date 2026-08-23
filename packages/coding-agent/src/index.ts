@@ -8,9 +8,17 @@ export * from "./core/session.ts";
 export * from "./core/system-prompt.ts";
 export * from "./mcp/config.ts";
 export * from "./mcp/entries.ts";
-export * from "./mcp/loader.ts";
 export * from "./mcp/tool-adapter.ts";
-export { type PluginInventoryService, pluginInventory, pluginInventoryKey } from "./runtime/plugin-inventory-entry.ts";
+export {
+	apiVersion as rpcClientSdkApiVersion,
+	apply as rpcClientSdkApply,
+	name as rpcClientSdkName,
+	type RpcClientSdk,
+	rpcClientSdkKey,
+	version as rpcClientSdkVersion,
+} from "./rpc-client-sdk-entry.ts";
+export { pluginInventory } from "./runtime/plugin-inventory-entry.ts";
+export { type PluginInventoryService, pluginInventoryKey } from "./runtime/plugin-inventory-service.ts";
 export {
 	type PluginManagementAction,
 	type PluginManagementCommand,

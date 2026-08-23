@@ -53,9 +53,49 @@
 			"types": "./dist/mcp-client-entry.d.ts",
 			"import": "./dist/mcp-client-entry.js"
 		},
+		"./mcp-transport-entry": {
+			"types": "./dist/mcp-transport-entry.d.ts",
+			"import": "./dist/mcp-transport-entry.js"
+		},
 		"./mcp-tools-entry": {
 			"types": "./dist/mcp-tools-entry.d.ts",
 			"import": "./dist/mcp-tools-entry.js"
+		},
+		"./session-factory-entry": {
+			"types": "./dist/session-factory-entry.d.ts",
+			"import": "./dist/session-factory-entry.js"
+		},
+		"./session-store-jsonl-entry": {
+			"types": "./dist/session-store-jsonl-entry.d.ts",
+			"import": "./dist/session-store-jsonl-entry.js"
+		},
+		"./rpc-server-entry": {
+			"types": "./dist/rpc-server-entry.d.ts",
+			"import": "./dist/rpc-server-entry.js"
+		},
+		"./interactive-resources-entry": {
+			"types": "./dist/interactive-resources-entry.d.ts",
+			"import": "./dist/interactive-resources-entry.js"
+		},
+		"./interactive-host-entry": {
+			"types": "./dist/interactive-host-entry.d.ts",
+			"import": "./dist/interactive-host-entry.js"
+		},
+		"./rpc-client-sdk": {
+			"types": "./dist/rpc-client-sdk-entry.d.ts",
+			"import": "./dist/rpc-client-sdk-entry.js"
+		},
+		"./runtime-core": {
+			"types": "./dist/runtime-core-entry.d.ts",
+			"import": "./dist/runtime-core-entry.js"
+		},
+		"./composition-loader": {
+			"types": "./dist/composition-loader-entry.d.ts",
+			"import": "./dist/composition-loader-entry.js"
+		},
+		"./project-trust": {
+			"types": "./dist/project-trust-entry.d.ts",
+			"import": "./dist/project-trust-entry.js"
 		}
 	},
 	"files": [

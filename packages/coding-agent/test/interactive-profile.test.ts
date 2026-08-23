@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { importCompositionModule } from "../src/compositions.ts";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { workspaceStorageKey } from "../src/core/user-data.ts";
-import { runInteractiveProfile } from "../src/interactive-profile.ts";
+import { runMinimalProfile } from "../src/main.ts";
 
 const additionalBuiltinModules = [
 	workspace,
@@ -52,11 +52,29 @@ describe("interactive composition profile", () => {
 			process.env.DI_CODE_PROVIDER = "faux";
 			delete process.env.DI_CODE_MODEL;
 			await SessionManager.create({ filePath: join(sessionDirectory, "history.jsonl"), cwd: root });
-			const code = await runInteractiveProfile(["--interactive"], {
+			const code = await runMinimalProfile(["--interactive"], {
+				version: "test",
 				allowedRoot: root,
 				agentDir,
-				isInteractiveTerminal: true,
+				stdout: () => undefined,
 				stderr: (text) => diagnostics.push(text),
+				interactive: {
+					isInteractiveTerminal: true,
+					startInteractiveMode: (options) => {
+						expect(options.providerOnboarding?.agentDir).toBe(agentDir);
+						expect(options.providerOnboarding?.configuration).toBeDefined();
+						expect(options.commandRegistry.list().map((command) => command.name)).not.toContain("plugin");
+						const choices = options.context.sessionChoices();
+						expect(choices).toEqual(
+							expect.arrayContaining([
+								expect.objectContaining({ id: "new-session" }),
+								expect.objectContaining({ id: "history" }),
+							]),
+						);
+						options.onExit();
+						return 0;
+					},
+				},
 				importModule: async (name) => {
 					if (name.startsWith("@di-code/builtins/")) {
 						const entryName = name.slice("@di-code/builtins/".length);
@@ -67,17 +85,6 @@ describe("interactive composition profile", () => {
 						return plugin as PluginModule;
 					}
 					return await importCompositionModule(name);
-				},
-				startInteractiveMode: (options) => {
-					const choices = options.context.sessionChoices();
-					expect(choices).toEqual(
-						expect.arrayContaining([
-							expect.objectContaining({ id: "new-session" }),
-							expect.objectContaining({ id: "history" }),
-						]),
-					);
-					options.onExit();
-					return 0;
 				},
 			});
 

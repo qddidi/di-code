@@ -1,5 +1,7 @@
+import { hostCommandRegistryKey } from "@di-code/builtins";
 import type { EntryRecord, PluginInventory } from "@di-code/plugin-loader";
 import { createServiceKey, type PluginDefinition, redactSensitiveText } from "@di-code/plugin-runtime";
+import { pluginInventoryKey } from "./plugin-inventory-service.ts";
 
 type ObservationKind = "plugin_trace" | "plugin_dump_composition";
 
@@ -20,6 +22,10 @@ interface ObservedEntry {
 
 export interface PluginObservationService {
 	readonly render: (inventory: PluginInventory) => string;
+}
+
+interface PluginObservationRequest {
+	readonly stdout: (text: string) => void;
 }
 
 export const pluginTraceKey = createServiceKey<PluginObservationService>("plugin-trace");
@@ -59,13 +65,35 @@ function service(kind: ObservationKind): PluginObservationService {
 	};
 }
 
+function registerHostCommand(
+	context: Parameters<PluginDefinition["apply"]>[0],
+	fiber: Parameters<PluginDefinition["apply"]>[2],
+	name: "trace-plugins" | "dump-composition",
+	service: PluginObservationService,
+): void {
+	const hostCommands = context.get(hostCommandRegistryKey);
+	if (!hostCommands) return;
+	fiber.addDisposer(
+		hostCommands.register(name, (input) => {
+			if (typeof input !== "object" || input === null || !("stdout" in input) || typeof input.stdout !== "function")
+				return Promise.reject(new Error(`${name} command input is invalid`));
+			const inventory = context.require(pluginInventoryKey).snapshot();
+			if (!inventory) return Promise.reject(new Error("Plugin inventory is unavailable"));
+			(input as PluginObservationRequest).stdout(`${service.render(inventory)}\n`);
+			return Promise.resolve(0);
+		}),
+	);
+}
+
 /** Opt-in development entry that serializes actual Loader phases and Fiber ownership. */
 export const pluginTrace: PluginDefinition = {
 	apiVersion: 1,
 	name: "plugin-trace",
 	version: "0.1.7",
-	apply(context) {
-		context.set(pluginTraceKey, service("plugin_trace"));
+	apply(context, _config, fiber) {
+		const observation = service("plugin_trace");
+		context.set(pluginTraceKey, observation);
+		registerHostCommand(context, fiber, "trace-plugins", observation);
 	},
 };
 
@@ -74,7 +102,9 @@ export const pluginDumpComposition: PluginDefinition = {
 	apiVersion: 1,
 	name: "plugin-dump-composition",
 	version: "0.1.7",
-	apply(context) {
-		context.set(pluginDumpCompositionKey, service("plugin_dump_composition"));
+	apply(context, _config, fiber) {
+		const observation = service("plugin_dump_composition");
+		context.set(pluginDumpCompositionKey, observation);
+		registerHostCommand(context, fiber, "dump-composition", observation);
 	},
 };

@@ -1,5 +1,7 @@
 entries:
-  - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, context-budget, system-prompt, compaction-basic] }
+  - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, context-budget, system-prompt, compaction-basic, compaction-tool-result] }
+  - { id: session-factory, name: "@di-code/coding-agent/session-factory-entry", dependsOn: [agent-session] }
+  - { id: interactive-resources, name: "@di-code/coding-agent/interactive-resources-entry", dependsOn: [system-prompt, resource-loader, skills] }
   - { id: command-session, name: "@di-code/builtins/command-session", dependsOn: [command-core] }
   - { id: command-model, name: "@di-code/builtins/command-model", dependsOn: [command-core] }
   - { id: command-settings, name: "@di-code/builtins/command-settings", dependsOn: [command-core] }
@@ -9,3 +11,4 @@ entries:
   - { id: interactive-context, name: "@di-code/builtins/interactive-context", dependsOn: [command-core] }
   - { id: tui-renderer, name: "@di-code/builtins/tui-renderer", dependsOn: [command-core] }
   - { id: mode-interactive, name: "@di-code/builtins/mode-interactive", dependsOn: [command-core] }
+  - { id: interactive-host, name: "@di-code/coding-agent/interactive-host-entry", dependsOn: [session-factory, session-store-jsonl, interactive-resources, mcp-config, mcp-client, mcp-tools, interactive-context, mode-interactive] }

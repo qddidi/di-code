@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, posix, win32 } from "node:path";
 import type { AssistantContent, AssistantMessage, Message, ToolResultContent, Usage, UserContent } from "@di-code/ai";
 import {
@@ -378,7 +378,16 @@ async function acquireLock(filePath: string, options: SessionAppendOptions) {
 		try {
 			return { handle: await open(lockPath, "wx"), lockPath };
 		} catch (cause) {
-			if (!isNodeError(cause) || cause.code !== "EEXIST") {
+			let lockBusy = isNodeError(cause) && cause.code === "EEXIST";
+			if (!lockBusy && process.platform === "win32" && isNodeError(cause) && cause.code === "EPERM") {
+				try {
+					await stat(lockPath);
+					lockBusy = true;
+				} catch (statCause) {
+					if (!isNodeError(statCause) || statCause.code !== "ENOENT") throw statCause;
+				}
+			}
+			if (!lockBusy) {
 				throw new SessionWriteError("APPEND_FAILED", filePath, `Failed to acquire session lock for "${filePath}".`, {
 					cause,
 				});

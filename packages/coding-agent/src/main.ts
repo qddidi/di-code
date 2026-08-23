@@ -1,7 +1,8 @@
+import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { agentLoopKey, modeRegistryKey, processExitKey, rendererRegistryKey, sessionStoreKey } from "@di-code/builtins";
-import { createCompositionLoader, ProjectTrustStore } from "@di-code/plugin-loader";
+import { hostCommandRegistryKey, processExitKey, sessionStoreKey } from "@di-code/builtins";
+import { createCompositionLoader, type PluginModule } from "@di-code/plugin-loader";
 import { createRootContext, type RuntimeEvent, redactSensitiveText } from "@di-code/plugin-runtime";
 import { type CliCommand, createCliParser } from "./cli.ts";
 import {
@@ -9,9 +10,9 @@ import {
 	resolveCompositionEntries,
 	resolveManagedCompositionEntries,
 } from "./compositions.ts";
-import { pluginInventoryKey } from "./runtime/plugin-inventory-entry.ts";
-import { pluginManagerKey } from "./runtime/plugin-manager-entry.ts";
-import { pluginDumpCompositionKey, pluginTraceKey } from "./runtime/plugin-observability-entry.ts";
+import { createProjectTrustStore } from "./project-trust-entry.ts";
+import type { InteractiveBootstrapOptions } from "./runtime/interactive-host-service.ts";
+import { pluginInventoryKey } from "./runtime/plugin-inventory-service.ts";
 
 export interface MinimalProfileOptions {
 	readonly version: string;
@@ -22,6 +23,10 @@ export interface MinimalProfileOptions {
 	readonly stderr: (text: string) => void;
 	readonly onRuntimeEvent?: (event: RuntimeEvent) => void;
 	readonly onSessionDisposed?: () => void;
+	/** Terminal-only facilities supplied by the executable bootstrap. */
+	readonly interactive?: InteractiveBootstrapOptions;
+	/** Test-only namespace importer; production uses package-aware composition imports. */
+	readonly importModule?: (name: string) => Promise<PluginModule>;
 }
 
 function errorMessage(cause: unknown): string {
@@ -36,7 +41,24 @@ function isMinimalCommand(command: CliCommand): command is Extract<CliCommand, {
 	return command.kind === "run" || command.kind === "plugin" || command.kind === "observe";
 }
 
-/** Starts the Stage 7 minimal composition and executes its registered host command. */
+async function hasTrustedProjectContent(cwd: string): Promise<boolean> {
+	for (const path of [
+		join(cwd, ".di-code", "skills"),
+		join(cwd, ".agents", "skills"),
+		join(cwd, ".di-code", "mcp.local.json"),
+		join(cwd, ".mcp.json"),
+	]) {
+		try {
+			await access(path);
+			return true;
+		} catch (cause) {
+			if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
+		}
+	}
+	return false;
+}
+
+/** Starts a composition profile and executes its registered host command. */
 export async function runMinimalProfile(args: readonly string[], options: MinimalProfileOptions): Promise<number> {
 	const parser = createCliParser();
 	let command: CliCommand;
@@ -58,13 +80,28 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 		options.stderr("MCP commands are unavailable in the minimal profile.\n");
 		return 1;
 	}
+	if (isRun(command) && command.mode === "interactive" && !options.interactive?.isInteractiveTerminal) {
+		options.stderr("Interactive mode requires an interactive TTY.\n");
+		return 1;
+	}
 	const mode = isRun(command) ? command.mode : "print";
 	const observability = command.kind === "observe";
 	const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 	const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
-	const trustStore = new ProjectTrustStore(join(agentDir, "trust.json"));
+	const trustStore = createProjectTrustStore(join(agentDir, "trust.json"));
 	if (isRun(command) && command.projectTrust !== undefined) await trustStore.set(allowedRoot, command.projectTrust);
-	const projectTrusted = isRun(command) && !command.noProjectPlugins && (await trustStore.get(allowedRoot)) === true;
+	let projectTrusted = isRun(command) && !command.noProjectPlugins && (await trustStore.get(allowedRoot)) === true;
+	if (
+		isRun(command) &&
+		command.mode === "interactive" &&
+		!projectTrusted &&
+		command.projectTrust === undefined &&
+		options.interactive?.promptProjectTrust &&
+		(await hasTrustedProjectContent(allowedRoot))
+	) {
+		projectTrusted = await options.interactive.promptProjectTrust(allowedRoot);
+		await trustStore.set(allowedRoot, projectTrusted);
+	}
 	const managedEntries = await resolveManagedCompositionEntries(agentDir);
 	const compositionEntries = await resolveCompositionEntries(
 		isRun(command) ? (command.profile ?? command.mode) : "base",
@@ -82,50 +119,38 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 	const loader = createCompositionLoader({
 		context,
 		entries: [...compositionEntries, ...managedEntries],
-		importModule: importCompositionModule,
+		importModule: options.importModule ?? importCompositionModule,
 		projectTrusted,
 	});
 	try {
 		await loader.load();
 		context.require(pluginInventoryKey).set(loader.tree.snapshot());
+		const host = context.require(hostCommandRegistryKey);
+		let name: string;
+		let input: unknown;
 		if (command.kind === "observe") {
-			const service =
-				command.action === "trace" ? context.require(pluginTraceKey) : context.require(pluginDumpCompositionKey);
-			options.stdout(`${service.render(loader.tree.snapshot())}\n`);
-			return 0;
+			name = command.action === "trace" ? "trace-plugins" : "dump-composition";
+			input = { stdout: options.stdout };
+		} else if (command.kind === "plugin") {
+			name = "plugin";
+			input = { ...command, stdout: options.stdout, stderr: options.stderr };
+		} else if (command.mode === "interactive") {
+			name = "interactive";
+			input = {
+				command,
+				cwd: allowedRoot,
+				agentDir,
+				projectTrusted,
+				stderr: options.stderr,
+				...(options.interactive?.startInteractiveMode
+					? { startInteractiveMode: options.interactive.startInteractiveMode }
+					: {}),
+			};
+		} else {
+			name = command.mode;
+			input = { prompt: command.prompt, stdout: options.stdout };
 		}
-		if (command.kind === "plugin") {
-			return await context
-				.require(pluginManagerKey)
-				.execute({ ...command, stdout: options.stdout, stderr: options.stderr });
-		}
-		if (!isRun(command)) throw new Error("Minimal profile command is unavailable");
-		const modes = context.require(modeRegistryKey);
-		const code = await modes.execute(
-			command.mode,
-			command.mode === "print"
-				? { prompt: command.prompt, stdout: options.stdout }
-				: command.mode === "json"
-					? {
-							run: async () => {
-								const renderer = context.require(rendererRegistryKey).find("json");
-								if (!renderer) throw new Error("JSON renderer is unavailable");
-								const loop = context.require(agentLoopKey);
-								const unsubscribe = loop.agent.subscribe((event) => {
-									const rendered = renderer.render(event);
-									if (rendered !== undefined) options.stdout(`${rendered}\n`);
-								});
-								try {
-									const response = await loop.prompt(command.prompt, context.signal);
-									return response.stopReason === "error" || response.stopReason === "aborted" ? 1 : 0;
-								} finally {
-									unsubscribe();
-								}
-							},
-						}
-					: { run: () => Promise.reject(new Error("Interactive mode requires a session context")) },
-			context.signal,
-		);
+		const code = await host.execute(name, input, context.signal);
 		const processExit = context.require(processExitKey);
 		processExit.setCode(code);
 		return processExit.code();

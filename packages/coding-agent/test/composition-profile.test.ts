@@ -1,7 +1,25 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commandCore, commandRegistryKey, pluginModules } from "@di-code/builtins";
+import {
+	bootstrap,
+	commandCore,
+	hostCommandRegistryKey,
+	networkCapability,
+	pluginModules,
+	processCapability,
+	toolApproval,
+	toolBash,
+	toolEdit,
+	toolGlob,
+	toolGrep,
+	toolLoadSkill,
+	toolOutput,
+	toolPolicy,
+	toolRead,
+	toolWrite,
+	workspace,
+} from "@di-code/builtins";
 import { createCompositionLoader, PluginInstallManager, type PluginModule } from "@di-code/plugin-loader";
 import { createRootContext } from "@di-code/plugin-runtime";
 import { describe, expect, it } from "vitest";
@@ -12,6 +30,22 @@ import {
 	resolveManagedCompositionEntries,
 } from "../src/compositions.ts";
 import { pluginManager } from "../src/runtime/plugin-manager-entry.ts";
+
+const additionalBuiltinModules = [
+	workspace,
+	processCapability,
+	networkCapability,
+	toolApproval,
+	toolPolicy,
+	toolOutput,
+	toolRead,
+	toolWrite,
+	toolEdit,
+	toolBash,
+	toolGlob,
+	toolGrep,
+	toolLoadSkill,
+];
 
 describe("default compositions", () => {
 	it("loads every built-in entry from package-owned base and mode documents", async () => {
@@ -28,7 +62,14 @@ describe("default compositions", () => {
 		expect((await resolveDefaultComposition("print")).map((entry) => entry.id)).toContain("mode-print");
 		expect((await resolveDefaultComposition("json")).map((entry) => entry.id)).toContain("mode-json");
 		expect((await resolveDefaultComposition("interactive")).map((entry) => entry.id)).toContain("mode-interactive");
-		expect((await resolveDefaultComposition("rpc")).map((entry) => entry.id)).toContain("rpc-protocol-v1");
+		const rpcEntries = await resolveDefaultComposition("rpc");
+		expect(rpcEntries).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: "session-factory", name: "@di-code/coding-agent/session-factory-entry" }),
+				expect.objectContaining({ id: "rpc-protocol-v1", dependsOn: ["session-factory"] }),
+				expect.objectContaining({ id: "rpc-server", name: "@di-code/coding-agent/rpc-server-entry" }),
+			]),
+		);
 		expect((await resolveDefaultComposition("print")).map((entry) => entry.id)).not.toContain("plugin-trace");
 		expect((await resolveDefaultComposition("print", { observability: true })).map((entry) => entry.id)).toEqual(
 			expect.arrayContaining(["plugin-trace", "plugin-dump-composition"]),
@@ -40,18 +81,7 @@ describe("default compositions", () => {
 		const baseEntries = await resolveDefaultComposition("base");
 		const interactiveEntries = await resolveDefaultComposition("interactive");
 		const entries = [
-			...baseEntries.filter((entry) =>
-				[
-					"Bootstrap",
-					"command-core",
-					"runtime",
-					"provider-registry",
-					"tool-registry",
-					"context-budget",
-					"compaction-basic",
-					"system-prompt",
-				].includes(entry.id),
-			),
+			...baseEntries,
 			...interactiveEntries.filter((entry) => !baseEntries.some((baseEntry) => baseEntry.id === entry.id)),
 		];
 		const loader = createCompositionLoader({
@@ -60,7 +90,7 @@ describe("default compositions", () => {
 			importModule: async (name) => {
 				if (name.startsWith("@di-code/builtins/")) {
 					const entryName = name.slice("@di-code/builtins/".length);
-					const plugin = Object.values(pluginModules).find(
+					const plugin = [...Object.values(pluginModules), ...additionalBuiltinModules].find(
 						(entry) => entry.name === (entryName === "bootstrap" ? "Bootstrap" : entryName),
 					);
 					if (!plugin) throw new Error(`Missing builtins fixture entry: ${name}`);
@@ -181,15 +211,16 @@ describe("default compositions", () => {
 		}
 	});
 
-	it("routes the default interactive entry through the composition profile", async () => {
+	it("routes the default interactive entry through the composition host command", async () => {
 		const source = await readFile(join(process.cwd(), "src", "entry.ts"), "utf8");
 
-		expect(source).toContain('import { runInteractiveProfile } from "./interactive-profile.ts";');
+		expect(source).toContain('import { runMinimalProfile } from "./main.ts";');
+		expect(source).not.toContain("interactive-profile");
 	});
 });
 
 describe("plugin-manager composition command", () => {
-	it("runs install, list, get, enable, disable, update, and remove through CommandRegistry", async () => {
+	it("runs install, list, get, enable, disable, update, and remove through HostCommandRegistry", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-command-"));
 		const source = join(root, "source");
 		const output: string[] = [];
@@ -216,9 +247,10 @@ describe("plugin-manager composition command", () => {
 				join(source, "index.mjs"),
 				"export const name='managed'; export const version='1'; export const apply=()=>{};",
 			);
+			await context.plugin(bootstrap, undefined);
 			await context.plugin(commandCore, undefined);
 			await context.plugin(pluginManager, { agentDir: join(root, "agent") });
-			const registry = context.require(commandRegistryKey);
+			const registry = context.require(hostCommandRegistryKey);
 			const execute = async (
 				action: "install" | "list" | "get" | "enable" | "disable" | "update" | "remove",
 				argument?: string,

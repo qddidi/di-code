@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { type CommandDefinition, commandRegistryKey } from "@di-code/builtins";
+import { hostCommandRegistryKey } from "@di-code/builtins";
 import { type ManagedPlugin, PluginInstallManager } from "@di-code/plugin-loader";
 import { createServiceKey, type PluginDefinition, redactSensitiveText } from "@di-code/plugin-runtime";
 
@@ -106,14 +106,14 @@ export const pluginManager: PluginDefinition<PluginManagerEntryConfig> = {
 			},
 		};
 		context.set(pluginManagerKey, service);
-		const command: CommandDefinition = {
-			name: "plugin",
-			description: "Manage installed plugins",
-			run: (input) => {
-				if (!isPluginManagementCommand(input)) return Promise.reject(new Error("Plugin command input is invalid"));
-				return service.execute(input);
-			},
-		};
-		fiber.addDisposer(context.require(commandRegistryKey).register(command));
+		const hostCommands = context.get(hostCommandRegistryKey);
+		if (hostCommands) {
+			fiber.addDisposer(
+				hostCommands.register("plugin", (input) => {
+					if (!isPluginManagementCommand(input)) return Promise.reject(new Error("Plugin command input is invalid"));
+					return service.execute(input);
+				}),
+			);
+		}
 	},
 };

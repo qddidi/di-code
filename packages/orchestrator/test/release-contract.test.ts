@@ -33,7 +33,8 @@ describe("release package contract", () => {
 
 		for (const directory of workspaceDirectories) {
 			const metadata = await readPackage(join(repositoryRoot, "packages", directory, "package.json"));
-			expect(metadata).toMatchObject({ version: root.version, private: false, license: "MIT", files: ["dist"] });
+			expect(metadata).toMatchObject({ version: root.version, private: false, license: "MIT" });
+			expect(metadata.files).toEqual(directory === "coding-agent" ? ["dist", "compositions"] : ["dist"]);
 			const readme = await readFile(join(repositoryRoot, "packages", directory, "README.md"), "utf8");
 			expect(readme).toContain("https://github.com/qddidi/di-code");
 			for (const [name, version] of Object.entries(metadata.dependencies ?? {})) {

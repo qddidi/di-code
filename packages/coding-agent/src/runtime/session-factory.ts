@@ -1,5 +1,6 @@
 import {
 	agentSessionKey,
+	compactionRegistryKey,
 	networkCapabilityKey,
 	processCapabilityKey,
 	toolApprovalKey,
@@ -68,6 +69,22 @@ export function installAgentSessionFactory(context: Context): Disposer {
 			}),
 			...(options.externalTools ?? []),
 		]);
+		const compaction = context
+			.require(compactionRegistryKey)
+			.snapshot()
+			.find((entry) => entry.name === "tool-result");
+		const prepareMessages = compaction
+			? async (messages: readonly import("@di-code/ai").Message[], signal?: AbortSignal) => {
+					const result = await compaction.compact({ messages }, signal);
+					if (
+						typeof result !== "object" ||
+						result === null ||
+						!Array.isArray((result as { readonly messages?: unknown }).messages)
+					)
+						throw new TypeError("tool-result compaction contribution must return { messages }");
+					return (result as { readonly messages: readonly import("@di-code/ai").Message[] }).messages;
+				}
+			: undefined;
 		const sessionContext = context.child({ id: `session-${++nextSessionId}`, isolate: true });
 		sessionContexts.add(sessionContext);
 		sessionContext.set(sessionDependenciesKey, {
@@ -75,6 +92,7 @@ export function installAgentSessionFactory(context: Context): Disposer {
 		});
 		return new AgentSession({
 			...options,
+			...(prepareMessages ? { compaction: { ...(options.compaction ?? {}), prepareMessages } } : {}),
 			tools: sessionContext.require(sessionDependenciesKey).tools,
 		});
 	});

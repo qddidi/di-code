@@ -29,6 +29,11 @@ import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session
 export interface AgentSessionCompactionOptions {
 	readonly enabled?: boolean;
 	readonly keepRecentTokens?: number;
+	/** Optional registry-owned message transform applied before compaction cut selection. */
+	readonly prepareMessages?: (
+		messages: readonly Message[],
+		signal?: AbortSignal,
+	) => readonly Message[] | Promise<readonly Message[]>;
 }
 
 export type AgentSessionTool = AgentTool<TSchema, AgentToolResult>;
@@ -113,6 +118,7 @@ export class AgentSession {
 	private readonly sessionIdValue: string;
 	private readonly now: () => number;
 	private compactionEnabledValue: boolean;
+	private readonly compactionTransform?: AgentSessionCompactionOptions["prepareMessages"];
 	private contextBudget: ContextBudget;
 	private keepRecentTokens: number;
 	private usageTotals: Omit<
@@ -159,6 +165,7 @@ export class AgentSession {
 			throw new TypeError("compaction.enabled must be a boolean");
 		}
 		this.compactionEnabledValue = options.sessionManager !== undefined && options.compaction?.enabled !== false;
+		this.compactionTransform = options.compaction?.prepareMessages;
 		const defaultKeepRecentTokens = Math.max(1, Math.min(20_000, Math.floor(this.contextBudget.triggerTokens / 2)));
 		this.keepRecentTokens = options.compaction?.keepRecentTokens ?? defaultKeepRecentTokens;
 		if (!Number.isInteger(this.keepRecentTokens) || this.keepRecentTokens <= 0) {
@@ -497,7 +504,20 @@ export class AgentSession {
 		if (!this.sessionManager) throw new Error("Cannot compact without a persisted session.");
 		const context = this.sessionManager.buildContext();
 		await this.emitSession({ type: "compaction_start", reason });
-		const preparation = prepareCompaction(context.messages, this.keepRecentTokens);
+		let messages: readonly Message[];
+		try {
+			messages = this.compactionTransform ? await this.compactionTransform(context.messages, signal) : context.messages;
+		} catch (cause) {
+			const errorMessage = cause instanceof Error ? cause.message : String(cause);
+			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage });
+			throw cause;
+		}
+		if (messages.length !== context.messages.length) {
+			const error = new Error("Compaction message transform must preserve message count.");
+			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage: error.message });
+			throw error;
+		}
+		const preparation = prepareCompaction(messages, this.keepRecentTokens);
 		const firstKeptEntryId = preparation ? context.sourceEntryIds[preparation.firstKeptMessageIndex] : undefined;
 		if (!preparation || typeof firstKeptEntryId !== "string") {
 			const errorMessage =

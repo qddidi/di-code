@@ -3,4 +3,4 @@ entries:
     name: "@di-code/builtins/agent-loop"
     dependsOn: [runtime-selection, provider-faux, session-memory, tool-registry, workspace, process, network, tool-approval, tool-policy, tool-output]
   - { id: output-json, name: "@di-code/builtins/output-json", dependsOn: [command-core] }
-  - { id: mode-json, name: "@di-code/builtins/mode-json", dependsOn: [command-core, agent-loop] }
+  - { id: mode-json, name: "@di-code/builtins/mode-json", dependsOn: [command-core, agent-loop, output-json] }

@@ -1,5 +1,8 @@
 entries:
   - { id: Bootstrap, name: "@di-code/builtins/bootstrap" }
+  - { id: runtime-core, name: "@di-code/coding-agent/runtime-core-entry", dependsOn: [Bootstrap] }
+  - { id: composition-loader, name: "@di-code/coding-agent/composition-loader-entry", dependsOn: [runtime-core] }
+  - { id: project-trust, name: "@di-code/coding-agent/project-trust-entry", dependsOn: [runtime-core], required: false }
   - { id: command-core, name: "@di-code/builtins/command-core", dependsOn: [Bootstrap] }
   - { id: cli-parser, name: "@di-code/builtins/cli-parser", dependsOn: [command-core] }
   - { id: runtime, name: "@di-code/builtins/runtime", dependsOn: [Bootstrap] }
@@ -33,15 +36,19 @@ entries:
   - { id: tool-glob, name: "@di-code/builtins/tool-glob", dependsOn: [tool-registry, workspace] }
   - { id: tool-grep, name: "@di-code/builtins/tool-grep", dependsOn: [tool-registry, workspace] }
   - { id: tool-load-skill, name: "@di-code/builtins/tool-load-skill", dependsOn: [tool-registry, workspace] }
-  - { id: session-store-jsonl, name: "@di-code/builtins/session-store-jsonl", dependsOn: [runtime] }
+  - { id: session-store-registry, name: "@di-code/builtins/session-store-jsonl", dependsOn: [runtime] }
+  - { id: session-migrations, name: "@di-code/builtins/session-migrations", dependsOn: [session-store-registry] }
+  - { id: session-store-jsonl, name: "@di-code/coding-agent/session-store-jsonl-entry", dependsOn: [session-store-registry, session-migrations] }
   - { id: session-tree, name: "@di-code/builtins/session-tree", dependsOn: [session-store-jsonl] }
   - { id: session-query, name: "@di-code/builtins/session-query", dependsOn: [session-store-jsonl] }
   - { id: usage-meter, name: "@di-code/builtins/usage-meter", dependsOn: [runtime] }
   - { id: context-budget, name: "@di-code/builtins/context-budget", dependsOn: [runtime] }
   - { id: compaction-basic, name: "@di-code/builtins/compaction-basic", dependsOn: [context-budget] }
+  - { id: compaction-tool-result, name: "@di-code/builtins/compaction-tool-result", dependsOn: [compaction-basic] }
   - { id: system-prompt, name: "@di-code/builtins/system-prompt", dependsOn: [runtime] }
   - { id: resource-loader, name: "@di-code/builtins/resource-loader", dependsOn: [runtime] }
   - { id: skills, name: "@di-code/builtins/skills", dependsOn: [resource-loader] }
   - { id: mcp-config, name: "@di-code/coding-agent/mcp-config-entry", dependsOn: [runtime] }
-  - { id: mcp-client, name: "@di-code/coding-agent/mcp-client-entry", dependsOn: [mcp-config] }
+  - { id: mcp-transport, name: "@di-code/coding-agent/mcp-transport-entry", dependsOn: [mcp-config] }
+  - { id: mcp-client, name: "@di-code/coding-agent/mcp-client-entry", dependsOn: [mcp-config, mcp-transport] }
   - { id: mcp-tools, name: "@di-code/coding-agent/mcp-tools-entry", dependsOn: [mcp-config, mcp-client] }

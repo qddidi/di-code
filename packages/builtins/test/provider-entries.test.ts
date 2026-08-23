@@ -37,7 +37,7 @@ describe("provider composition entries", () => {
 		}
 	});
 
-	it("selects faux through the registry and reports unknown models", async () => {
+	it("selects faux through the registry without requiring a configured model id", async () => {
 		process.env.DI_CODE_PROVIDER = "faux";
 		process.env.DI_CODE_MODEL = "faux-model";
 		const context = createRootContext({ id: "selection-test" });
@@ -48,7 +48,7 @@ describe("provider composition entries", () => {
 			await context.plugin(runtimeSelection, undefined);
 			expect(context.require(runtimeSelectionKey).selected().provider.id).toBe("faux");
 			process.env.DI_CODE_MODEL = "does-not-exist";
-			expect(() => context.require(runtimeSelectionKey).selected()).toThrow('Unknown model "does-not-exist"');
+			expect(context.require(runtimeSelectionKey).selected().model.id).toBe("faux-model");
 		} finally {
 			await context.dispose();
 		}

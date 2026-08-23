@@ -119,6 +119,10 @@
 			"types": "./dist/mode-interactive.d.ts",
 			"import": "./dist/mode-interactive.js"
 		},
+		"./mode-rpc": {
+			"types": "./dist/mode-rpc.d.ts",
+			"import": "./dist/mode-rpc.js"
+		},
 		"./tui-renderer": {
 			"types": "./dist/tui-renderer.d.ts",
 			"import": "./dist/tui-renderer.js"
@@ -162,6 +166,14 @@
 		"./compaction-basic": {
 			"types": "./dist/compaction-basic.d.ts",
 			"import": "./dist/compaction-basic.js"
+		},
+		"./compaction-tool-result": {
+			"types": "./dist/compaction-tool-result.d.ts",
+			"import": "./dist/compaction-tool-result.js"
+		},
+		"./session-migrations": {
+			"types": "./dist/session-migrations.d.ts",
+			"import": "./dist/session-migrations.js"
 		},
 		"./system-prompt": {
 			"types": "./dist/system-prompt.d.ts",
@@ -242,6 +254,18 @@
 		"./tool-output": {
 			"types": "./dist/tool-output.d.ts",
 			"import": "./dist/tool-output.js"
+		},
+		"./plugin-profiler": {
+			"types": "./dist/plugin-profiler.d.ts",
+			"import": "./dist/plugin-profiler.js"
+		},
+		"./plugin-invariants": {
+			"types": "./dist/plugin-invariants.d.ts",
+			"import": "./dist/plugin-invariants.js"
+		},
+		"./plugin-test-runtime": {
+			"types": "./dist/plugin-test-runtime.d.ts",
+			"import": "./dist/plugin-test-runtime.js"
 		}
 	},
 	"files": [

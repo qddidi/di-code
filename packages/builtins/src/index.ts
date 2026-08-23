@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Agent, AgentEvent } from "@di-code/agent";
@@ -83,11 +83,15 @@ export interface ProviderRegistry {
 export { type ToolRegistry, toolRegistry, toolRegistryKey } from "./tool-registry.ts";
 export { toolRead };
 
-export interface SessionStoreSnapshot {
-	readonly append?: (record: unknown) => void | Promise<void>;
-	readonly records?: () => readonly unknown[];
-	readonly manager?: unknown;
-	readonly dispose?: () => void | Promise<void>;
+export interface SessionStoreFactory {
+	readonly create: (options: unknown) => unknown | Promise<unknown>;
+	readonly open: (filePath: string, options?: unknown) => unknown | Promise<unknown>;
+}
+
+export interface SessionStoreRegistry {
+	readonly register: (name: string, factory: SessionStoreFactory) => () => void;
+	readonly get: (name: string) => SessionStoreFactory | undefined;
+	readonly snapshot: () => readonly { readonly name: string; readonly factory: SessionStoreFactory }[];
 }
 
 export interface PromptRegistry {
@@ -109,9 +113,36 @@ export interface CompactionRegistry {
 	}[];
 }
 
+/** Input accepted by compaction contributions that transform persisted messages. */
+export interface CompactionMessageInput {
+	readonly messages: readonly Message[];
+	readonly maxChars?: number;
+}
+
 export interface ResourceRegistry {
 	readonly register: (name: string, resource: unknown) => () => void;
 	readonly snapshot: () => readonly { readonly name: string; readonly resource: unknown }[];
+}
+
+export interface SessionMigrationRegistry {
+	readonly register: (name: string, migrate: (filePath: string) => void | Promise<void>) => () => void;
+	readonly migrate: (filePath: string) => Promise<void>;
+	readonly snapshot: () => readonly string[];
+}
+
+export interface DiagnosticSinkRegistry {
+	readonly register: (name: string, sink: (diagnostic: RuntimeDiagnostic) => void) => () => void;
+	readonly emit: (diagnostic: RuntimeDiagnostic) => void;
+	readonly snapshot: () => readonly string[];
+}
+
+export interface TestRuntimeService {
+	readonly snapshot: () => { readonly events: number };
+	readonly reset: () => void;
+}
+
+export interface PluginProfilerService {
+	readonly events: () => number;
 }
 
 export interface UsageMeter {
@@ -145,10 +176,14 @@ export const networkCapabilityKey = createServiceKey<NetworkCapability>("network
 export const toolApprovalKey = createServiceKey<ToolApprovalCapability>("tool-approval");
 export const toolPolicyKey = createServiceKey<ToolPolicyCapability>("tool-policy");
 export const toolOutputKey = createServiceKey<ToolOutputCapability>("tool-output");
-export const sessionStoreRegistryKey = createServiceKey<SessionStoreSnapshot>("session-store");
+export const sessionStoreRegistryKey = createServiceKey<SessionStoreRegistry>("session-store");
 export const promptRegistryKey = createServiceKey<PromptRegistry>("prompt-registry");
 export const compactionRegistryKey = createServiceKey<CompactionRegistry>("compaction-registry");
 export const resourceRegistryKey = createServiceKey<ResourceRegistry>("resource-registry");
+export const sessionMigrationRegistryKey = createServiceKey<SessionMigrationRegistry>("session-migrations");
+export const diagnosticSinkRegistryKey = createServiceKey<DiagnosticSinkRegistry>("diagnostic-sinks");
+export const testRuntimeKey = createServiceKey<TestRuntimeService>("test-runtime");
+export const pluginProfilerKey = createServiceKey<PluginProfilerService>("plugin-profiler");
 export const usageMeterKey = createServiceKey<UsageMeter>("usage-meter");
 export const contextBudgetKey = createServiceKey<ContextBudgetService>("context-budget");
 export const sessionTreeKey = createServiceKey<SessionTreeService>("session-tree");
@@ -257,7 +292,7 @@ export interface KeybindingRegistry {
 	readonly snapshot: () => unknown;
 }
 
-export interface InteractiveContextService {
+export interface InteractiveContextBindings {
 	readonly sessionChoices: () => readonly unknown[];
 	readonly cancel: () => void;
 	readonly retry: () => void | Promise<void>;
@@ -266,7 +301,17 @@ export interface InteractiveContextService {
 	readonly keybindings: () => unknown;
 }
 
+export interface InteractiveContextService extends InteractiveContextBindings {
+	/** Binds per-session interactive state and restores the previous binding when disposed. */
+	readonly bind: (bindings: InteractiveContextBindings) => () => void;
+}
+
 export interface PrintRequest {
+	readonly prompt: string;
+	readonly stdout: (text: string) => void;
+}
+
+export interface JsonRequest {
 	readonly prompt: string;
 	readonly stdout: (text: string) => void;
 }
@@ -679,7 +724,20 @@ export const sessionStoreJsonl: PluginDefinition = {
 	name: "session-store-jsonl",
 	version: "0.1.7",
 	apply(context) {
-		if (!context.get(sessionStoreRegistryKey)) context.set(sessionStoreRegistryKey, {});
+		if (context.get(sessionStoreRegistryKey)) return;
+		const factories = new Map<string, SessionStoreFactory>();
+		context.set(sessionStoreRegistryKey, {
+			register(name, factory) {
+				if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error(`Invalid session store name: ${name}`);
+				if (factories.has(name)) throw new Error(`Duplicate session store: ${name}`);
+				factories.set(name, factory);
+				return () => {
+					if (factories.get(name) === factory) factories.delete(name);
+				};
+			},
+			get: (name) => factories.get(name),
+			snapshot: () => Object.freeze([...factories].map(([name, factory]) => ({ name, factory }))),
+		});
 	},
 };
 
@@ -759,6 +817,113 @@ export const compactionBasic: PluginDefinition = {
 		context.set(compactionRegistryKey, createNamedRegistry("compaction") as CompactionRegistry);
 	},
 };
+
+/** Adds tool-result compaction as an independently removable contribution. */
+export const compactionToolResult: PluginDefinition = {
+	apiVersion: 1,
+	name: "compaction-tool-result",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const registry = context.require(compactionRegistryKey);
+		fiber.addDisposer(
+			registry.register("tool-result", (input) => {
+				if (typeof input !== "object" || input === null)
+					throw new TypeError("tool-result compaction input must be an object");
+				const maxChars =
+					"maxChars" in input && typeof input.maxChars === "number" ? Math.max(0, input.maxChars) : 4_000;
+				if ("text" in input && typeof input.text === "string") {
+					return { ...input, text: input.text.length > maxChars ? `${input.text.slice(0, maxChars)}...` : input.text };
+				}
+				if (!Array.isArray((input as CompactionMessageInput).messages))
+					throw new TypeError("tool-result compaction input must contain text or messages");
+				const messages = (input as CompactionMessageInput).messages.map((message) => {
+					if (message.role !== "tool_result") return message;
+					return {
+						...message,
+						content: message.content.map((content) =>
+							content.type === "text" && content.text.length > maxChars
+								? { ...content, text: `${content.text.slice(0, maxChars)}...` }
+								: content,
+						),
+					};
+				});
+				return { ...input, messages };
+			}),
+		);
+	},
+};
+
+export const sessionMigrations: PluginDefinition = {
+	apiVersion: 1,
+	name: "session-migrations",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const migrations = new Map<string, (filePath: string) => void | Promise<void>>();
+		const registry: SessionMigrationRegistry = {
+			register(name, migrate) {
+				if (migrations.has(name)) throw new Error(`Duplicate session migration: ${name}`);
+				migrations.set(name, migrate);
+				return () => {
+					if (migrations.get(name) === migrate) migrations.delete(name);
+				};
+			},
+			migrate: async (filePath) => {
+				for (const migrate of migrations.values()) await migrate(filePath);
+			},
+			snapshot: () => Object.freeze([...migrations.keys()]),
+		};
+		context.set(sessionMigrationRegistryKey, registry);
+		fiber.addDisposer(
+			registry.register("session-v2-plugin-records", async (filePath) => {
+				await migratePluginRecordSchema(filePath);
+			}),
+		);
+	},
+};
+
+/**
+ * Upgrades the only legacy plugin-record schema owned by the built-ins. The rewrite is
+ * atomic and preserves unknown records and their append order; session v1 headers are
+ * deliberately left for the Session decoder to reject because that format is incompatible.
+ */
+async function migratePluginRecordSchema(filePath: string): Promise<void> {
+	let source: string;
+	try {
+		source = await readFile(filePath, "utf8");
+	} catch (cause) {
+		if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT") return;
+		throw cause;
+	}
+	const lines = source.split("\n");
+	let changed = false;
+	const migrated = lines.map((line) => {
+		if (line.trim() === "") return line;
+		let record: unknown;
+		try {
+			record = JSON.parse(line) as unknown;
+		} catch {
+			return line;
+		}
+		if (
+			typeof record !== "object" ||
+			record === null ||
+			(record as { readonly type?: unknown }).type !== "plugin" ||
+			(record as { readonly pluginId?: unknown }).pluginId !== "@di-code/session" ||
+			(record as { readonly schemaVersion?: unknown }).schemaVersion !== 0
+		)
+			return line;
+		changed = true;
+		return JSON.stringify({ ...record, schemaVersion: 1 });
+	});
+	if (!changed) return;
+	const temporary = `${filePath}.migration-${process.pid}-${Date.now()}.tmp`;
+	try {
+		await writeFile(temporary, migrated.join("\n"), "utf8");
+		await rename(temporary, filePath);
+	} finally {
+		await rm(temporary, { force: true }).catch(() => undefined);
+	}
+}
 
 export const systemPrompt: PluginDefinition = {
 	apiVersion: 1,
@@ -1015,11 +1180,27 @@ export const modeJson: PluginDefinition = {
 	name: "mode-json",
 	version: "0.1.7",
 	apply(context, _config, fiber) {
-		const dispose = context.require(modeRegistryKey).register({
-			name: "json",
-			run: (input) => runModeInput("json", input),
-		});
-		fiber.addDisposer(dispose);
+		const run = async (input: unknown, signal?: AbortSignal): Promise<number> => {
+			if (typeof input !== "object" || input === null) throw new Error("JSON request is invalid");
+			const request = input as JsonRequest;
+			if (typeof request.prompt !== "string" || typeof request.stdout !== "function")
+				throw new Error("JSON request is invalid");
+			const renderer = context.require(rendererRegistryKey).find("json");
+			if (!renderer) throw new Error("JSON renderer is unavailable");
+			const loop = context.require(agentLoopKey);
+			const unsubscribe = loop.agent.subscribe((event) => {
+				const rendered = renderer.render(event);
+				if (rendered !== undefined) request.stdout(`${rendered}\n`);
+			});
+			try {
+				const response = await loop.prompt(request.prompt, signal);
+				return response.stopReason === "error" || response.stopReason === "aborted" ? 1 : 0;
+			} finally {
+				unsubscribe();
+			}
+		};
+		fiber.addDisposer(context.require(hostCommandRegistryKey).register("json", run));
+		fiber.addDisposer(context.require(modeRegistryKey).register({ name: "json", run }));
 	},
 };
 
@@ -1033,6 +1214,66 @@ export const modeInteractive: PluginDefinition = {
 			run: (input) => runModeInput("interactive", input),
 		});
 		fiber.addDisposer(dispose);
+	},
+};
+
+export const modeRpc: PluginDefinition = {
+	apiVersion: 1,
+	name: "mode-rpc",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		fiber.addDisposer(
+			context.require(modeRegistryKey).register({
+				name: "rpc",
+				run: (input) => runModeInput("rpc", input),
+			}),
+		);
+	},
+};
+
+export const pluginProfiler: PluginDefinition = {
+	apiVersion: 1,
+	name: "plugin-profiler",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		let events = 0;
+		const unsubscribe = context.events.subscribe(() => {
+			events += 1;
+		});
+		fiber.addDisposer(unsubscribe);
+		context.set(pluginProfilerKey, { events: () => events });
+	},
+};
+
+export const pluginInvariants: PluginDefinition = {
+	apiVersion: 1,
+	name: "plugin-invariants",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const unsubscribe = context.events.subscribe((event) => {
+			if (typeof event !== "object" || event === null || !("type" in event))
+				throw new Error("Runtime event invariant violated: missing type");
+		});
+		fiber.addDisposer(unsubscribe);
+	},
+};
+
+export const pluginTestRuntime: PluginDefinition = {
+	apiVersion: 1,
+	name: "plugin-test-runtime",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		let events = 0;
+		const unsubscribe = context.events.subscribe(() => {
+			events += 1;
+		});
+		fiber.addDisposer(unsubscribe);
+		context.set(testRuntimeKey, {
+			snapshot: () => ({ events }),
+			reset: () => {
+				events = 0;
+			},
+		});
 	},
 };
 
@@ -1082,7 +1323,7 @@ export const interactiveContext: PluginDefinition = {
 	version: "0.1.7",
 	apply(context) {
 		let selectedTheme = "dark";
-		context.set(interactiveContextKey, {
+		let bindings: InteractiveContextBindings = {
 			sessionChoices: () => [],
 			cancel: () => undefined,
 			retry: () => undefined,
@@ -1091,6 +1332,21 @@ export const interactiveContext: PluginDefinition = {
 				selectedTheme = value;
 			},
 			keybindings: () => context.get(keybindingRegistryKey)?.snapshot(),
+		};
+		context.set(interactiveContextKey, {
+			sessionChoices: () => bindings.sessionChoices(),
+			cancel: () => bindings.cancel(),
+			retry: () => bindings.retry(),
+			theme: () => bindings.theme(),
+			setTheme: (theme) => bindings.setTheme(theme),
+			keybindings: () => bindings.keybindings(),
+			bind: (next) => {
+				const previous = bindings;
+				bindings = next;
+				return () => {
+					if (bindings === next) bindings = previous;
+				};
+			},
 		});
 	},
 };
@@ -1110,8 +1366,25 @@ export const diagnostics: PluginDefinition = {
 	version: "0.1.7",
 	apply(context, _config, fiber) {
 		const records: RuntimeDiagnostic[] = [];
+		const sinks = new Map<string, (diagnostic: RuntimeDiagnostic) => void>();
+		const sinkRegistry: DiagnosticSinkRegistry = {
+			register(name, sink) {
+				if (sinks.has(name)) throw new Error(`Duplicate diagnostic sink: ${name}`);
+				sinks.set(name, sink);
+				return () => {
+					if (sinks.get(name) === sink) sinks.delete(name);
+				};
+			},
+			emit: (diagnostic) => {
+				for (const sink of sinks.values()) sink(diagnostic);
+			},
+			snapshot: () => Object.freeze([...sinks.keys()]),
+		};
+		context.set(diagnosticSinkRegistryKey, sinkRegistry);
 		const report = (record: RuntimeDiagnostic): void => {
-			records.push(Object.freeze({ ...record }));
+			const snapshot = Object.freeze({ ...record });
+			records.push(snapshot);
+			sinkRegistry.emit(snapshot);
 		};
 		context.set(diagnosticsKey, { records, report });
 		const unsubscribe = context.events.subscribe((event) => {
@@ -1296,7 +1569,10 @@ export const runtimeSelection: PluginDefinition = {
 				const selectedProviderId = process.env.DI_CODE_PROVIDER?.trim() || providerId;
 				if (!selectedProviderId)
 					throw new Error("Provider is not configured. Set DI_CODE_PROVIDER=faux for the minimal profile.");
-				return registry.select(selectedProviderId, process.env.DI_CODE_MODEL?.trim() || modelId);
+				return registry.select(
+					selectedProviderId,
+					selectedProviderId === "faux" ? undefined : process.env.DI_CODE_MODEL?.trim() || modelId,
+				);
 			},
 			reasoningLevel: () => undefined,
 		});
@@ -1543,6 +1819,8 @@ export const pluginModules = {
 	usageMeter,
 	contextBudget,
 	compactionBasic,
+	compactionToolResult,
+	sessionMigrations,
 	systemPrompt,
 	resourceLoader,
 	skills,
@@ -1550,6 +1828,10 @@ export const pluginModules = {
 	rpcProtocolV1,
 	rpcServer,
 	rpcEvents,
+	modeRpc,
+	pluginProfiler,
+	pluginInvariants,
+	pluginTestRuntime,
 	agentLoop,
 	sessionMemory,
 	modePrint,

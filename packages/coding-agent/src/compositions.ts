@@ -28,6 +28,9 @@ export interface CompositionResolutionOptions {
 }
 
 const observabilityEntries = [
+	{ id: "plugin-profiler", name: "@di-code/builtins/plugin-profiler", dependsOn: ["runtime"] },
+	{ id: "plugin-invariants", name: "@di-code/builtins/plugin-invariants", dependsOn: ["runtime"] },
+	{ id: "plugin-test-runtime", name: "@di-code/builtins/plugin-test-runtime", dependsOn: ["runtime"] },
 	{ id: "plugin-trace", name: "@di-code/coding-agent/plugin-trace", dependsOn: ["plugin-inventory"] },
 	{
 		id: "plugin-dump-composition",
@@ -188,8 +191,28 @@ export function importCompositionModule(name: string): Promise<PluginModule> {
 			return import("./mcp-config-entry.ts") as Promise<PluginModule>;
 		case "@di-code/coding-agent/mcp-client-entry":
 			return import("./mcp-client-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/mcp-transport-entry":
+			return import("./mcp-transport-entry.ts") as Promise<PluginModule>;
 		case "@di-code/coding-agent/mcp-tools-entry":
 			return import("./mcp-tools-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/session-factory-entry":
+			return import("./session-factory-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/session-store-jsonl-entry":
+			return import("./session-store-jsonl-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/rpc-server-entry":
+			return import("./rpc-server-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/interactive-resources-entry":
+			return import("./interactive-resources-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/interactive-host-entry":
+			return import("./interactive-host-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/runtime-core-entry":
+			return import("./runtime-core-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/composition-loader-entry":
+			return import("./composition-loader-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/project-trust-entry":
+			return import("./project-trust-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/rpc-client-sdk-entry":
+			return import("./rpc-client-sdk-entry.ts") as Promise<PluginModule>;
 		default:
 			return import(name) as Promise<PluginModule>;
 	}

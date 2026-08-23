@@ -305,7 +305,7 @@ di-code --continue "继续上一次工作"
 
 交互式启动默认会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 创建 v2 JSONL 会话。记录为 append-only（只追加）格式，可引用任意已提交父节点，因此一份文件可以保存多个分支；重启默认恢复物理文件末端记录所在的分支。`/tree` 只在 interactive 模式提供专用树浏览器：以紧凑单栏树显示节点摘要和当前路径，当前选择以 `›` 标识；选择用户消息会将其文本恢复到编辑器，并从它的父节点创建新的 sibling 分支；选择 assistant、tool result 或 summary 则将该节点作为活动叶节点。`s` 会在所选路径上执行现有上下文压缩，成功后的 summary 成为下一条 prompt 的分支父节点；没有有效压缩切点时会明确失败。图片附件不会自动恢复，导航只改变模型可见上下文，不能回滚工作区副作用。v1 或未知版本的会话文件不迁移，打开时返回 `UNSUPPORTED_VERSION`。完整磁盘历史和发送给模型的压缩上下文分开保存，summary 只作用于其所在分支。`/session` 与 `--continue` 只显示或恢复当前工作区的默认会话；`--session` 可以打开任意指定路径。已有项目内 `.di-code/sessions/` 文件不会自动移动，仍可用 `--session <path>` 显式打开。
 
-产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。直接构造 `AgentSession` 必须传入不可变 `tools` 快照；SDK 集成应使用 Composition factory 或自行从其注册表创建该快照。
+产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。interactive 的 JSONL 持久化通过 `SessionStoreRegistry` 的 `jsonl` entry 创建或打开，不能绕过 registry 直接在宿主启动分支中组装 Session。直接构造 `AgentSession` 必须传入不可变 `tools` 快照；SDK 集成应使用 Composition factory 或自行从其注册表创建该快照。
 
 会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在本地历史中的密钥或敏感材料。
 
@@ -362,7 +362,7 @@ di-code mcp get company-api
 di-code mcp remove company-api --scope project
 ```
 
-配置范围按 `local` > `project` > `user` 生效：local 写入 `<work-root>/.di-code/mcp.local.json`，project 写入 `<work-root>/.mcp.json`，user 写入 `~/.di-code/mcp.json`。同一 Server ID 整体覆盖，不做字段级合并。interactive 启动时，每个 MCP Server 会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功状态包含 tools、resources 和 prompts 数量，失败信息经过脱敏。`mcp add <id> -- <command> [args...]` 默认使用 local stdio；HTTP 必须显式指定 `--transport http`。`list` 和 `get` 会脱敏 header、环境变量和其他凭据；`add` 不安装或下载 Server 软件，stdio 的命令仍由用户提供并在连接时执行。
+配置范围按 `local` > `project` > `user` 生效：local 写入 `<work-root>/.di-code/mcp.local.json`，project 写入 `<work-root>/.mcp.json`，user 写入 `~/.di-code/mcp.json`。同一 Server ID 整体覆盖，不做字段级合并。interactive 启动时，每个 MCP Server 会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功状态包含 tools、resources 和 prompts 数量，失败信息经过脱敏。`McpTransportRegistry` 注册 stdio 和 Streamable HTTP factory，MCP client entry 追踪其 Fiber 创建的所有 manager，并在 interactive 退出、启动失败或 composition dispose 时幂等关闭连接。`mcp add <id> -- <command> [args...]` 默认使用 local stdio；HTTP 必须显式指定 `--transport http`。`list` 和 `get` 会脱敏 header、环境变量和其他凭据；`add` 不安装或下载 Server 软件，stdio 的命令仍由用户提供并在连接时执行。
 
 ## 项目说明与 Skills
 
@@ -478,7 +478,7 @@ di-code plugin remove project-status
 
 安装过程固定使用 `npm --ignore-scripts`，但这并不使插件本身安全：插件在加载时仍是本机代码。`plugin` 管理命令不需要配置 Provider。
 
-默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合。`--profile <print|json|interactive>` 选择 CLI profile；`--composition <path>` 将一个 JSON 或 YAML document 作为最后一层应用，固定优先级为 `base -> mode -> ~/.di-code/composition.yml -> <work-root>/.di-code/composition.yml -> --composition`。项目 composition 仅在该项目已被 `--trust-project` 信任时读取；`--no-project-plugins` 会为当前运行跳过它，但不会禁用用户托管插件。缺失的 user/project 文件会忽略，格式错误或显式文件不可读取则终止启动并显示路径。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。嵌入产品仍可直接使用 `@di-code/plugin-loader` 的公开 API。需要诊断 composition 时可运行：
+默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合，并追加所有 enabled managed package entry。`--profile <print|json|interactive>` 选择 CLI profile；`--composition <path>` 将一个 JSON 或 YAML document 作为最后一层应用，固定优先级为 `base -> mode -> ~/.di-code/composition.yml -> <work-root>/.di-code/composition.yml -> --composition`。项目 composition 仅在该项目已被 `--trust-project` 信任时读取；`--no-project-plugins` 会为当前运行跳过它，但不会禁用用户托管插件。RPC 使用同一 trust 规则：未信任项目不会读取其 composition，但仍加载用户已启用的受管 package。缺失的 user/project 文件会忽略，格式错误或显式文件不可读取则终止启动并显示路径。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。嵌入产品仍可直接使用 `@di-code/plugin-loader` 的公开 API。需要诊断 composition 时可运行：
 
 ```powershell
 di-code --trace-plugins
@@ -555,7 +555,7 @@ di-code --mode json "检查测试状态" | ForEach-Object {
 
 `di-code-rpc` 是供宿主程序启动的子进程入口，不是交互命令。它从 stdin 接收一行一个 JSON 请求，并从 stdout 写一行一个版本化响应或事件；stderr 仅用于诊断。
 
-worker 通过 composition 的 `AgentSessionFactory` 创建 session，而不是入口直接构造 session。stdin 结束或收到终止信号时，它会先结束或取消活跃请求并写入终态 response，再 flush stdout、dispose composition，最后退出。嵌入 `RpcServer` 时，使用可 await 的 `shutdown()` 获得同一顺序；`stop()` 保留为兼容的非阻塞入口。
+worker 由 composition 的 `session-factory` 创建 session，并由同一 composition 的 `rpc-server` entry 创建和拥有 `RpcServer`；入口本身只等待该 service。stdin 结束或收到终止信号时，它会先结束或取消活跃请求并写入终态 response，再 flush stdout、dispose composition，最后退出。嵌入 `RpcServer` 时，使用可 await 的 `shutdown()` 获得同一顺序；`stop()` 保留为兼容的非阻塞入口。
 
 公开 RPC 方法：
 
@@ -570,6 +570,8 @@ Node.js 宿主从公开入口导入 SDK：
 ```ts
 import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 ```
+
+RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入式宿主可以从 `@di-code/coding-agent/rpc-client-sdk` 导入其 `rpcClientSdkKey`，由 Loader 创建 `RpcClient`。`runtime-core`、`composition-loader` 和 `project-trust` 同样提供独立 entry，分别拥有运行时服务、Loader factory 和 trust store 服务。
 
 需要监督子进程生命周期时，使用 `@di-code/orchestrator`，不要依赖 coding-agent 的内部文件路径。
 
