@@ -448,15 +448,11 @@ di-code --no-skills "不要加载任何 Skill"
 
 ## 插件
 
-插件是与 di-code 运行在**同一 Node.js 进程**中的 JavaScript/TypeScript 代码。它可以注册：
+插件是与 di-code 运行在**同一 Node.js 进程**中的 JavaScript/TypeScript namespace module。Provider、Agent、工具、Session、CLI/TUI、RPC、MCP 和 Skills 都以 Composition entry 装配；第三方 entry 可以在公开 runtime/registry 边界贡献服务、工具、命令、renderer 或事件观察者。
 
-1. 供模型调用的工具；
-2. interactive 模式中的 slash command；
-3. Agent 与会话生命周期事件处理器。
+发布插件必须在 `package.json.diCode.plugins` 中只列出一个 package `exports` entry。namespace 必须导出非空 `name` 和 `apply`，不能有 `default` export；`apiVersion` 若存在必须为 `1`，`version` 若存在必须是合法标识。Loader 只解析 enabled managed package；disabled package 不会 import。required entry 失败会回滚已经 active 的 entry 并阻止启动，optional entry 失败会成为 `skipped` inventory。完整 package shape、SDK、Composition、trust、capability 和 lifecycle 规则见[插件使用指南](../../docs/插件使用指南.md)。
 
-插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和 capability audit 信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装可信来源的插件。默认 profile 只将已启用的受管 namespace plugin 加入 Loader；禁用项不会解析或 import，`--trace-plugins` 可显示实际 phase 和失败诊断。
-
-插件以 `package.json` 的 `diCode.plugins` 单一 namespace entry 和对应 `exports` 声明。Loader 拒绝 `default` export，并以 `@di-code/plugin-runtime` 的 Context/Fiber、Registry 和 EventBus 管理贡献。完整 package shape、SDK、trust 与安全责任见[插件使用指南](../../docs/插件使用指南.md)。
+插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和 capability audit 信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装可信来源的插件。`--trace-plugins` 可显示实际 phase 和失败诊断。
 
 ### 管理全局插件
 
@@ -480,7 +476,7 @@ di-code plugin remove project-status
 
 安装过程固定使用 `npm --ignore-scripts`，但这并不使插件本身安全：插件在加载时仍是本机代码。`plugin` 管理命令不需要配置 Provider。
 
-默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。需要诊断 composition 时可运行：
+默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。CLI 不接受 `--composition`：嵌入产品需要自定义 composition 时，使用 `@di-code/plugin-loader` 的公开 API。需要诊断 composition 时可运行：
 
 ```powershell
 di-code --trace-plugins

@@ -2,6 +2,8 @@
 
 为 [di-code](https://github.com/qddidi/di-code) 提供 Provider 无关的 Agent Loop（代理循环）和对话状态管理。它消费 `@di-code/ai` 的契约，按稳定顺序发布 `AgentEvent`，并可执行经过校验的工具。
 
+在可插拔运行时中，`@di-code/builtins/agent-loop` 将本包连接到 Provider、Tool 与 Session registry；本包本身不解析 plugin、Composition 或产品配置，也不提供第二套循环。
+
 这是一个库，不是可执行程序。想直接运行 CLI，请使用 `@di-code/coding-agent`。
 
 ## 安装

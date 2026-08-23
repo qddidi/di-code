@@ -50,7 +50,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - 全屏交互终端 UI：多行编辑、补全、Markdown、工具状态、取消、重试、模型和主题选择。
 - `print`、`json`、`interactive` 三种 CLI 模式。
 - 可选 JSONL 会话持久化、并发追加保护和上下文压缩能力。
-- 插件 API，可注册模型工具、interactive 模式 slash command 及 Agent 生命周期事件处理器。
+- 可组合的 namespace plugin 运行时：Provider、Agent、工具、Session、CLI/TUI、RPC、MCP 与 Skills 都通过 Composition entry 装配；默认体验只是内建 composition。
 - 受项目 trust 保护的 MCP `stdio` / Streamable HTTP Server tools，可接入现有 Agent 工具循环，并提供 `di-code mcp add/list/get/remove` 配置命令。
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
@@ -61,7 +61,11 @@ npm run dev -- --print "检查当前项目的主要模块"
 packages/
   ai/             Provider 无关的 AI 类型、事件流和 OpenAI/Chat Completions 适配器
   agent/          Agent 状态管理与工具调用循环
-  coding-agent/   CLI、编码工具、会话、交互模式和扩展运行时
+  plugin-runtime/ Context、Fiber、服务、事件、能力与贡献所有权
+  plugin-loader/  namespace plugin、package manifest 与声明式 Composition Loader
+  plugin-sdk/     第三方插件唯一的公开 SDK 根入口
+  builtins/       Provider、工具、Session、CLI、TUI 和 RPC 的内建 namespace entries
+  coding-agent/   CLI/bootstrap、默认 composition、MCP、受管插件与产品会话
   mcp/            MCP stdio / Streamable HTTP 客户端生命周期
   skills/         独立的 SKILL.md 解析、发现、目录和调用展开包
   orchestrator/   通过公开 RPC SDK 管理 Coding Agent 子进程生命周期
@@ -71,17 +75,15 @@ packages/
 运行时调用链：
 
 ```text
-CLI / Interactive UI
+CLI / RPC / Interactive UI
         |
-   AgentSession
-        |
-      Agent
-        |
-Provider.stream() <----> Responses / Chat Completions Provider
-        |
-  tool_use 时依次执行 read / write / edit / bash
-        |
-  tool_result 回传模型，继续下一轮
+Root Context -> Composition Loader -> enabled namespace entries
+        |                  |
+        |             Provider / Tool / Session / Mode registries
+        |                  |
+        +------------> AgentSession -> @di-code/agent loop -> Provider.stream()
+                                       |                  |
+                                       +-- tool_result ---+
 ```
 
 各包职责如下：
@@ -90,7 +92,11 @@ Provider.stream() <----> Responses / Chat Completions Provider
 | --- | --- |
 | `@di-code/ai` | `Model`、`Provider`、消息、工具 Schema、流式事件定义；实现 OpenAI、Anthropic、DeepSeek、智谱 GLM 与 Faux 测试 Provider。 |
 | `@di-code/agent` | 管理完整对话历史和模型上下文，执行模型-工具循环，并向订阅者按序发布事件。 |
-| `@di-code/coding-agent` | 可执行产品层，提供 CLI、文件与命令工具、会话存储、上下文压缩、交互界面和扩展契约。 |
+| `@di-code/plugin-runtime` | Provider 无关的 `Context`、`Fiber`、服务、生命周期、事件、能力与 owner-aware contribution 基元。 |
+| `@di-code/plugin-loader` | 校验 namespace export 与 package `diCode` manifest，合并/加载 Composition，并管理 trust 和受管安装。 |
+| `@di-code/plugin-sdk` | 第三方插件的稳定公开入口；只重导出 runtime 和 loader 的根 API。 |
+| `@di-code/builtins` | 内建 Provider、工具、Session、模式、TUI 与 RPC namespace plugin entries。 |
+| `@di-code/coding-agent` | 可执行产品层，选择默认 composition，提供 CLI、产品会话、MCP 与受管插件管理。 |
 | `@di-code/mcp` | Provider 无关的 MCP Client、stdio / Streamable HTTP transport、tools/list、tools/call 和生命周期错误分类。 |
 | `@di-code/skills` | Provider 无关的 SKILL.md YAML frontmatter 解析、受限读取、递归发现、冲突目录和 `/skill:` 参数展开；不执行 Skill 内容。 |
 | `@di-code/orchestrator` | 监督 `di-code-rpc` 子进程，传播取消和崩溃，并保留有上限的 stderr 诊断。 |
@@ -442,6 +448,15 @@ Options:
   --continue, -c     Continue the most recently modified session
   --session <path>   Create or resume a JSONL session (relative to the work root)
   --image <path>     Attach a local PNG, JPEG, WebP, or GIF image (repeatable)
+  --skill <path>     Add a Skill document for this invocation (repeatable)
+  --no-skills        Do not load Skills
+  --no-context-files Do not load project context files
+  --trust-project    Trust project-local Skills and MCP configuration
+  --untrust-project  Revoke project trust
+  plugin <action>    Install, inspect, enable, disable, update, or remove a managed plugin
+  --trace-plugins    Print Loader phase, owner Fiber, capability, and failure diagnostics
+  --dump-composition Print the resolved composition without configuration values
+  mcp add|list|get|remove  Manage MCP configuration
   -h, --help         Show help
   -v, --version      Show version
 ```
@@ -580,6 +595,8 @@ npm run dev -- --trust-project --interactive
 受管插件在进程内执行，**不是权限沙箱**；`package.json` 的 `diCode.permissions` 用于声明和 capability audit，不会阻止插件自行访问文件、网络或子进程。默认 profile 仅将已启用插件加入 Loader；禁用项既不解析 entry，也不会 import。只安装可信来源的插件，并在插件实现中自行处理路径边界、输入校验、超时、取消和凭据保护。
 
 默认运行时由 `base` 与选定的 `interactive`、`print`、`json` 或 `rpc` composition 组合。`plugin` 管理命令本身也由 composition entry 注册，不需要 Provider。除 `list` 外，可用 `get <id>` 查看不含安装路径或来源的公开状态。`--trace-plugins` 和 `--dump-composition` 只按需挂载开发观测 entries；它们输出实际 resolved tree、Loader phase、owner Fiber、capability audit 与脱敏失败诊断，不输出 composition 配置、凭据或 Provider 请求体。
+
+受管插件的 package manifest 只接受 `package.json` 中单一的 `diCode.plugins` entry 与 package `exports`。entry 是 namespace module，必须导出非空 `name` 和 `apply`，并且不能有 `default` export；`apiVersion` 若存在必须为 `1`，`version` 若存在必须是合法标识。Loader 只导入 enabled entry；required entry 失败会终止并回滚已激活项，optional entry 失败会保留 `skipped` inventory 诊断。第三方 package 与 Composition 用法见[插件使用指南](docs/插件使用指南.md)。
 
 完整的目录结构、manifest、工具 schema、事件顺序和排查方法见 [插件使用指南](docs/插件使用指南.md)。
 

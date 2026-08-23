@@ -1,15 +1,35 @@
 # @di-code/plugin-runtime
 
-Provider-neutral runtime primitives for the pluggable runtime. This package owns `Context`, `Fiber`, service keys, lifecycle statuses, runtime events, capabilities, configuration schemas, and owner-aware service records. It has no dependency on `coding-agent` or product implementations.
+`@di-code/plugin-runtime` 提供可插拔运行时的 Provider-neutral 基元：`Context`、`Fiber`、typed service key、生命周期状态、runtime event、capability view、诊断和 owner-aware contribution registry。它不依赖 `coding-agent`，也不连接 CLI、Provider、文件工具或产品实现。
 
-`createRootContext()` creates a root scope. `context.child({ isolate: true })` creates a session-style scope that cannot see parent services; a normal child inherits parent services without copying them. `context.set()` and `context.plugin()` register services against the current owner Fiber. A pending async `apply` keeps its services private until it resolves successfully, and any apply failure removes all of its contributions.
+安装：
 
-`Fiber.dispose()` aborts its signal, waits for an in-flight apply, runs disposers in reverse registration order, and aggregates cleanup errors. Disposal is idempotent. Registrations made after a Fiber starts unloading are rejected. `ServiceRegistry` records retain the owning Fiber and only expose committed records through `getEntry()` and `snapshot()`.
+```powershell
+npm install @di-code/plugin-runtime
+```
 
-The package is intentionally limited to runtime behavior and fake plugin/service composition. It does not connect CLI, Agent, Provider, file tools, or product implementations. Plugins should import these types and factories from the package root.
+外部插件通常通过 `@di-code/plugin-sdk` 导入；直接使用本包适合构建宿主或运行时测试。
 
-Stage 3 adds a typed asynchronous `EventBus<E>`. Handlers run in descending `priority` order with stable registration order; non-critical failures are reported and isolated, while a failed `critical` handler stops the gate and rejects the dispatch. A handler can be bounded by `timeoutMs`, receives an `AbortSignal`, and can be automatically unsubscribed with an option signal. `dispose()` rejects later registration and emission.
+```ts
+import { createRootContext, createServiceKey, type PluginDefinition } from "@di-code/plugin-runtime";
 
-`DiagnosticSink`, `createDiagnosticSink`, `PluginLogger`, and `redactSensitiveText` provide diagnostics with `token`, `secret`, `authorization`, and `api_key` values redacted before delivery. `CapabilityView` requires both a trusted project and a plugin-declared capability. `createFakeCapabilityView` is available for deterministic tests; these APIs do not expose Node `fs`, `spawn`, or `process`.
+const statusKey = createServiceKey<string>("example.status");
+const context = createRootContext({ mode: "test", trustedProject: true });
 
-Stage 4 adds the unified `ContributionRegistry` and minimal provider, tool, command, prompt, session-store, session-factory, compaction, renderer, RPC method, and resource contribution contracts. Registration is owner-aware: each `register()` call returns an idempotent disposer and automatically attaches it to an owner Fiber when present. Duplicate, reserved, and cross-kind namespace collisions fail at registration. `list()` and `snapshot()` return frozen deterministic views. `is/assertToolSchema`, `is/assertProviderModel`, and `is/assertRpcMethodContribution` validate untrusted contribution boundaries; the registry does not execute contributions or provide a sandbox.
+await context.plugin(
+	{
+		name: "example.status",
+		apply: (ctx) => ctx.set(statusKey, "ready"),
+	} satisfies PluginDefinition<undefined>,
+	undefined,
+);
+
+console.log(context.require(statusKey));
+await context.dispose();
+```
+
+异步 `apply` 的 service 在 Fiber active 前不可见；apply 失败会回滚其贡献。`Fiber.dispose()` 会 abort signal、等待 in-flight setup、逆序运行 disposer、聚合 cleanup error，并且可重复调用。普通 child Context 继承父 service；`child({ isolate: true })` 不继承，用于 Session 等私有 scope。
+
+`EventBus<E>` 按 priority 降序和稳定注册顺序调度。非 critical handler 失败会被隔离并写入 diagnostic；critical handler 失败会终止 gate 并 reject。`CapabilityView` 要求 trusted project 和 plugin 声明 capability，但不构成 Node.js sandbox。诊断会脱敏 `token`、`secret`、`authorization` 和 `api_key` 文本。
+
+`ContributionRegistry` 及 provider、tool、command、session、renderer、RPC 和 resource contribution contract 会将注册所有权绑定到 Fiber；重复、保留和跨 kind namespace 冲突会失败。只使用 package 根入口，不导入 `src` 或 `dist` 私有路径。

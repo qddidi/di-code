@@ -1,3 +1,21 @@
 # @di-code/plugin-sdk
 
-The public plugin entry point. It re-exports only the root exports of `@di-code/plugin-runtime` and `@di-code/plugin-loader`; consumers must not import private `src` or `dist` paths. Stage 1 exposes contracts and namespace validation while composition and runtime services remain future work.
+`@di-code/plugin-sdk` 是第三方 `di-code` namespace plugin 的稳定公开入口。它只重导出 `@di-code/plugin-runtime` 与 `@di-code/plugin-loader` 的根 API；插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
+
+```powershell
+npm install @di-code/plugin-sdk
+```
+
+```ts
+import { createServiceKey, type PluginDefinition } from "@di-code/plugin-sdk";
+
+export const greetingKey = createServiceKey<string>("acme.greeting");
+export const apiVersion = 1 as const;
+export const name = "acme.greeting";
+export const version = "1.0.0";
+export const apply: PluginDefinition["apply"] = (context) => {
+	context.set(greetingKey, "hello");
+};
+```
+
+发布 package 必须以 ESM `exports` 声明该 entry，并在 `package.json.diCode.plugins` 中只列出它。Loader 拒绝 default export、缺失的 `name`/`apply`、不兼容 API version 和 package root 外的 export target。完整 manifest、Composition、trust、capability 和 lifecycle 规则见仓库 [`docs/插件使用指南.md`](../../docs/插件使用指南.md)。

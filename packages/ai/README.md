@@ -2,6 +2,8 @@
 
 为 [di-code](https://github.com/qddidi/di-code) 提供与 Provider 无关的 TypeScript AI 契约、流式事件、模型目录，以及 OpenAI、Anthropic、DeepSeek、Kimi 和智谱 API 适配器。
 
+可插拔运行时中的 provider namespace entry 只能向 registry 贡献本包的 `Provider`、`Model` 与流事件契约；厂商私有字段不能越过这个公开边界进入 Agent 或插件 API。
+
 这是一个库，不提供命令行程序。想直接使用 AI 编码 CLI，请安装 `@di-code/coding-agent`。
 
 ## 安装

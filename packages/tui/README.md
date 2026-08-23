@@ -4,6 +4,8 @@
 
 这是一个库，不调用 AI Provider，也不提供 CLI 命令。
 
+在可组合产品中，TUI 由独立的 `tui-renderer`、`theme`、`interactive-context` 和 mode entries 接入；本包继续只接受 presentation props 和事件，不依赖 runtime、Provider 或 coding-agent 逻辑。
+
 ## 安装
 
 ```powershell

@@ -2,6 +2,8 @@
 
 用于监管 `di-code-rpc` 子进程的 supervisor（进程监管器）。它是 [di-code](https://github.com/qddidi/di-code) 的一部分，只通过公开的 `@di-code/coding-agent/rpc` 协议通信。
 
+组合运行时可以把 `orchestratorHost` 作为 namespace entry 装配，但它仍只依赖公开 RPC SDK，绝不导入 coding-agent、Loader 或 builtins 的私有实现。
+
 当 Node.js 应用需要启动 Agent 子进程、等待就绪握手、提交 prompt、消费流式事件、带超时停止进程或检测崩溃时使用此包。它不是交互式 CLI。
 
 ## 安装
