@@ -1,0 +1,13 @@
+{
+	"name": "@fixture/published-namespace",
+	"version": "1.0.0",
+	"type": "module",
+	"exports": {
+		"./plugin": "./plugin.ts"
+	},
+	"diCode": {
+		"apiVersion": 1,
+		"plugins": ["./plugin"],
+		"permissions": { "filesystem": "none", "network": [], "process": [] }
+	}
+}

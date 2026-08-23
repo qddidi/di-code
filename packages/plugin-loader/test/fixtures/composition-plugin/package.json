@@ -4,7 +4,8 @@
 	"private": true,
 	"type": "module",
 	"exports": {
-		".": "./plugin.ts"
+		".": "./plugin.ts",
+		"./plugin.ts": "./plugin.ts"
 	},
 	"diCode": {
 		"apiVersion": 1,

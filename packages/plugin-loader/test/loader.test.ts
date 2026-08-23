@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRootContext } from "@di-code/plugin-runtime";
 import { describe, expect, it } from "vitest";
@@ -6,9 +9,13 @@ import {
 	getPluginDefinition,
 	isPluginDefinition,
 	mergeCompositionLayers,
+	PluginInstallManager,
+	ProjectTrustStore,
 	parseComposition,
 	parsePluginManifest,
 	readPackagePluginManifest,
+	readPluginManifest,
+	resolvePackagePluginExport,
 	resolvePluginEntry,
 	topologicallySortEntries,
 } from "../src/index.ts";
@@ -40,6 +47,20 @@ describe("namespace plugin loader contract", () => {
 		const manifest = await readPackagePluginManifest(rootPath);
 		expect(manifest.id).toBe("composition-plugin");
 		expect(await resolvePluginEntry(rootPath, manifest.entry)).toMatch(/plugin\.ts$/);
+	});
+	it("loads a published namespace package only through its declared export", async () => {
+		const rootPath = fileURLToPath(new URL("./fixtures/published-namespace/", import.meta.url));
+		const manifest = await readPackagePluginManifest(rootPath);
+		expect(manifest.entry).toBe("./plugin");
+		expect(await resolvePackagePluginExport(rootPath, "./plugin")).toMatch(/plugin\.ts$/u);
+	});
+	it("rejects missing package exports before import", async () => {
+		const rootPath = fileURLToPath(new URL("./fixtures/missing-export/", import.meta.url));
+		await expect(readPackagePluginManifest(rootPath)).rejects.toThrow(/not declared/iu);
+	});
+	it("rejects a malformed manifest fixture", async () => {
+		const manifestPath = fileURLToPath(new URL("./fixtures/malformed-manifest.json", import.meta.url));
+		await expect(readPluginManifest(manifestPath)).rejects.toThrow(/id must use/iu);
 	});
 	it("loads a real namespace export fixture without a default", () => {
 		const definition = getPluginDefinition(fixture);
@@ -140,6 +161,24 @@ describe("namespace plugin loader contract", () => {
 		await loader.dispose();
 		await context.dispose();
 	});
+	it("skips project-local entries when the project is untrusted", async () => {
+		const context = createRootContext();
+		const fixture = new URL("./fixtures/composition-plugin/plugin.ts", import.meta.url).href;
+		const loader = createCompositionLoader({
+			context,
+			projectTrusted: false,
+			entries: [{ id: "project", name: fixture, projectLocal: true }],
+		});
+		expect((await loader.load()).get("project")?.status).toBe("skipped");
+		await context.dispose();
+	});
+	it("reports real import failures with a skipped optional entry", async () => {
+		const context = createRootContext();
+		const broken = new URL("./fixtures/import-failure.ts", import.meta.url).href;
+		const loader = createCompositionLoader({ context, entries: [{ id: "broken", name: broken, required: false }] });
+		expect((await loader.load()).get("broken")?.status).toBe("skipped");
+		await context.dispose();
+	});
 
 	it("blocks required failure and rolls back preceding entries", async () => {
 		const context = createRootContext();
@@ -155,5 +194,46 @@ describe("namespace plugin loader contract", () => {
 		expect(loader.tree.get("healthy")?.fiber?.status).toBe("disposed");
 		expect(loader.tree.get("broken")?.status).toBe("failed");
 		await context.dispose();
+	});
+});
+
+describe("Plugin installation and trust", () => {
+	it("persists project trust decisions by canonical path", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-trust-"));
+		const store = new ProjectTrustStore(join(root, "trust.json"));
+		expect(await store.get(root)).toBeNull();
+		await store.set(root, true);
+		expect(await store.get(root)).toBe(true);
+	});
+
+	it("rolls back an install when registry replacement fails", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-rollback-"));
+		const source = join(root, "source");
+		await mkdir(source, { recursive: true });
+		await writeFile(
+			join(source, "plugin.json"),
+			JSON.stringify({
+				apiVersion: 1,
+				id: "rollback",
+				name: "rollback",
+				version: "1.0.0",
+				entry: "index.mjs",
+				permissions: { filesystem: "none", network: [], process: [] },
+			}),
+		);
+		await writeFile(
+			join(source, "index.mjs"),
+			"export const name='rollback'; export const version='1'; export const apply=()=>{};",
+		);
+		const managedRoot = join(root, "managed");
+		const manager = new PluginInstallManager({ managedRoot });
+		await manager.installLocal(source);
+		await writeFile(
+			join(source, "index.mjs"),
+			"export const name='rollback-new'; export const version='2'; export const apply=()=>{};",
+		);
+		const brokenManager = new PluginInstallManager({ managedRoot, registryPath: managedRoot });
+		await expect(brokenManager.installLocal(source)).rejects.toThrow();
+		expect(await readFile(join(managedRoot, "rollback", "index.mjs"), "utf8")).toContain("rollback");
 	});
 });

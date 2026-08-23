@@ -1,0 +1,7 @@
+{
+	"name": "@fixture/missing-export",
+	"version": "1.0.0",
+	"type": "module",
+	"exports": { ".": "./plugin.ts" },
+	"diCode": { "apiVersion": 1, "plugins": ["./plugin"] }
+}
