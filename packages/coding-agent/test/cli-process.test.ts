@@ -115,6 +115,14 @@ describe("CLI process entry", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe("A prompt is required.\n");
+		expect(result.stderr).toBe("Interactive mode requires an interactive TTY.\n");
+	});
+
+	it("rejects explicit interactive mode when stdin/stdout are not TTYs", async () => {
+		const result = await runCli(["--mode", "interactive"], { configured: true });
+
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe("Interactive mode requires an interactive TTY.\n");
 	});
 });
