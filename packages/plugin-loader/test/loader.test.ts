@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -172,6 +172,27 @@ describe("namespace plugin loader contract", () => {
 });
 
 describe("Plugin installation and trust", () => {
+	async function writeManagedPluginSource(root: string, id: string): Promise<string> {
+		const source = join(root, id);
+		await mkdir(source, { recursive: true });
+		await writeFile(
+			join(source, "package.json"),
+			JSON.stringify({
+				name: id,
+				version: "1.0.0",
+				type: "module",
+				exports: { "./plugin": "./index.mjs" },
+				diCode: {
+					apiVersion: 1,
+					plugins: ["./plugin"],
+					permissions: { filesystem: "none", network: [], process: [] },
+				},
+			}),
+		);
+		await writeFile(join(source, "index.mjs"), `export const name=${JSON.stringify(id)}; export const apply=()=>{};`);
+		return source;
+	}
+
 	it("persists project trust decisions by canonical path", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-trust-"));
 		const store = new ProjectTrustStore(join(root, "trust.json"));
@@ -212,5 +233,61 @@ describe("Plugin installation and trust", () => {
 		const brokenManager = new PluginInstallManager({ managedRoot, registryPath: managedRoot });
 		await expect(brokenManager.installLocal(source)).rejects.toThrow();
 		expect(await readFile(join(managedRoot, "rollback", "index.mjs"), "utf8")).toContain("rollback");
+	});
+
+	it("serializes concurrent registry mutations from separate manager instances", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-registry-concurrent-"));
+		try {
+			const firstSource = await writeManagedPluginSource(root, "first-plugin");
+			const secondSource = await writeManagedPluginSource(root, "second-plugin");
+			const managedRoot = join(root, "managed");
+			const first = new PluginInstallManager({ managedRoot, lockRetryMs: 1 });
+			const second = new PluginInstallManager({ managedRoot, lockRetryMs: 1 });
+
+			await Promise.all([first.installLocal(firstSource), second.installLocal(secondSource)]);
+
+			expect((await first.list()).map((plugin) => plugin.id)).toEqual(["first-plugin", "second-plugin"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reclaims a stale registry lock before a mutation", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-registry-stale-"));
+		try {
+			const source = await writeManagedPluginSource(root, "stale-plugin");
+			const managedRoot = join(root, "managed");
+			const registryPath = join(managedRoot, "registry.json");
+			const lockPath = `${registryPath}.lock`;
+			await mkdir(lockPath, { recursive: true });
+			const staleAt = new Date(Date.now() - 10_000);
+			await utimes(lockPath, staleAt, staleAt);
+
+			const manager = new PluginInstallManager({ managedRoot, staleLockMs: 1, lockRetryMs: 1 });
+			await manager.installLocal(source);
+			expect((await manager.list()).map((plugin) => plugin.id)).toEqual(["stale-plugin"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("times out instead of writing through an active registry lock", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-registry-timeout-"));
+		try {
+			const source = await writeManagedPluginSource(root, "timeout-plugin");
+			const managedRoot = join(root, "managed");
+			const registryPath = join(managedRoot, "registry.json");
+			await mkdir(`${registryPath}.lock`, { recursive: true });
+
+			const manager = new PluginInstallManager({
+				managedRoot,
+				lockTimeoutMs: 20,
+				lockRetryMs: 1,
+				staleLockMs: 60_000,
+			});
+			await expect(manager.installLocal(source)).rejects.toThrow(/Timed out waiting for plugin registry lock/);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });

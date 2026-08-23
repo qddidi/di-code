@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/session.ts";
 import { createGlobTool } from "../src/core/tools/glob.ts";
 import { createGrepTool } from "../src/core/tools/grep.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 const tempDirs: string[] = [];
 

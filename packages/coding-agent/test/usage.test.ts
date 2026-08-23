@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
-import { AgentSession, type AgentSessionEvent } from "../src/core/session.ts";
+import { AgentSession, type AgentSessionEvent } from "./test-agent-session.ts";
 
 describe("AgentSession usage", () => {
 	let root: string;

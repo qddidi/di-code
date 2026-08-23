@@ -4,13 +4,13 @@ import { join } from "node:path";
 import type { Context, Message, Provider } from "@di-code/ai";
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/session.ts";
 import {
 	type BashOperations,
 	createBashTool,
 	DEFAULT_BASH_TIMEOUT_MS,
 	resolveShellRuntime,
 } from "../src/core/tools/bash.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 const tempDirs: string[] = [];
 const COMMAND_START_TIMEOUT_MS = process.platform === "win32" ? 1_500 : 100;

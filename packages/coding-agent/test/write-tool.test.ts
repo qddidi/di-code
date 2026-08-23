@@ -4,10 +4,10 @@ import { join } from "node:path";
 import type { Context, Message, Provider } from "@di-code/ai";
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/session.ts";
 import { withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
 import { resolveAllowedMutationPath } from "../src/core/tools/path-boundary.ts";
 import { createWriteTool } from "../src/core/tools/write.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 const tempDirs: string[] = [];
 

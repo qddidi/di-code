@@ -76,11 +76,14 @@ function parsePackOutput(stdout, workspace) {
 	}
 	for (const file of entry.files) {
 		if (!file || typeof file.path !== "string") throw new Error(`npm pack returned an invalid file for ${workspace}`);
+		const isCodingAgentComposition =
+			workspace === "@di-code/coding-agent" && /^compositions\/[a-z-]+\.yml$/u.test(file.path);
 		if (
 			file.path !== "package.json" &&
 			file.path !== "LICENSE" &&
 			file.path !== "README.md" &&
-			!file.path.startsWith("dist/")
+			!file.path.startsWith("dist/") &&
+			!isCodingAgentComposition
 		) {
 			throw new Error(`${workspace} tarball contains unexpected file: ${file.path}`);
 		}

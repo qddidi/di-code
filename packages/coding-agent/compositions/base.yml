@@ -1,0 +1,47 @@
+entries:
+  - { id: Bootstrap, name: "@di-code/builtins/bootstrap" }
+  - { id: command-core, name: "@di-code/builtins/command-core", dependsOn: [Bootstrap] }
+  - { id: cli-parser, name: "@di-code/builtins/cli-parser", dependsOn: [command-core] }
+  - { id: runtime, name: "@di-code/builtins/runtime", dependsOn: [Bootstrap] }
+  - { id: diagnostics, name: "@di-code/builtins/diagnostics", dependsOn: [runtime] }
+  - { id: process-exit, name: "@di-code/builtins/process-exit", dependsOn: [runtime] }
+  - { id: plugin-manager, name: "@di-code/coding-agent/plugin-manager", dependsOn: [command-core] }
+  - { id: plugin-inventory, name: "@di-code/coding-agent/plugin-inventory", dependsOn: [runtime] }
+  - { id: provider-registry, name: "@di-code/builtins/provider-registry" }
+  - { id: model-catalog, name: "@di-code/builtins/model-catalog", dependsOn: [provider-registry] }
+  - { id: credential-env, name: "@di-code/builtins/credential-env", dependsOn: [provider-registry] }
+  - { id: runtime-selection, name: "@di-code/builtins/runtime-selection", dependsOn: [provider-registry] }
+  - { id: provider-faux, name: "@di-code/builtins/provider-faux", dependsOn: [provider-registry] }
+  - { id: provider-openai, name: "@di-code/builtins/provider-openai", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
+  - { id: provider-anthropic, name: "@di-code/builtins/provider-anthropic", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
+  - { id: provider-deepseek, name: "@di-code/builtins/provider-deepseek", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
+  - { id: provider-kimi, name: "@di-code/builtins/provider-kimi", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
+  - { id: provider-zhipu, name: "@di-code/builtins/provider-zhipu", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
+  - { id: provider-onboarding, name: "@di-code/builtins/provider-onboarding", dependsOn: [provider-registry, credential-env], required: false }
+  - { id: session-memory, name: "@di-code/builtins/session-memory", dependsOn: [runtime] }
+  - { id: tool-registry, name: "@di-code/builtins/tool-registry", dependsOn: [runtime] }
+  - { id: workspace, name: "@di-code/builtins/workspace", dependsOn: [tool-registry] }
+  - { id: process, name: "@di-code/builtins/process", dependsOn: [tool-registry] }
+  - { id: network, name: "@di-code/builtins/network", dependsOn: [tool-registry] }
+  - { id: tool-approval, name: "@di-code/builtins/tool-approval", dependsOn: [tool-registry] }
+  - { id: tool-policy, name: "@di-code/builtins/tool-policy", dependsOn: [tool-registry] }
+  - { id: tool-output, name: "@di-code/builtins/tool-output", dependsOn: [tool-registry] }
+  - { id: tool-read, name: "@di-code/builtins/tool-read", dependsOn: [tool-registry, workspace] }
+  - { id: tool-write, name: "@di-code/builtins/tool-write", dependsOn: [tool-registry, workspace] }
+  - { id: tool-edit, name: "@di-code/builtins/tool-edit", dependsOn: [tool-registry, workspace] }
+  - { id: tool-bash, name: "@di-code/builtins/tool-bash", dependsOn: [tool-registry, workspace] }
+  - { id: tool-glob, name: "@di-code/builtins/tool-glob", dependsOn: [tool-registry, workspace] }
+  - { id: tool-grep, name: "@di-code/builtins/tool-grep", dependsOn: [tool-registry, workspace] }
+  - { id: tool-load-skill, name: "@di-code/builtins/tool-load-skill", dependsOn: [tool-registry, workspace] }
+  - { id: session-store-jsonl, name: "@di-code/builtins/session-store-jsonl", dependsOn: [runtime] }
+  - { id: session-tree, name: "@di-code/builtins/session-tree", dependsOn: [session-store-jsonl] }
+  - { id: session-query, name: "@di-code/builtins/session-query", dependsOn: [session-store-jsonl] }
+  - { id: usage-meter, name: "@di-code/builtins/usage-meter", dependsOn: [runtime] }
+  - { id: context-budget, name: "@di-code/builtins/context-budget", dependsOn: [runtime] }
+  - { id: compaction-basic, name: "@di-code/builtins/compaction-basic", dependsOn: [context-budget] }
+  - { id: system-prompt, name: "@di-code/builtins/system-prompt", dependsOn: [runtime] }
+  - { id: resource-loader, name: "@di-code/builtins/resource-loader", dependsOn: [runtime] }
+  - { id: skills, name: "@di-code/builtins/skills", dependsOn: [resource-loader] }
+  - { id: mcp-config, name: "@di-code/coding-agent/mcp-config-entry", dependsOn: [runtime] }
+  - { id: mcp-client, name: "@di-code/coding-agent/mcp-client-entry", dependsOn: [mcp-config] }
+  - { id: mcp-tools, name: "@di-code/coding-agent/mcp-tools-entry", dependsOn: [mcp-config, mcp-client] }

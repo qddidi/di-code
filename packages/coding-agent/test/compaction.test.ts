@@ -5,7 +5,7 @@ import type { Context, Message, Model, Provider, StreamOptions, SuccessfulAssist
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
-import { AgentSession } from "../src/core/session.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 function userMessage(text: string, timestamp: number): Extract<Message, { role: "user" }> {
 	return { role: "user", content: [{ type: "text", text }], timestamp };

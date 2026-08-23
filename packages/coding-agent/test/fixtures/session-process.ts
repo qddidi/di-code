@@ -1,7 +1,7 @@
 import { access, writeFile } from "node:fs/promises";
 import { type Context, createFauxProvider, type Message, type Model, type Provider } from "@di-code/ai";
 import { SessionManager } from "../../src/core/session/session-manager.ts";
-import { AgentSession } from "../../src/core/session.ts";
+import { AgentSession } from "../test-agent-session.ts";
 
 function messageText(message: ReturnType<SessionManager["messages"]["at"]>): string {
 	if (!message) return "";

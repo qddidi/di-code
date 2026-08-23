@@ -1,0 +1,5 @@
+entries:
+  - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, system-prompt, compaction-basic] }
+  - { id: rpc-protocol-v1, name: "@di-code/builtins/rpc-protocol-v1", dependsOn: [agent-session] }
+  - { id: rpc-server, name: "@di-code/builtins/rpc-server", dependsOn: [rpc-protocol-v1, agent-session] }
+  - { id: rpc-events, name: "@di-code/builtins/rpc-events", dependsOn: [rpc-server] }

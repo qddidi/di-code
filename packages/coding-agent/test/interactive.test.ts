@@ -8,10 +8,10 @@ import { CURSOR_MARKER, TUI, visibleWidth } from "@di-code/tui";
 import { describe, it } from "vitest";
 import { clipboardImageDirectory } from "../src/core/clipboard-image.ts";
 import { SessionManager } from "../src/core/session/session-manager.ts";
-import { AgentSession } from "../src/core/session.ts";
 import { InteractiveMode, InteractiveProjection } from "../src/modes/interactive.ts";
 import { InteractiveChat, type InteractiveViewState } from "../src/modes/interactive-components.ts";
 import { resolveStartupRuntime } from "../src/startup.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 const PASTE_IMAGE_INPUT = process.platform === "win32" ? "\x1bv" : "\x16";
 

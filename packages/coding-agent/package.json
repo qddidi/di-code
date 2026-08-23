@@ -59,7 +59,8 @@
 		}
 	},
 	"files": [
-		"dist"
+		"dist",
+		"compositions"
 	],
 	"license": "MIT",
 	"repository": {

@@ -1,0 +1,11 @@
+entries:
+  - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, context-budget, system-prompt, compaction-basic] }
+  - { id: command-session, name: "@di-code/builtins/command-session", dependsOn: [command-core] }
+  - { id: command-model, name: "@di-code/builtins/command-model", dependsOn: [command-core] }
+  - { id: command-settings, name: "@di-code/builtins/command-settings", dependsOn: [command-core] }
+  - { id: command-compact, name: "@di-code/builtins/command-compact", dependsOn: [command-core] }
+  - { id: command-interactive-core, name: "@di-code/builtins/command-interactive-core", dependsOn: [command-core] }
+  - { id: theme, name: "@di-code/builtins/theme", dependsOn: [command-core] }
+  - { id: interactive-context, name: "@di-code/builtins/interactive-context", dependsOn: [command-core] }
+  - { id: tui-renderer, name: "@di-code/builtins/tui-renderer", dependsOn: [command-core] }
+  - { id: mode-interactive, name: "@di-code/builtins/mode-interactive", dependsOn: [command-core] }

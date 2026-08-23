@@ -4,9 +4,9 @@ import { join } from "node:path";
 import type { Context, Message, Provider } from "@di-code/ai";
 import { createFauxProvider } from "@di-code/ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/session.ts";
 import { createEditTool } from "../src/core/tools/edit.ts";
 import { createWriteTool } from "../src/core/tools/write.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 const tempDirs: string[] = [];
 

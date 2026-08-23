@@ -624,17 +624,40 @@ export interface PluginInstallManagerOptions {
 	readonly managedRoot: string;
 	readonly registryPath?: string;
 	readonly now?: () => Date;
+	/** Maximum time a mutating operation waits for another process to release the registry lock. */
+	readonly lockTimeoutMs?: number;
+	/** Polling interval while waiting for the registry lock. */
+	readonly lockRetryMs?: number;
+	/** Lock age after which a crashed owner is assumed and its lock is recovered. */
+	readonly staleLockMs?: number;
 }
 
-/** Installs local/npm/git packages through a staging directory and an atomic registry. */
+/** Installs local/npm/git packages through staging, rollback, and a process-shared registry lock. */
 export class PluginInstallManager {
 	private readonly managedRoot: string;
 	private readonly registryPath: string;
+	private readonly registryLockPath: string;
+	private readonly registryRecoveryLockPath: string;
 	private readonly now: () => Date;
+	private readonly lockTimeoutMs: number;
+	private readonly lockRetryMs: number;
+	private readonly staleLockMs: number;
 	constructor(options: PluginInstallManagerOptions) {
 		this.managedRoot = resolve(options.managedRoot);
 		this.registryPath = resolve(options.registryPath ?? join(this.managedRoot, "registry.json"));
+		this.registryLockPath = `${this.registryPath}.lock`;
+		this.registryRecoveryLockPath = `${this.registryLockPath}.recovery`;
 		this.now = options.now ?? (() => new Date());
+		this.lockTimeoutMs = options.lockTimeoutMs ?? 30_000;
+		this.lockRetryMs = options.lockRetryMs ?? 50;
+		this.staleLockMs = options.staleLockMs ?? 5 * 60_000;
+		for (const [name, value] of [
+			["lockTimeoutMs", this.lockTimeoutMs],
+			["lockRetryMs", this.lockRetryMs],
+			["staleLockMs", this.staleLockMs],
+		] as const) {
+			if (!Number.isInteger(value) || value < 0) throw new RangeError(`${name} must be a non-negative integer`);
+		}
 	}
 	async list(): Promise<readonly ManagedPlugin[]> {
 		return Object.values((await this.readRegistry()).plugins).sort((left, right) => left.id.localeCompare(right.id));
@@ -646,16 +669,28 @@ export class PluginInstallManager {
 		return this.setEnabled(id, false);
 	}
 	async remove(id: string): Promise<void> {
-		const registry = await this.readRegistry();
-		const plugin = registry.plugins[id];
-		if (!plugin) throw new Error(`Unknown plugin: ${id}`);
-		assertManagedPath(plugin.installedPath, this.managedRoot);
-		await rm(plugin.installedPath, { recursive: true, force: true });
-		const { [id]: _removed, ...plugins } = registry.plugins;
-		await this.writeRegistry({ version: 1, plugins });
+		await this.withRegistryLock(async () => {
+			const registry = await this.readRegistry();
+			const plugin = registry.plugins[id];
+			if (!plugin) throw new Error(`Unknown plugin: ${id}`);
+			assertManagedPath(plugin.installedPath, this.managedRoot);
+			const backup = resolve(this.managedRoot, `.backup-remove-${id}-${process.pid}-${Date.now()}`);
+			assertManagedPath(backup, this.managedRoot);
+			await rename(plugin.installedPath, backup);
+			try {
+				const { [id]: _removed, ...plugins } = registry.plugins;
+				await this.writeRegistry({ version: 1, plugins });
+				await rm(backup, { recursive: true, force: true });
+			} catch (error) {
+				await rename(backup, plugin.installedPath).catch(() => undefined);
+				throw error;
+			}
+		});
 	}
 	async installLocal(sourcePath: string): Promise<ManagedPlugin> {
-		return this.installFromRoot(resolve(sourcePath), resolve(sourcePath));
+		return await this.withRegistryLock(
+			async () => await this.installFromRoot(resolve(sourcePath), resolve(sourcePath)),
+		);
 	}
 	async install(source: string): Promise<ManagedPlugin> {
 		if (!source.startsWith("npm:") && !source.startsWith("git:")) return this.installLocal(source);
@@ -673,11 +708,11 @@ export class PluginInstallManager {
 				const sourceRoot = packageName.includes("@@")
 					? join(staging, "node_modules", `@${packageName.replace("@@", "/")}`)
 					: join(staging, "node_modules", packageName);
-				return await this.installFromRoot(sourceRoot, source, staging);
+				return await this.withRegistryLock(async () => await this.installFromRoot(sourceRoot, source, staging));
 			}
 			await rm(staging, { recursive: true, force: true });
 			await runExternal("git", ["clone", "--depth", "1", source.slice(4), staging], this.managedRoot);
-			return await this.installFromRoot(staging, source, staging);
+			return await this.withRegistryLock(async () => await this.installFromRoot(staging, source, staging));
 		} catch (error) {
 			await rm(staging, { recursive: true, force: true });
 			throw error;
@@ -723,12 +758,67 @@ export class PluginInstallManager {
 		}
 	}
 	private async setEnabled(id: string, enabled: boolean): Promise<ManagedPlugin> {
-		const registry = await this.readRegistry();
-		const plugin = registry.plugins[id];
-		if (!plugin) throw new Error(`Unknown plugin: ${id}`);
-		const next = { ...plugin, enabled };
-		await this.writeRegistry({ version: 1, plugins: { ...registry.plugins, [id]: next } });
-		return next;
+		return await this.withRegistryLock(async () => {
+			const registry = await this.readRegistry();
+			const plugin = registry.plugins[id];
+			if (!plugin) throw new Error(`Unknown plugin: ${id}`);
+			const next = { ...plugin, enabled };
+			await this.writeRegistry({ version: 1, plugins: { ...registry.plugins, [id]: next } });
+			return next;
+		});
+	}
+	private async withRegistryLock<T>(operation: () => Promise<T>): Promise<T> {
+		const deadline = Date.now() + this.lockTimeoutMs;
+		await mkdir(dirname(this.registryLockPath), { recursive: true });
+		for (;;) {
+			try {
+				await mkdir(this.registryLockPath);
+				break;
+			} catch (cause) {
+				if (!(typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EEXIST")) throw cause;
+				if (await this.recoverStaleRegistryLock()) continue;
+				if (Date.now() >= deadline) throw new Error(`Timed out waiting for plugin registry lock: ${this.registryPath}`);
+				await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, this.lockRetryMs));
+			}
+		}
+		try {
+			await writeFile(
+				join(this.registryLockPath, "owner.json"),
+				`${JSON.stringify({ pid: process.pid, acquiredAt: this.now().toISOString() })}\n`,
+				"utf8",
+			);
+			return await operation();
+		} finally {
+			await rm(this.registryLockPath, { recursive: true, force: true });
+		}
+	}
+	private async recoverStaleRegistryLock(): Promise<boolean> {
+		let metadata: Awaited<ReturnType<typeof lstat>>;
+		try {
+			metadata = await lstat(this.registryLockPath);
+		} catch {
+			return true;
+		}
+		if (Date.now() - metadata.mtimeMs <= this.staleLockMs) return false;
+		try {
+			await mkdir(this.registryRecoveryLockPath);
+		} catch (cause) {
+			if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EEXIST") return false;
+			throw cause;
+		}
+		try {
+			let confirmed: Awaited<ReturnType<typeof lstat>>;
+			try {
+				confirmed = await lstat(this.registryLockPath);
+			} catch {
+				return true;
+			}
+			if (Date.now() - confirmed.mtimeMs <= this.staleLockMs) return false;
+			await rm(this.registryLockPath, { recursive: true, force: true });
+			return true;
+		} finally {
+			await rm(this.registryRecoveryLockPath, { recursive: true, force: true });
+		}
 	}
 	private async readRegistry(): Promise<PluginRegistry> {
 		try {

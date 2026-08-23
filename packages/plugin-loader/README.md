@@ -33,4 +33,4 @@ package entry 必须且只能出现在一个 `package.json.diCode.plugins` 项�
 
 Composition 支持 JSON/YAML、受限 `$VAR`/`${VAR}` 配置插值、deterministic layer merge，以及按 id 的 insert/append/remove/replace/enable/disable/move patch。它不会执行 JavaScript、shell substitution 或命令；disabled entry 不会 import。`topologicallySortEntries()` 拒绝缺失 required dependency 和 cycle。required entry 失败会回滚已激活项；optional entry 失败记录为 `skipped` inventory。
 
-`ProjectTrustStore` 使用 version `1` JSON 保存 project trust；untrusted project-local entry 被 skipped。`PluginInstallManager` 支持 local、`npm:` 与 `git:` source，使用 staging、managed-root 路径检查、原子 registry replacement 和失败 rollback；`npm:` 固定使用 `--ignore-scripts`。in-process plugin 不是 sandbox，manifest permission 只用于审计与 capability policy。registry 暂无跨进程写锁，不要并发运行管理操作。
+`ProjectTrustStore` 使用 version `1` JSON 保存 project trust；untrusted project-local entry 被 skipped。`PluginInstallManager` 支持 local、`npm:` 与 `git:` source，使用 staging、managed-root 路径检查、原子 registry replacement 和失败 rollback；`npm:` 固定使用 `--ignore-scripts`。mutating registry 操作使用跨进程目录锁，等待超时会失败，超过陈旧期限的遗留锁会回收。in-process plugin 不是 sandbox，manifest permission 只用于审计与 capability policy。

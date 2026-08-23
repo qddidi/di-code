@@ -1,0 +1,5 @@
+entries:
+  - id: agent-loop
+    name: "@di-code/builtins/agent-loop"
+    dependsOn: [runtime-selection, provider-faux, session-memory, tool-registry, workspace, process, network, tool-approval, tool-policy, tool-output]
+  - { id: mode-print, name: "@di-code/builtins/mode-print", dependsOn: [Bootstrap, command-core, agent-loop] }

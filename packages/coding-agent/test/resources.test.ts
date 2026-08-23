@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Context, createFauxProvider } from "@di-code/ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentSession, buildSystemPrompt, loadResources } from "../src/index.ts";
+import { buildSystemPrompt, loadResources } from "../src/index.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 const roots: string[] = [];
 

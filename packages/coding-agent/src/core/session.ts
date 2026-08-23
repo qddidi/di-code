@@ -25,7 +25,6 @@ import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
-import { resolveSessionTools } from "./session-tools.ts";
 
 export interface AgentSessionCompactionOptions {
 	readonly enabled?: boolean;
@@ -53,7 +52,7 @@ export interface AgentSessionOptions {
 	readonly provider: Provider;
 	readonly model: Model;
 	/** Immutable tool snapshot selected by the owning SessionFactory. */
-	readonly tools?: readonly AgentSessionTool[];
+	readonly tools: readonly AgentSessionTool[];
 	/** Valid initial override for the selected model's thinking level. */
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly systemPrompt?: string;
@@ -184,7 +183,7 @@ export class AgentSession {
 			thinkingLevel: this.thinkingLevelValue,
 			systemPrompt: options.systemPrompt,
 			sessionId: this.sessionIdValue,
-			tools: resolveSessionTools(options.allowedRoot, this.skills, options.tools),
+			tools: Object.freeze([...options.tools]),
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,

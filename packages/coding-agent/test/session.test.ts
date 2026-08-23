@@ -5,7 +5,7 @@ import type { AgentEvent } from "@di-code/agent";
 import { type Context, createFauxProvider, type Message, type Model, type Provider } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
-import { AgentSession } from "../src/core/session.ts";
+import { AgentSession } from "./test-agent-session.ts";
 
 function findToolResult(messages: readonly Message[], toolCallId: string) {
 	const result = messages.find((message) => message.role === "tool_result" && message.toolCallId === toolCallId);

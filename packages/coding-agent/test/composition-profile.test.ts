@@ -6,7 +6,6 @@ import { createCompositionLoader, PluginInstallManager, type PluginModule } from
 import { createRootContext } from "@di-code/plugin-runtime";
 import { describe, expect, it } from "vitest";
 import {
-	defaultCompositions,
 	importCompositionModule,
 	resolveCompositionEntries,
 	resolveDefaultComposition,
@@ -15,30 +14,33 @@ import {
 import { pluginManager } from "../src/runtime/plugin-manager-entry.ts";
 
 describe("default compositions", () => {
-	it("assigns every built-in entry to base or exactly one mode composition", () => {
-		const base = new Set(defaultCompositions.base.map((entry) => entry.id));
+	it("loads every built-in entry from package-owned base and mode documents", async () => {
+		const baseEntries = await resolveDefaultComposition("base");
+		const base = new Set(baseEntries.map((entry) => entry.id));
 		expect([...base]).toEqual(
 			expect.arrayContaining(["plugin-manager", "plugin-inventory", "mcp-config", "tool-read", "session-store-jsonl"]),
 		);
 		for (const name of ["interactive", "print", "json", "rpc"] as const) {
-			const resolved = resolveDefaultComposition(name);
+			const resolved = await resolveDefaultComposition(name);
 			expect(new Set(resolved.map((entry) => entry.id)).size).toBe(resolved.length);
 			expect(resolved.map((entry) => entry.id)).toContain("Bootstrap");
 		}
-		expect(resolveDefaultComposition("print").map((entry) => entry.id)).toContain("mode-print");
-		expect(resolveDefaultComposition("json").map((entry) => entry.id)).toContain("mode-json");
-		expect(resolveDefaultComposition("interactive").map((entry) => entry.id)).toContain("mode-interactive");
-		expect(resolveDefaultComposition("rpc").map((entry) => entry.id)).toContain("rpc-protocol-v1");
-		expect(resolveDefaultComposition("print").map((entry) => entry.id)).not.toContain("plugin-trace");
-		expect(resolveDefaultComposition("print", { observability: true }).map((entry) => entry.id)).toEqual(
+		expect((await resolveDefaultComposition("print")).map((entry) => entry.id)).toContain("mode-print");
+		expect((await resolveDefaultComposition("json")).map((entry) => entry.id)).toContain("mode-json");
+		expect((await resolveDefaultComposition("interactive")).map((entry) => entry.id)).toContain("mode-interactive");
+		expect((await resolveDefaultComposition("rpc")).map((entry) => entry.id)).toContain("rpc-protocol-v1");
+		expect((await resolveDefaultComposition("print")).map((entry) => entry.id)).not.toContain("plugin-trace");
+		expect((await resolveDefaultComposition("print", { observability: true })).map((entry) => entry.id)).toEqual(
 			expect.arrayContaining(["plugin-trace", "plugin-dump-composition"]),
 		);
 	});
 
 	it("loads the interactive mode through Loader without the print/json Agent loop", async () => {
 		const context = createRootContext({ id: "interactive-composition", mode: "interactive", trustedProject: true });
+		const baseEntries = await resolveDefaultComposition("base");
+		const interactiveEntries = await resolveDefaultComposition("interactive");
 		const entries = [
-			...defaultCompositions.base.filter((entry) =>
+			...baseEntries.filter((entry) =>
 				[
 					"Bootstrap",
 					"command-core",
@@ -50,7 +52,7 @@ describe("default compositions", () => {
 					"system-prompt",
 				].includes(entry.id),
 			),
-			...defaultCompositions.interactive,
+			...interactiveEntries.filter((entry) => !baseEntries.some((baseEntry) => baseEntry.id === entry.id)),
 		];
 		const loader = createCompositionLoader({
 			context,
@@ -114,9 +116,12 @@ describe("default compositions", () => {
 			expect(entries.map((entry) => entry.id)).toEqual(["managed.managed-plugin"]);
 			const imports: string[] = [];
 			const context = createRootContext({ id: "managed-composition" });
+			const baseEntries = await resolveDefaultComposition("base");
+			const bootstrapEntry = baseEntries.find((entry) => entry.id === "Bootstrap");
+			if (bootstrapEntry === undefined) throw new Error("Missing Bootstrap entry in base composition.");
 			const loader = createCompositionLoader({
 				context,
-				entries: [defaultCompositions.base[0], ...entries],
+				entries: [bootstrapEntry, ...entries],
 				importModule: async (name) => {
 					imports.push(name);
 					if (name === "@di-code/builtins/bootstrap") {
