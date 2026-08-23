@@ -321,6 +321,19 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 						for (const plugin of await manager.list())
 							options.stdout(`${plugin.id}\t${plugin.enabled ? "enabled" : "disabled"}\t${plugin.manifest.version}\n`);
 						return 0;
+					case "get": {
+						const plugin = (await manager.list()).find((item) => item.id === command.argument);
+						if (!plugin) throw new Error(`Unknown plugin: ${command.argument ?? ""}`);
+						options.stdout(
+							`${JSON.stringify({
+								id: plugin.id,
+								enabled: plugin.enabled,
+								version: plugin.manifest.version,
+								installedAt: plugin.installedAt,
+							})}\n`,
+						);
+						return 0;
+					}
 					case "install": {
 						const plugin = await manager.install(command.argument as string);
 						options.stdout(`Installed ${plugin.id}\n`);

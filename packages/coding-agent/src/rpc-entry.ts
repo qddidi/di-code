@@ -1,17 +1,14 @@
 #!/usr/bin/env node
 
 import { resolve } from "node:path";
-import { agentSessionKey, minimalProfile, rpcEventServiceKey, rpcMethodRegistryKey } from "@di-code/builtins";
-import { type CompositionEntry, createCompositionLoader, type PluginModule } from "@di-code/plugin-loader";
+import { agentSessionKey, rpcEventServiceKey, rpcMethodRegistryKey } from "@di-code/builtins";
+import { createCompositionLoader } from "@di-code/plugin-loader";
 import { createRootContext } from "@di-code/plugin-runtime";
+import { importCompositionModule, resolveDefaultComposition } from "./compositions.ts";
 import { disposeRpcComposition } from "./rpc/lifecycle.ts";
 import { RpcServer, type RpcSession } from "./rpc/server.ts";
 import { installAgentSessionFactory } from "./runtime/session-factory.ts";
 import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
-
-function moduleImporter(name: string): Promise<PluginModule> {
-	return import(name) as Promise<PluginModule>;
-}
 
 function isRpcSession(value: unknown): value is RpcSession {
 	return (
@@ -29,14 +26,11 @@ function isRpcSession(value: unknown): value is RpcSession {
 }
 
 const allowedRoot = resolve(process.cwd());
-const rpcProfileEntries = minimalProfile.entries.filter(
-	(entry) => !["agent-loop", "mode-print", "mode-json", "mode-interactive"].includes(entry.id),
-);
 const context = createRootContext({ id: "rpc-profile", mode: "rpc", trustedProject: true });
 const loader = createCompositionLoader({
 	context,
-	entries: rpcProfileEntries as readonly CompositionEntry[],
-	importModule: moduleImporter,
+	entries: resolveDefaultComposition("rpc"),
+	importModule: importCompositionModule,
 	projectTrusted: true,
 });
 

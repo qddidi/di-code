@@ -454,9 +454,11 @@ di-code --no-skills "不要加载任何 Skill"
 2. interactive 模式中的 slash command；
 3. Agent 与会话生命周期事件处理器。
 
-插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和审计信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装或信任可信来源的插件。interactive 启动时，每个实际加载的插件会先显示黄色 `[loading]`，并在完成时原位替换为绿色 `[ok]` 或红色 `[error]`；成功项会列出该插件新增的 tools 和 slash commands 数量。print 和 JSON 模式保持 `plugin_diagnostic` 输出。
+插件不是 MCP Server，也没有热重载、插件市场或真正的权限沙箱。manifest 的 `permissions` 是声明和 capability audit 信息，**不会**阻止插件访问文件、网络或子进程。因此，只安装可信来源的插件。默认 profile 只将已启用的受管 namespace plugin 加入 Loader；禁用项不会解析或 import，`--trace-plugins` 可显示实际 phase 和失败诊断。
 
-### 使用项目本地插件
+### 旧项目本地插件兼容 API
+
+以下路径仅用于迁移期兼容，默认 `di-code` composition 不会加载它；Stage 14 将移除此旧 API。新插件应使用下文的受管 namespace plugin 安装流程。
 
 项目插件位置固定：
 
@@ -483,7 +485,7 @@ di-code --no-skills "不要加载任何 Skill"
 }
 ```
 
-入口必须默认导出一个 factory 函数。项目插件仅在当前项目已获信任后导入。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
+旧入口必须默认导出一个 factory 函数。旧产品路径只会在当前项目已获信任时导入；默认 composition 不会选择它。插件工具名必须采用 `<plugin-id>__<tool-name>`，避免与内置工具或其他插件冲突。
 
 完整的 TypeBox schema、工具、slash command、生命周期事件及安全责任，请阅读仓库文档：[插件使用指南](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)。
 
@@ -499,6 +501,7 @@ di-code plugin install git:https://github.com/acme/di-code-project-status.git
 
 # 查看 ID、启用状态和版本
 di-code plugin list
+di-code plugin get project-status
 
 di-code plugin disable project-status
 di-code plugin enable project-status
@@ -507,6 +510,15 @@ di-code plugin remove project-status
 ```
 
 安装过程固定使用 `npm --ignore-scripts`，但这并不使插件本身安全：插件在加载时仍是本机代码。`plugin` 管理命令不需要配置 Provider。
+
+默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。需要诊断 composition 时可运行：
+
+```powershell
+di-code --trace-plugins
+di-code --dump-composition
+```
+
+两条命令按需挂载 `plugin-trace` 和 `plugin-dump-composition`，输出实际 resolved tree、entry phase、owner Fiber、capability audit 与脱敏失败信息；不会输出 entry config、安装路径、凭据或完整 Provider 请求。
 
 ## 自定义 Provider
 

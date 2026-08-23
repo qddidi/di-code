@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { parseCliArgs, runCli } from "../src/cli.ts";
 
 describe("parseCliArgs", () => {
+	it("parses plugin management and opt-in composition observability commands", () => {
+		expect(parseCliArgs(["plugin", "get", "example"])).toEqual({
+			kind: "plugin",
+			action: "get",
+			argument: "example",
+		});
+		expect(parseCliArgs(["--trace-plugins"])).toEqual({ kind: "observe", action: "trace" });
+		expect(parseCliArgs(["--dump-composition"])).toEqual({ kind: "observe", action: "dump-composition" });
+	});
 	it("parses help and version as static commands", () => {
 		expect(parseCliArgs(["--help"])).toEqual({ kind: "help" });
 		expect(parseCliArgs(["-v"])).toEqual({ kind: "version" });

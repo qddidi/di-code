@@ -6,7 +6,12 @@ export type OutputMode = "print" | "json" | "interactive";
 export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
-	| { kind: "plugin"; action: "install" | "list" | "enable" | "disable" | "update" | "remove"; argument?: string }
+	| { kind: "observe"; action: "trace" | "dump-composition" }
+	| {
+			kind: "plugin";
+			action: "install" | "list" | "get" | "enable" | "disable" | "update" | "remove";
+			argument?: string;
+	  }
 	| {
 			kind: "mcp";
 			action: "add" | "list" | "get" | "remove";
@@ -38,17 +43,20 @@ export class CliUsageError extends Error {
 }
 
 export function parseCliArgs(args: readonly string[]): CliCommand {
+	if (args.length === 1 && args[0] === "--trace-plugins") return { kind: "observe", action: "trace" };
+	if (args.length === 1 && args[0] === "--dump-composition") return { kind: "observe", action: "dump-composition" };
 	if (args[0] === "plugin") {
 		const action = args[1];
 		if (
 			action !== "install" &&
 			action !== "list" &&
+			action !== "get" &&
 			action !== "enable" &&
 			action !== "disable" &&
 			action !== "update" &&
 			action !== "remove"
 		)
-			throw new CliUsageError("Plugin command must be install, list, enable, disable, update, or remove.");
+			throw new CliUsageError("Plugin command must be install, list, get, enable, disable, update, or remove.");
 		const argument = args[2];
 		if (
 			args.length > 3 ||
@@ -268,6 +276,8 @@ ${t("options")}
   --trust-project    ${t("trustProject")}
   --untrust-project  ${t("untrustProject")}
   plugin <action>    ${t("plugin")}
+  --trace-plugins    Emit Loader phase, owner Fiber, capability, and failure diagnostics
+  --dump-composition Emit the resolved composition without configuration values
   mcp add|list|get|remove ${t("mcp")}
   -h, --help         ${t("help")}
   -v, --version      ${t("version")}
@@ -287,6 +297,7 @@ export interface CliDependencies {
 	stderr(text: string): void;
 	run(command: Extract<CliCommand, { kind: "run" }>): Promise<number>;
 	plugin?(command: Extract<CliCommand, { kind: "plugin" }>): Promise<number>;
+	observe?(command: Extract<CliCommand, { kind: "observe" }>): Promise<number>;
 	mcp?(command: Extract<CliCommand, { kind: "mcp" }>): Promise<number>;
 	readonly version: string;
 	readonly locale?: Locale;
@@ -315,6 +326,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
 		case "plugin":
 			if (!dependencies.plugin) throw new Error("Plugin command handler is unavailable.");
 			return dependencies.plugin(command);
+		case "observe":
+			if (!dependencies.observe) throw new Error("Plugin observability command handler is unavailable.");
+			return dependencies.observe(command);
 		case "mcp":
 			if (!dependencies.mcp) throw new Error("MCP command handler is unavailable.");
 			return dependencies.mcp(command);

@@ -17,7 +17,10 @@ async function runCli(
 		!args.includes("--help") &&
 		!args.includes("-h") &&
 		!args.includes("--version") &&
-		!args.includes("-v");
+		!args.includes("-v") &&
+		!args.includes("--trace-plugins") &&
+		!args.includes("--dump-composition") &&
+		args[0] !== "plugin";
 	try {
 		const environment: NodeJS.ProcessEnv = { ...process.env, USERPROFILE: join(root, "home") };
 		if (options.configured ?? true) environment.DI_CODE_PROVIDER = "faux";
@@ -91,6 +94,28 @@ describe("CLI process entry", () => {
 		expect(records.length).toBeGreaterThan(0);
 		expect(records.every((record) => record.version === 2)).toBe(true);
 		expect(records.at(-1)?.event.type).toBe("agent_end");
+	});
+
+	it("runs plugin inventory and composition diagnostics without a Provider", async () => {
+		const listed = await runCli(["plugin", "list"], { configured: false });
+		expect(listed.code).toBe(0);
+		expect(listed.stdout).toBe("");
+		expect(listed.stderr).toBe("");
+
+		const dumped = await runCli(["--dump-composition"], { configured: false });
+		expect(dumped.code).toBe(0);
+		expect(dumped.stderr).toBe("");
+		const record = JSON.parse(dumped.stdout) as {
+			type: string;
+			resolvedTree: readonly { id: string; phase: string; ownerFiber: unknown; capabilityAudit: unknown }[];
+		};
+		expect(record.type).toBe("plugin_dump_composition");
+		expect(record.resolvedTree).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: "plugin-manager", phase: "active" }),
+				expect.objectContaining({ id: "plugin-inventory", ownerFiber: expect.any(Object) }),
+			]),
+		);
 	});
 
 	it("keeps usage errors off stdout", async () => {

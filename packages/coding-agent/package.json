@@ -28,6 +28,34 @@
 		"./rpc": {
 			"types": "./dist/rpc/index.d.ts",
 			"import": "./dist/rpc/index.js"
+		},
+		"./plugin-manager": {
+			"types": "./dist/plugin-manager.d.ts",
+			"import": "./dist/plugin-manager.js"
+		},
+		"./plugin-inventory": {
+			"types": "./dist/plugin-inventory.d.ts",
+			"import": "./dist/plugin-inventory.js"
+		},
+		"./plugin-trace": {
+			"types": "./dist/plugin-trace.d.ts",
+			"import": "./dist/plugin-trace.js"
+		},
+		"./plugin-dump-composition": {
+			"types": "./dist/plugin-dump-composition.d.ts",
+			"import": "./dist/plugin-dump-composition.js"
+		},
+		"./mcp-config-entry": {
+			"types": "./dist/mcp-config-entry.d.ts",
+			"import": "./dist/mcp-config-entry.js"
+		},
+		"./mcp-client-entry": {
+			"types": "./dist/mcp-client-entry.d.ts",
+			"import": "./dist/mcp-client-entry.js"
+		},
+		"./mcp-tools-entry": {
+			"types": "./dist/mcp-tools-entry.d.ts",
+			"import": "./dist/mcp-tools-entry.js"
 		}
 	},
 	"files": [
