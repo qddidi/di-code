@@ -1,12 +1,43 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Agent, AgentEvent } from "@di-code/agent";
 import { Agent as AgentImpl } from "@di-code/agent";
-import type { AssistantMessage, FauxResponse, Model, Provider } from "@di-code/ai";
-import { createFauxProvider } from "@di-code/ai";
+import type { AssistantMessage, FauxResponse, Model, Provider, ThinkingLevel } from "@di-code/ai";
+import {
+	createAnthropicProvider,
+	createDeepSeekProvider,
+	createFauxProvider,
+	createKimiProvider,
+	createOpenAIProvider,
+	createZhipuProvider,
+	MODELS,
+} from "@di-code/ai";
 import { createServiceKey, type PluginDefinition } from "@di-code/plugin-runtime";
 
 export interface ProviderSelection {
 	readonly provider: Provider;
 	readonly model: Model;
+}
+
+export interface ModelCatalog {
+	readonly list: (providerId?: string) => readonly Model[];
+	readonly find: (providerId: string, modelId: string) => Model | undefined;
+}
+
+export interface CredentialEnv {
+	readonly resolve: (value: string | undefined, label: string) => string | undefined;
+}
+
+export interface RuntimeSelection {
+	readonly selected: () => ProviderSelection;
+	readonly reasoningLevel: () => ThinkingLevel | undefined;
+}
+
+export interface RuntimeProviderConfig {
+	readonly providerId?: string;
+	readonly modelId?: string;
+	readonly providers: Readonly<Record<string, Readonly<Record<string, string | undefined>>>>;
 }
 
 export interface ProviderRegistry {
@@ -16,6 +47,10 @@ export interface ProviderRegistry {
 }
 
 export const providerRegistryKey = createServiceKey<ProviderRegistry>("provider-registry");
+export const modelCatalogKey = createServiceKey<ModelCatalog>("model-catalog");
+export const credentialEnvKey = createServiceKey<CredentialEnv>("credential-env");
+export const runtimeSelectionKey = createServiceKey<RuntimeSelection>("runtime-selection");
+export const runtimeConfigKey = createServiceKey<RuntimeProviderConfig>("runtime-config");
 export const sessionStoreKey = createServiceKey<MemorySessionStore>("session-store");
 export const hostCommandRegistryKey = createServiceKey<HostCommandRegistry>("host-command-registry");
 export const diagnosticsKey = createServiceKey<Diagnostics>("diagnostics");
@@ -74,21 +109,25 @@ export interface MemorySessionStore {
 }
 
 function createRegistry(): ProviderRegistry {
-	const entries: ProviderSelection[] = [];
+	const entries: Provider[] = [];
 	return {
 		register(selection) {
-			if (entries.some((entry) => entry.provider.id === selection.provider.id))
+			if (entries.some((entry) => entry.id === selection.provider.id))
 				throw new Error(`Duplicate provider: ${selection.provider.id}`);
-			entries.push(selection);
+			entries.push(selection.provider);
 		},
-		list: () => entries.map((entry) => ({ ...entry })),
+		list: () =>
+			entries.flatMap((provider) => {
+				const model = provider.models[0];
+				return model ? [{ provider, model }] : [];
+			}),
 		select(providerId, modelId) {
-			const entry = entries.find((candidate) => candidate.provider.id === providerId);
-			if (!entry) throw new Error(`Unknown provider: ${providerId}`);
+			const provider = entries.find((candidate) => candidate.id === providerId);
+			if (!provider) throw new Error(`Unknown provider: ${providerId}`);
 			const model =
-				modelId === undefined ? entry.model : entry.provider.models.find((candidate) => candidate.id === modelId);
-			if (!model) throw new Error(`Unknown model "${modelId}" for provider "${providerId}"`);
-			return { provider: entry.provider, model };
+				modelId === undefined ? provider.models[0] : provider.models.find((candidate) => candidate.id === modelId);
+			if (!model) throw new Error(`Unknown model "${modelId ?? ""}" for provider "${providerId}"`);
+			return { provider, model };
 		},
 	};
 }
@@ -191,6 +230,160 @@ export const providerFaux: PluginDefinition<FauxProviderConfig> = {
 	},
 };
 
+function createProviderEntry(
+	name: string,
+	create: (
+		env: Readonly<Record<string, string | undefined>>,
+		config: Readonly<Record<string, string | undefined>>,
+	) => Provider,
+): PluginDefinition {
+	return {
+		apiVersion: 1,
+		name,
+		version: "0.1.7",
+		apply(context) {
+			const config = context.require(runtimeConfigKey);
+			const providerId = name.slice("provider-".length);
+			const providerConfig = config.providers[providerId] ?? {};
+			const credential = context.require(credentialEnvKey);
+			const provider = create(process.env, {
+				...providerConfig,
+				apiKey: credential.resolve(providerConfig.apiKey, `${providerId}.apiKey`),
+			});
+			const model = provider.models[0];
+			if (!model) throw new Error(`${name} provider requires at least one model`);
+			context.require(providerRegistryKey).register({ provider, model });
+		},
+	};
+}
+
+export const modelCatalog: PluginDefinition = {
+	apiVersion: 1,
+	name: "model-catalog",
+	version: "0.1.7",
+	apply(context) {
+		const catalog: ModelCatalog = {
+			list: (providerId) =>
+				providerId === undefined ? MODELS : MODELS.filter((model) => model.provider === providerId),
+			find: (providerId, modelId) => MODELS.find((model) => model.provider === providerId && model.id === modelId),
+		};
+		context.set(modelCatalogKey, catalog);
+	},
+};
+
+export const credentialEnv: PluginDefinition = {
+	apiVersion: 1,
+	name: "credential-env",
+	version: "0.1.7",
+	apply(context) {
+		context.set(credentialEnvKey, {
+			resolve(value, label) {
+				if (value === undefined) return undefined;
+				const trimmed = value.trim();
+				const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$|^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(trimmed);
+				if (match) {
+					const variable = match[1] ?? match[2];
+					const resolved = process.env[variable]?.trim();
+					if (!resolved) throw new Error(`${label} environment variable "${variable}" is not set`);
+					return resolved;
+				}
+				if (trimmed.startsWith("!")) throw new Error(`${label} command-based credentials are not supported`);
+				return value;
+			},
+		});
+	},
+};
+
+export const providerOpenai = createProviderEntry("provider-openai", (env, config) =>
+	createOpenAIProvider({ env, apiKey: config.apiKey, baseUrl: config.baseUrl }),
+);
+export const providerAnthropic = createProviderEntry("provider-anthropic", (env, config) =>
+	createAnthropicProvider({ env, apiKey: config.apiKey, baseUrl: config.baseUrl }),
+);
+export const providerDeepseek = createProviderEntry("provider-deepseek", (env, config) =>
+	createDeepSeekProvider({ env, apiKey: config.apiKey, baseUrl: config.baseUrl }),
+);
+export const providerKimi = createProviderEntry("provider-kimi", (env, config) =>
+	createKimiProvider({ env, apiKey: config.apiKey, baseUrl: config.baseUrl }),
+);
+export const providerZhipu = createProviderEntry("provider-zhipu", (env, config) =>
+	createZhipuProvider({ env, apiKey: config.apiKey, baseUrl: config.baseUrl }),
+);
+
+export const runtimeSelection: PluginDefinition = {
+	apiVersion: 1,
+	name: "runtime-selection",
+	version: "0.1.7",
+	async apply(context) {
+		const registry = context.require(providerRegistryKey);
+		const readSettings = async (path: string): Promise<Readonly<Record<string, unknown>> | undefined> => {
+			try {
+				const text = await readFile(path, "utf8");
+				if (!text.trim()) return undefined;
+				const parsed: unknown = JSON.parse(text);
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+					throw new Error(`${path}: root value must be an object`);
+				return parsed as Readonly<Record<string, unknown>>;
+			} catch (cause) {
+				if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+				throw cause;
+			}
+		};
+		const global = await readSettings(join(homedir(), ".di-code", "settings.json"));
+		const project = await readSettings(join(process.cwd(), ".di-code", "settings.json"));
+		const globalProviders = global?.providers;
+		const projectProviders = project?.providers;
+		const providers: Record<string, Record<string, string | undefined>> = {};
+		for (const source of [globalProviders, projectProviders]) {
+			if (typeof source !== "object" || source === null || Array.isArray(source)) continue;
+			for (const [id, value] of Object.entries(source)) {
+				if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+				const entry = value as Record<string, unknown>;
+				const target = providers[id] ?? {};
+				for (const key of ["apiKey", "baseUrl"] as const) if (typeof entry[key] === "string") target[key] = entry[key];
+				providers[id] = target;
+			}
+		}
+		const providerId =
+			process.env.DI_CODE_PROVIDER?.trim() ||
+			(typeof project?.defaultProvider === "string" ? project.defaultProvider : undefined) ||
+			(typeof global?.defaultProvider === "string" ? global.defaultProvider : undefined);
+		const configuredDefaultProvider =
+			typeof project?.defaultProvider === "string"
+				? project.defaultProvider
+				: typeof global?.defaultProvider === "string"
+					? global.defaultProvider
+					: undefined;
+		const modelId =
+			process.env.DI_CODE_MODEL?.trim() ||
+			(configuredDefaultProvider === providerId && typeof project?.defaultModel === "string"
+				? project.defaultModel
+				: undefined) ||
+			(configuredDefaultProvider === providerId && typeof global?.defaultModel === "string"
+				? global.defaultModel
+				: undefined);
+		context.set(runtimeConfigKey, { providerId, modelId, providers });
+		context.set(runtimeSelectionKey, {
+			selected: () => {
+				const selectedProviderId = process.env.DI_CODE_PROVIDER?.trim() || providerId;
+				if (!selectedProviderId)
+					throw new Error("Provider is not configured. Set DI_CODE_PROVIDER=faux for the minimal profile.");
+				return registry.select(selectedProviderId, process.env.DI_CODE_MODEL?.trim() || modelId);
+			},
+			reasoningLevel: () => undefined,
+		});
+	},
+};
+
+export const providerOnboarding: PluginDefinition = {
+	apiVersion: 1,
+	name: "provider-onboarding",
+	version: "0.1.7",
+	apply(context) {
+		context.require(providerRegistryKey);
+	},
+};
+
 export const sessionMemory: PluginDefinition = {
 	apiVersion: 1,
 	name: "session-memory",
@@ -220,7 +413,7 @@ export const agentLoop: PluginDefinition = {
 	name: "agent-loop",
 	version: "0.1.7",
 	apply(context, _config, fiber) {
-		const selected = context.require(providerRegistryKey).select("faux");
+		const selected = context.require(runtimeSelectionKey).selected();
 		const memory = context.require(sessionStoreKey);
 		const agent = new AgentImpl({ provider: selected.provider, model: selected.model });
 		const unsubscribe = agent.subscribe((event: AgentEvent) => memory.append(event));
@@ -270,9 +463,52 @@ export const minimalProfile = {
 		{ id: "diagnostics", name: "@di-code/builtins/diagnostics", dependsOn: ["runtime"] },
 		{ id: "process-exit", name: "@di-code/builtins/process-exit", dependsOn: ["runtime"] },
 		{ id: "provider-registry", name: "@di-code/builtins/provider-registry" },
+		{ id: "model-catalog", name: "@di-code/builtins/model-catalog", dependsOn: ["provider-registry"] },
+		{ id: "credential-env", name: "@di-code/builtins/credential-env", dependsOn: ["provider-registry"] },
 		{ id: "provider-faux", name: "@di-code/builtins/provider-faux", dependsOn: ["provider-registry"] },
+		{
+			id: "provider-openai",
+			name: "@di-code/builtins/provider-openai",
+			dependsOn: ["provider-registry", "runtime-selection", "credential-env"],
+			required: false,
+		},
+		{
+			id: "provider-anthropic",
+			name: "@di-code/builtins/provider-anthropic",
+			dependsOn: ["provider-registry", "runtime-selection", "credential-env"],
+			required: false,
+		},
+		{
+			id: "provider-deepseek",
+			name: "@di-code/builtins/provider-deepseek",
+			dependsOn: ["provider-registry", "runtime-selection", "credential-env"],
+			required: false,
+		},
+		{
+			id: "provider-kimi",
+			name: "@di-code/builtins/provider-kimi",
+			dependsOn: ["provider-registry", "runtime-selection", "credential-env"],
+			required: false,
+		},
+		{
+			id: "provider-zhipu",
+			name: "@di-code/builtins/provider-zhipu",
+			dependsOn: ["provider-registry", "runtime-selection", "credential-env"],
+			required: false,
+		},
+		{ id: "runtime-selection", name: "@di-code/builtins/runtime-selection", dependsOn: ["provider-registry"] },
+		{
+			id: "provider-onboarding",
+			name: "@di-code/builtins/provider-onboarding",
+			dependsOn: ["provider-registry", "credential-env"],
+			required: false,
+		},
 		{ id: "session-memory", name: "@di-code/builtins/session-memory", dependsOn: ["runtime"] },
-		{ id: "agent-loop", name: "@di-code/builtins/agent-loop", dependsOn: ["provider-faux", "session-memory"] },
+		{
+			id: "agent-loop",
+			name: "@di-code/builtins/agent-loop",
+			dependsOn: ["runtime-selection", "provider-faux", "session-memory"],
+		},
 		{ id: "mode-print", name: "@di-code/builtins/mode-print", dependsOn: ["Bootstrap", "agent-loop"] },
 	] as const,
 };
@@ -284,6 +520,15 @@ export const pluginModules = {
 	processExit,
 	providerRegistry,
 	providerFaux,
+	providerOpenai,
+	providerAnthropic,
+	providerDeepseek,
+	providerKimi,
+	providerZhipu,
+	modelCatalog,
+	credentialEnv,
+	runtimeSelection,
+	providerOnboarding,
 	agentLoop,
 	sessionMemory,
 	modePrint,

@@ -19,6 +19,42 @@
 			"types": "./dist/provider-faux.d.ts",
 			"import": "./dist/provider-faux.js"
 		},
+		"./provider-openai": {
+			"types": "./dist/provider-openai.d.ts",
+			"import": "./dist/provider-openai.js"
+		},
+		"./provider-anthropic": {
+			"types": "./dist/provider-anthropic.d.ts",
+			"import": "./dist/provider-anthropic.js"
+		},
+		"./provider-deepseek": {
+			"types": "./dist/provider-deepseek.d.ts",
+			"import": "./dist/provider-deepseek.js"
+		},
+		"./provider-kimi": {
+			"types": "./dist/provider-kimi.d.ts",
+			"import": "./dist/provider-kimi.js"
+		},
+		"./provider-zhipu": {
+			"types": "./dist/provider-zhipu.d.ts",
+			"import": "./dist/provider-zhipu.js"
+		},
+		"./model-catalog": {
+			"types": "./dist/model-catalog.d.ts",
+			"import": "./dist/model-catalog.js"
+		},
+		"./credential-env": {
+			"types": "./dist/credential-env.d.ts",
+			"import": "./dist/credential-env.js"
+		},
+		"./runtime-selection": {
+			"types": "./dist/runtime-selection.d.ts",
+			"import": "./dist/runtime-selection.js"
+		},
+		"./provider-onboarding": {
+			"types": "./dist/provider-onboarding.d.ts",
+			"import": "./dist/provider-onboarding.js"
+		},
 		"./session-memory": {
 			"types": "./dist/session-memory.d.ts",
 			"import": "./dist/session-memory.js"

@@ -6,8 +6,12 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = [
+	"@di-code/plugin-runtime",
+	"@di-code/plugin-loader",
+	"@di-code/plugin-sdk",
 	"@di-code/ai",
 	"@di-code/agent",
+	"@di-code/builtins",
 	"@di-code/tui",
 	"@di-code/skills",
 	"@di-code/mcp",
@@ -141,7 +145,7 @@ async function main() {
 		}
 		const conversation = await runNpm(["exec", "--offline", "--", "di-code", "--print", "release smoke"], {
 			cwd: installDirectory,
-			env: { ...smokeEnvironment, DI_CODE_PROVIDER: "faux" },
+			env: { ...smokeEnvironment, DI_CODE_PROVIDER: "faux", DI_CODE_MODEL: "faux-model" },
 		});
 		if (conversation.stdout.trim().length === 0) throw new Error("Outside-install conversation smoke returned no text.");
 
@@ -153,7 +157,7 @@ const supervisor = new RpcSupervisor({
   command: process.execPath,
   args: [${JSON.stringify(rpcEntry)}],
   cwd: process.cwd(),
-  env: { DI_CODE_PROVIDER: "faux" },
+  env: { DI_CODE_PROVIDER: "faux", DI_CODE_MODEL: "faux-model" },
 });
 const state = await supervisor.start();
 if (state.modelId !== "faux-model") throw new Error("unexpected RPC model");

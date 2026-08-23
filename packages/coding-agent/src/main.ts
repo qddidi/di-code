@@ -49,11 +49,6 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 		options.stderr("The minimal profile supports only --print.\n");
 		return 1;
 	}
-	if (process.env.DI_CODE_PROVIDER?.trim() !== "faux") {
-		options.stderr("Provider is not configured. Set DI_CODE_PROVIDER=faux for the minimal profile.\n");
-		return 1;
-	}
-
 	const context = createRootContext({ id: "minimal-profile", mode: "print", trustedProject: true });
 	const unsubscribe = context.events.subscribe((event) => options.onRuntimeEvent?.(event));
 	const loader = createCompositionLoader({
@@ -74,7 +69,7 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 		processExit.setCode(code);
 		return processExit.code();
 	} catch (cause) {
-		options.stderr(`${errorMessage(cause)}\n`);
+		options.stderr(`${errorMessage(cause).replace(/^Required entry agent-loop failed: /, "")}\n`);
 		return 1;
 	} finally {
 		const memory = context.get(sessionStoreKey);
