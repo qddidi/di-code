@@ -24,6 +24,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@di-code/plugin-runtime": "0.1.7"
+		"@di-code/plugin-runtime": "0.1.7",
+		"yaml": "2.9.0"
 	}
 }

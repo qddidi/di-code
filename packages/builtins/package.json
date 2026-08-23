@@ -1,0 +1,42 @@
+{
+	"name": "@di-code/builtins",
+	"version": "0.1.7",
+	"description": "Reference built-in plugins for the di-code runtime",
+	"private": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./provider-registry": {
+			"types": "./dist/provider-registry.d.ts",
+			"import": "./dist/provider-registry.js"
+		},
+		"./provider-faux": {
+			"types": "./dist/provider-faux.d.ts",
+			"import": "./dist/provider-faux.js"
+		},
+		"./session-memory": {
+			"types": "./dist/session-memory.d.ts",
+			"import": "./dist/session-memory.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"dependencies": {
+		"@di-code/ai": "0.1.7",
+		"@di-code/plugin-runtime": "0.1.7"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

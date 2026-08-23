@@ -1,0 +1,14 @@
+{
+	"name": "@fixture/composition-plugin",
+	"version": "0.0.0-test",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./plugin.ts"
+	},
+	"diCode": {
+		"apiVersion": 1,
+		"plugins": ["./plugin.ts"],
+		"permissions": { "filesystem": "none", "network": [], "process": [] }
+	}
+}
