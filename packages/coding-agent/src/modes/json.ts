@@ -14,14 +14,23 @@ export interface JsonRunner {
 	subscribe(listener: AgentListener): () => void;
 }
 
+export interface JsonRenderer {
+	render(event: AgentEvent): string | undefined;
+}
+
 function toError(cause: unknown): Error {
 	return cause instanceof Error ? cause : new Error(String(cause));
 }
 
-export async function runJsonMode(prompt: string, runner: JsonRunner, io: PrintIo): Promise<number> {
+export async function runJsonMode(
+	prompt: string,
+	runner: JsonRunner,
+	io: PrintIo,
+	renderer?: JsonRenderer,
+): Promise<number> {
 	const unsubscribe = runner.subscribe((event) => {
-		const record: JsonEventRecord = { version: JSON_EVENT_VERSION, event };
-		io.stdout(`${JSON.stringify(record)}\n`);
+		const rendered = renderer?.render(event) ?? JSON.stringify({ version: JSON_EVENT_VERSION, event });
+		io.stdout(`${rendered}\n`);
 	});
 
 	try {

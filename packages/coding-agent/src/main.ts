@@ -1,7 +1,14 @@
-import { hostCommandRegistryKey, minimalProfile, processExitKey, sessionStoreKey } from "@di-code/builtins";
+import {
+	agentLoopKey,
+	minimalProfile,
+	modeRegistryKey,
+	processExitKey,
+	rendererRegistryKey,
+	sessionStoreKey,
+} from "@di-code/builtins";
 import { type CompositionEntry, createCompositionLoader, type PluginModule } from "@di-code/plugin-loader";
 import { createRootContext, type RuntimeEvent } from "@di-code/plugin-runtime";
-import { type CliCommand, helpText, parseCliArgs } from "./cli.ts";
+import { type CliCommand, createCliParser } from "./cli.ts";
 
 export interface MinimalProfileOptions {
 	readonly version: string;
@@ -26,15 +33,16 @@ function moduleImporter(name: string): Promise<PluginModule> {
 
 /** Starts the Stage 7 minimal composition and executes its registered host command. */
 export async function runMinimalProfile(args: readonly string[], options: MinimalProfileOptions): Promise<number> {
+	const parser = createCliParser();
 	let command: CliCommand;
 	try {
-		command = parseCliArgs(args);
+		command = parser.parse(args);
 	} catch (cause) {
 		options.stderr(`${errorMessage(cause)}\n`);
 		return 1;
 	}
 	if (command.kind === "help") {
-		options.stdout(`${helpText("en")}\n`);
+		options.stdout(`${parser.help("en")}\n`);
 		return 0;
 	}
 	if (command.kind === "version") {
@@ -45,11 +53,7 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 		options.stderr("Only run commands are available in the minimal profile.\n");
 		return 1;
 	}
-	if (command.mode !== "print") {
-		options.stderr("The minimal profile supports only --print.\n");
-		return 1;
-	}
-	const context = createRootContext({ id: "minimal-profile", mode: "print", trustedProject: true });
+	const context = createRootContext({ id: "minimal-profile", mode: command.mode, trustedProject: true });
 	const unsubscribe = context.events.subscribe((event) => options.onRuntimeEvent?.(event));
 	const loader = createCompositionLoader({
 		context,
@@ -59,10 +63,30 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 	});
 	try {
 		await loader.load();
-		const commandRegistry = context.require(hostCommandRegistryKey);
-		const code = await commandRegistry.execute(
-			"print",
-			{ prompt: command.prompt, stdout: options.stdout },
+		const modes = context.require(modeRegistryKey);
+		const code = await modes.execute(
+			command.mode,
+			command.mode === "print"
+				? { prompt: command.prompt, stdout: options.stdout }
+				: command.mode === "json"
+					? {
+							run: async () => {
+								const renderer = context.require(rendererRegistryKey).find("json");
+								if (!renderer) throw new Error("JSON renderer is unavailable");
+								const loop = context.require(agentLoopKey);
+								const unsubscribe = loop.agent.subscribe((event) => {
+									const rendered = renderer.render(event);
+									if (rendered !== undefined) options.stdout(`${rendered}\n`);
+								});
+								try {
+									const response = await loop.prompt(command.prompt, context.signal);
+									return response.stopReason === "error" || response.stopReason === "aborted" ? 1 : 0;
+								} finally {
+									unsubscribe();
+								}
+							},
+						}
+					: { run: () => Promise.reject(new Error("Interactive mode requires a session context")) },
 			context.signal,
 		);
 		const processExit = context.require(processExitKey);

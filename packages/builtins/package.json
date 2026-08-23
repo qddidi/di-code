@@ -83,6 +83,58 @@
 			"types": "./dist/mode-print.d.ts",
 			"import": "./dist/mode-print.js"
 		},
+		"./cli-parser": {
+			"types": "./dist/cli-parser.d.ts",
+			"import": "./dist/cli-parser.js"
+		},
+		"./command-core": {
+			"types": "./dist/command-core.d.ts",
+			"import": "./dist/command-core.js"
+		},
+		"./command-session": {
+			"types": "./dist/command-session.d.ts",
+			"import": "./dist/command-session.js"
+		},
+		"./command-model": {
+			"types": "./dist/command-model.d.ts",
+			"import": "./dist/command-model.js"
+		},
+		"./command-settings": {
+			"types": "./dist/command-settings.d.ts",
+			"import": "./dist/command-settings.js"
+		},
+		"./command-compact": {
+			"types": "./dist/command-compact.d.ts",
+			"import": "./dist/command-compact.js"
+		},
+		"./command-interactive-core": {
+			"types": "./dist/command-interactive-core.d.ts",
+			"import": "./dist/command-interactive-core.js"
+		},
+		"./mode-json": {
+			"types": "./dist/mode-json.d.ts",
+			"import": "./dist/mode-json.js"
+		},
+		"./mode-interactive": {
+			"types": "./dist/mode-interactive.d.ts",
+			"import": "./dist/mode-interactive.js"
+		},
+		"./tui-renderer": {
+			"types": "./dist/tui-renderer.d.ts",
+			"import": "./dist/tui-renderer.js"
+		},
+		"./theme": {
+			"types": "./dist/theme.d.ts",
+			"import": "./dist/theme.js"
+		},
+		"./output-json": {
+			"types": "./dist/output-json.d.ts",
+			"import": "./dist/output-json.js"
+		},
+		"./interactive-context": {
+			"types": "./dist/interactive-context.d.ts",
+			"import": "./dist/interactive-context.js"
+		},
 		"./tool-registry": {
 			"types": "./dist/tool-registry.d.ts",
 			"import": "./dist/tool-registry.js"

@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
+import type { CommandRegistry, InteractiveContextService } from "@di-code/builtins";
 import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
@@ -113,6 +114,10 @@ export interface InteractiveModeOptions {
 	readonly agentDir?: string;
 	readonly readClipboardImagePath?: (directory?: string) => Promise<string | null>;
 	readonly locale?: Locale;
+	/** Command contributions are resolved through the composition registry. */
+	readonly commandRegistry?: CommandRegistry;
+	/** Session controls and preferences are supplied by the active Context. */
+	readonly context?: InteractiveContextService;
 }
 
 export interface InteractiveSessionChoice {
@@ -120,6 +125,26 @@ export interface InteractiveSessionChoice {
 	readonly label: string;
 	readonly description?: string;
 	open(): AgentSession | Promise<AgentSession>;
+}
+
+interface ContextSessionChoice {
+	readonly id: string;
+	readonly label: string;
+	readonly description?: string;
+	readonly open: () => unknown | Promise<unknown>;
+}
+
+function isContextSessionChoice(value: unknown): value is ContextSessionChoice {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"id" in value &&
+		typeof value.id === "string" &&
+		"label" in value &&
+		typeof value.label === "string" &&
+		"open" in value &&
+		typeof value.open === "function"
+	);
 }
 
 export class InteractiveMode {
@@ -152,17 +177,30 @@ export class InteractiveMode {
 	private shutdownEmitted = false;
 	private preserveClipboardFiles = false;
 	private locale: Locale;
+	private readonly commandRegistry?: CommandRegistry;
+	private readonly context?: InteractiveContextService;
 
 	constructor(options: InteractiveModeOptions) {
 		this.session = options.session;
 		this.projection.configureFilePreview(this.session.allowedRoot, () => this.refresh());
 		this.tui = options.tui;
 		this.onExit = options.onExit;
-		this.sessionChoices = [...(options.sessions ?? [])];
+		const contextChoices = (options.context?.sessionChoices() ?? []).filter(isContextSessionChoice).map((choice) => ({
+			...choice,
+			open: async () => {
+				const session = await choice.open();
+				if (typeof session !== "object" || session === null) throw new Error(`Session choice ${choice.id} is invalid`);
+				return session as AgentSession;
+			},
+		}));
+		this.sessionChoices = [...(options.sessions ?? contextChoices)];
 		this.extensionHost = options.extensionHost;
 		this.providerOnboarding = options.providerOnboarding;
 		this.agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 		this.locale = options.locale ?? DEFAULT_LOCALE;
+		this.commandRegistry = options.commandRegistry;
+		this.context = options.context;
+		if (this.context?.theme() === "light") this.theme = "light";
 		this.readClipboardImagePath = options.readClipboardImagePath ?? readClipboardImagePath;
 		this.clipboardDirectory = clipboardImageDirectory(this.agentDir, this.session.allowedRoot);
 		const autocomplete: AutocompleteProvider = {
@@ -185,8 +223,12 @@ export class InteractiveMode {
 		});
 		this.editor.onSubmit = (text) => void this.submit(text);
 		this.editor.onEscape = () => {
-			if (!this.activeAbort) return;
+			if (!this.activeAbort) {
+				this.context?.cancel();
+				return;
+			}
 			this.projection.setStatus(translate(this.locale, "cancelled"));
+			this.context?.cancel();
 			this.activeAbort.abort();
 			this.refresh();
 		};
@@ -262,12 +304,23 @@ export class InteractiveMode {
 		}
 	}
 
+	/** Cancels the active prompt without changing Session history. */
+	cancelActivePrompt(): void {
+		this.activeAbort?.abort();
+	}
+
+	/** Re-submits the last failed prompt when the mode is idle. */
+	retryLastPrompt(): void {
+		if (this.lastFailedPrompt && !this.promptInFlight) void this.submit(this.lastFailedPrompt, true);
+	}
+
 	private exit(): void {
 		this.stop();
 		this.onExit?.();
 	}
 
 	private handleCommand(data: string): boolean {
+		this.context?.keybindings();
 		if (matchesKey(data, Key.alt("s"))) {
 			void this.submitSteering(this.editor.getValue());
 			return true;
@@ -342,6 +395,7 @@ export class InteractiveMode {
 		]);
 		list.onSelect = (item) => {
 			this.theme = item.value === "light" ? "light" : "dark";
+			this.context?.setTheme(this.theme);
 			this.projection.setStatus(`theme=${this.theme}`);
 			this.closeOverlay();
 			this.refresh();
@@ -804,6 +858,23 @@ export class InteractiveMode {
 		const [rawCommand = "", ...argParts] = trimmed.split(/\s+/);
 		const command = rawCommand.toLowerCase();
 		const args = argParts.join(" ");
+		if (this.commandRegistry?.list().some((entry) => entry.name === command)) {
+			void this.commandRegistry
+				.execute(command, {
+					host: { runCommand: (name: string, value: string) => this.runRegisteredCommand(name, value) },
+					args,
+				})
+				.catch((cause) => {
+					this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+					this.refresh();
+				});
+			this.refresh();
+			return;
+		}
+		this.runRegisteredCommand(command, args);
+	}
+
+	private runRegisteredCommand(command: string, args: string): number {
 		switch (command) {
 			case "help":
 				this.projection.setStatus(
@@ -818,34 +889,36 @@ export class InteractiveMode {
 				break;
 			case "model":
 				this.openModelSelector();
-				return;
+				return 0;
 			case "session":
 				this.openSessionSelector();
-				return;
+				return 0;
 			case "tree":
 				this.openTreeSelector();
-				return;
+				return 0;
 			case "theme":
 				this.openThemeSelector();
-				return;
+				return 0;
 			case "settings":
 				this.openSettingsSelector();
-				return;
+				return 0;
 			case "login":
 				this.openProviderLogin();
-				return;
+				return 0;
 			case "logout":
 				void this.logoutProvider();
-				return;
+				return 0;
 			case "compact":
 				void this.runManualCompaction();
-				return;
+				return 0;
 			case "usage":
 				this.projection.setStatus(this.formatUsage());
 				break;
 			case "retry":
-				if (this.lastFailedPrompt && !this.promptInFlight) void this.submit(this.lastFailedPrompt, true);
-				else this.projection.setStatus(translate(this.locale, "nothingToRetry"));
+				if (this.lastFailedPrompt && !this.promptInFlight) {
+					if (this.context) void this.context.retry();
+					else void this.submit(this.lastFailedPrompt, true);
+				} else this.projection.setStatus(translate(this.locale, "nothingToRetry"));
 				break;
 			default: {
 				if (this.extensionHost?.listCommands().some((entry) => entry.name === command)) {
@@ -859,6 +932,7 @@ export class InteractiveMode {
 			}
 		}
 		this.refresh();
+		return 0;
 	}
 
 	private openProviderLogin(): void {
@@ -930,7 +1004,15 @@ export class InteractiveMode {
 			name: `skill:${skill.name}`,
 			description: skill.description,
 		}));
-		return [...builtinSlashCommands(this.locale), ...(this.extensionHost?.listCommands() ?? []), ...skills];
+		const registryCommands = this.commandRegistry?.list().map((command) => ({
+			name: command.name,
+			description: typeof command.description === "function" ? command.description(this.locale) : command.description,
+		}));
+		return [
+			...(registryCommands ?? builtinSlashCommands(this.locale)),
+			...(this.extensionHost?.listCommands() ?? []),
+			...skills,
+		];
 	}
 
 	private isLoadedSkillCommand(input: string): boolean {

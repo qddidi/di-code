@@ -34,4 +34,6 @@ process.once("SIGINT", () => tui.stop());
 
 主要导出 `TUI`、`Container`、`ProcessTerminal`、`Text`、`Input`、`Editor`、`Markdown`、`SelectionPanel`、选择器和设置组件、自动补全、快捷键、Overlay，以及安全处理显示宽度的文本工具。`SelectionPanel` 是所有键盘选择界面的共享展示层：统一渲染 `›` 焦点行、全宽高亮、位置计数和可选提示；调用方仍负责筛选、导航和业务回调。Overlay 可设置 `preserveLastLine: true`，在 `maxHeight` 截断时保留末行，适用于带底边或固定页脚的面板。
 
+`TUI_THEMES` 和 `TuiTheme` 只描述 ANSI presentation colors；主题选择、Session、取消、重试和命令执行由产品层 Context/Registry 提供，TUI 不依赖 Provider 或 coding-agent。
+
 源码、示例和问题反馈：<https://github.com/qddidi/di-code>

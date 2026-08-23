@@ -169,6 +169,13 @@ export const runtimeSelectionKey = createServiceKey<RuntimeSelection>("runtime-s
 export const runtimeConfigKey = createServiceKey<RuntimeProviderConfig>("runtime-config");
 export const sessionStoreKey = createServiceKey<MemorySessionStore>("session-store");
 export const hostCommandRegistryKey = createServiceKey<HostCommandRegistry>("host-command-registry");
+export const commandRegistryKey = createServiceKey<CommandRegistry>("command-registry");
+export const cliParserKey = createServiceKey<CliParser>("cli-parser");
+export const modeRegistryKey = createServiceKey<ModeRegistry>("mode-registry");
+export const rendererRegistryKey = createServiceKey<RendererRegistry>("renderer-registry");
+export const themeRegistryKey = createServiceKey<ThemeRegistry>("theme-registry");
+export const keybindingRegistryKey = createServiceKey<KeybindingRegistry>("keybinding-registry");
+export const interactiveContextKey = createServiceKey<InteractiveContextService>("interactive-context");
 export const diagnosticsKey = createServiceKey<Diagnostics>("diagnostics");
 export const runtimeKey = createServiceKey<RuntimeService>("runtime");
 export const processExitKey = createServiceKey<ProcessExit>("process-exit");
@@ -204,6 +211,66 @@ export interface HostCommandRegistry {
 
 export interface HostCommand {
 	readonly run: (input: unknown, signal?: AbortSignal) => number | Promise<number>;
+}
+
+export interface CommandDefinition {
+	readonly name: string;
+	readonly description: string | ((locale: string) => string);
+	readonly run: (input: unknown, signal?: AbortSignal) => number | Promise<number>;
+}
+
+export interface CliParser<Parsed = unknown> {
+	readonly parse: (args: readonly string[]) => Parsed;
+	readonly help: (locale: string) => string;
+}
+
+export interface CommandRegistry {
+	readonly register: (command: CommandDefinition, owner?: RegistryOwner) => () => void;
+	readonly execute: (name: string, input: unknown, signal?: AbortSignal) => Promise<number>;
+	readonly list: () => readonly CommandDefinition[];
+	readonly help: (locale: string) => string;
+}
+
+export interface ModeDefinition {
+	readonly name: string;
+	readonly run: (input: unknown, signal?: AbortSignal) => number | Promise<number>;
+}
+
+export interface ModeRegistry {
+	readonly register: (mode: ModeDefinition, owner?: RegistryOwner) => () => void;
+	readonly execute: (name: string, input: unknown, signal?: AbortSignal) => Promise<number>;
+	readonly list: () => readonly ModeDefinition[];
+}
+
+export interface RendererDefinition {
+	readonly name: string;
+	readonly render: (event: unknown) => string | undefined;
+}
+
+export interface RendererRegistry {
+	readonly register: (renderer: RendererDefinition, owner?: RegistryOwner) => () => void;
+	readonly find: (name: string) => RendererDefinition | undefined;
+	readonly list: () => readonly RendererDefinition[];
+}
+
+export interface ThemeRegistry {
+	readonly register: (name: string, theme: unknown, owner?: RegistryOwner) => () => void;
+	readonly get: (name: string) => unknown | undefined;
+	readonly list: () => readonly { readonly name: string; readonly theme: unknown }[];
+}
+
+export interface KeybindingRegistry {
+	readonly set: (bindings: unknown, owner?: RegistryOwner) => () => void;
+	readonly snapshot: () => unknown;
+}
+
+export interface InteractiveContextService {
+	readonly sessionChoices: () => readonly unknown[];
+	readonly cancel: () => void;
+	readonly retry: () => void | Promise<void>;
+	readonly theme: () => string;
+	readonly setTheme: (theme: string) => void;
+	readonly keybindings: () => unknown;
 }
 
 export interface PrintRequest {
@@ -400,6 +467,135 @@ function createUsageMeter(): UsageMeter {
 		},
 		snapshot: () => ({ ...snapshot, cost: { ...snapshot.cost } }),
 	};
+}
+
+export function createCommandRegistry(): CommandRegistry {
+	const commands = new Map<string, CommandDefinition>();
+	return {
+		register(command) {
+			if (!/^[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?$/.test(command.name))
+				throw new Error(`Invalid command name: ${command.name}`);
+			if (commands.has(command.name)) throw new Error(`Duplicate command: ${command.name}`);
+			commands.set(command.name, command);
+			return () => {
+				if (commands.get(command.name) === command) commands.delete(command.name);
+			};
+		},
+		async execute(name, input, signal) {
+			const command = commands.get(name);
+			if (!command) throw new Error(`Unknown command: ${name}`);
+			return await command.run(input, signal);
+		},
+		list: () => Object.freeze([...commands.values()].sort((left, right) => left.name.localeCompare(right.name))),
+		help: (locale) =>
+			[...commands.values()]
+				.sort((left, right) => left.name.localeCompare(right.name))
+				.map((command) => {
+					const description =
+						typeof command.description === "function" ? command.description(locale) : command.description;
+					return `/${command.name}\t${description}`;
+				})
+				.join("\n"),
+	};
+}
+
+export function createModeRegistry(): ModeRegistry {
+	const modes = new Map<string, ModeDefinition>();
+	return {
+		register(mode) {
+			if (!/^[a-z][a-z0-9-]*$/.test(mode.name)) throw new Error(`Invalid mode name: ${mode.name}`);
+			if (modes.has(mode.name)) throw new Error(`Duplicate mode: ${mode.name}`);
+			modes.set(mode.name, mode);
+			return () => {
+				if (modes.get(mode.name) === mode) modes.delete(mode.name);
+			};
+		},
+		async execute(name, input, signal) {
+			const mode = modes.get(name);
+			if (!mode) throw new Error(`Unknown mode: ${name}`);
+			return await mode.run(input, signal);
+		},
+		list: () => Object.freeze([...modes.values()].sort((left, right) => left.name.localeCompare(right.name))),
+	};
+}
+
+export function createRendererRegistry(): RendererRegistry {
+	const renderers = new Map<string, RendererDefinition>();
+	return {
+		register(renderer) {
+			if (renderers.has(renderer.name)) throw new Error(`Duplicate renderer: ${renderer.name}`);
+			renderers.set(renderer.name, renderer);
+			return () => {
+				if (renderers.get(renderer.name) === renderer) renderers.delete(renderer.name);
+			};
+		},
+		find: (name) => renderers.get(name),
+		list: () => Object.freeze([...renderers.values()].sort((left, right) => left.name.localeCompare(right.name))),
+	};
+}
+
+function createThemeRegistry(): ThemeRegistry {
+	const themes = new Map<string, unknown>();
+	return {
+		register(name, theme) {
+			if (themes.has(name)) throw new Error(`Duplicate theme: ${name}`);
+			themes.set(name, theme);
+			return () => {
+				if (themes.get(name) === theme) themes.delete(name);
+			};
+		},
+		get: (name) => themes.get(name),
+		list: () => Object.freeze([...themes].map(([name, theme]) => ({ name, theme }))),
+	};
+}
+
+function createKeybindingRegistry(): KeybindingRegistry {
+	let current: unknown;
+	return {
+		set(bindings) {
+			const previous = current;
+			current = bindings;
+			return () => {
+				if (current === bindings) current = previous;
+			};
+		},
+		snapshot: () => current,
+	};
+}
+
+function commandHost(name: string, input: unknown): Promise<number> {
+	if (typeof input !== "object" || input === null || !("host" in input))
+		return Promise.reject(new Error(`Command ${name} requires an interactive command host`));
+	const host = input.host;
+	if (typeof host !== "object" || host === null || !("runCommand" in host) || typeof host.runCommand !== "function")
+		return Promise.reject(new Error(`Command ${name} received an invalid interactive command host`));
+	const args = "args" in input && typeof input.args === "string" ? input.args : "";
+	return Promise.resolve(host.runCommand(name, args));
+}
+
+function commandDefinition(name: string, description: string): CommandDefinition {
+	return { name, description, run: (input) => commandHost(name, input) };
+}
+
+export function createBuiltinCommandRegistry(): CommandRegistry {
+	const registry = createCommandRegistry();
+	for (const [name, description] of [
+		["help", "Show available commands"],
+		["clear", "Clear visible messages"],
+		["model", "Choose a model"],
+		["session", "Choose a session"],
+		["tree", "Browse session history"],
+		["theme", "Choose a theme"],
+		["settings", "Open settings"],
+		["login", "Configure a Provider"],
+		["logout", "Remove Provider credentials"],
+		["compact", "Compact context"],
+		["usage", "Show usage"],
+		["retry", "Retry the last prompt"],
+		["steer", "Steer the running Agent"],
+	] as const)
+		registry.register(commandDefinition(name, description));
+	return registry;
 }
 
 export const providerRegistry: PluginDefinition = {
@@ -708,6 +904,209 @@ export const bootstrap: PluginDefinition = {
 	},
 };
 
+export const cliParser: PluginDefinition = {
+	apiVersion: 1,
+	name: "cli-parser",
+	version: "0.1.7",
+	apply(context) {
+		const commands = context.require(commandRegistryKey);
+		context.set(cliParserKey, {
+			parse: (args) => [...args],
+			help: (locale) => commands.help(locale),
+		});
+	},
+};
+
+export const commandCore: PluginDefinition = {
+	apiVersion: 1,
+	name: "command-core",
+	version: "0.1.7",
+	apply(context) {
+		context.set(commandRegistryKey, createCommandRegistry());
+		context.set(modeRegistryKey, createModeRegistry());
+		context.set(rendererRegistryKey, createRendererRegistry());
+		context.set(themeRegistryKey, createThemeRegistry());
+		context.set(keybindingRegistryKey, createKeybindingRegistry());
+	},
+};
+
+function registerCommands(
+	context: Parameters<PluginDefinition["apply"]>[0],
+	names: readonly [string, string][],
+	fiber: Parameters<PluginDefinition["apply"]>[2],
+): void {
+	const registry = context.require(commandRegistryKey);
+	for (const [name, description] of names) fiber.addDisposer(registry.register(commandDefinition(name, description)));
+}
+
+export const commandSession: PluginDefinition = {
+	apiVersion: 1,
+	name: "command-session",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerCommands(
+			context,
+			[
+				["session", "Choose a session"],
+				["tree", "Browse session history"],
+			],
+			fiber,
+		);
+	},
+};
+
+export const commandModel: PluginDefinition = {
+	apiVersion: 1,
+	name: "command-model",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerCommands(
+			context,
+			[
+				["model", "Choose a model"],
+				["login", "Configure a Provider"],
+				["logout", "Remove Provider credentials"],
+			],
+			fiber,
+		);
+	},
+};
+
+export const commandSettings: PluginDefinition = {
+	apiVersion: 1,
+	name: "command-settings",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerCommands(
+			context,
+			[
+				["settings", "Open settings"],
+				["theme", "Choose a theme"],
+			],
+			fiber,
+		);
+	},
+};
+
+export const commandCompact: PluginDefinition = {
+	apiVersion: 1,
+	name: "command-compact",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerCommands(
+			context,
+			[
+				["compact", "Compact context"],
+				["usage", "Show usage"],
+				["retry", "Retry the last prompt"],
+			],
+			fiber,
+		);
+	},
+};
+
+export const commandInteractiveCore: PluginDefinition = {
+	apiVersion: 1,
+	name: "command-interactive-core",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerCommands(
+			context,
+			[
+				["help", "Show available commands"],
+				["clear", "Clear visible messages"],
+				["steer", "Steer the running Agent"],
+			],
+			fiber,
+		);
+	},
+};
+
+export const modeJson: PluginDefinition = {
+	apiVersion: 1,
+	name: "mode-json",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const dispose = context.require(modeRegistryKey).register({
+			name: "json",
+			run: (input) => runModeInput("json", input),
+		});
+		fiber.addDisposer(dispose);
+	},
+};
+
+export const modeInteractive: PluginDefinition = {
+	apiVersion: 1,
+	name: "mode-interactive",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const dispose = context.require(modeRegistryKey).register({
+			name: "interactive",
+			run: (input) => runModeInput("interactive", input),
+		});
+		fiber.addDisposer(dispose);
+	},
+};
+
+function runModeInput(name: string, input: unknown): Promise<number> {
+	if (typeof input !== "object" || input === null || !("run" in input) || typeof input.run !== "function")
+		return Promise.reject(new Error(`Mode ${name} requires a mode runner`));
+	return Promise.resolve(input.run());
+}
+
+export const tuiRenderer: PluginDefinition = {
+	apiVersion: 1,
+	name: "tui-renderer",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const dispose = context.require(rendererRegistryKey).register({ name: "interactive", render: () => undefined });
+		fiber.addDisposer(dispose);
+	},
+};
+
+export const theme: PluginDefinition = {
+	apiVersion: 1,
+	name: "theme",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const registry = context.require(themeRegistryKey);
+		fiber.addDisposer(registry.register("dark", { name: "dark" }));
+		fiber.addDisposer(registry.register("light", { name: "light" }));
+	},
+};
+
+export const outputJson: PluginDefinition = {
+	apiVersion: 1,
+	name: "output-json",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const dispose = context.require(rendererRegistryKey).register({
+			name: "json",
+			render: (event) => JSON.stringify({ version: 2, event }),
+		});
+		fiber.addDisposer(dispose);
+	},
+};
+
+export const interactiveContext: PluginDefinition = {
+	apiVersion: 1,
+	name: "interactive-context",
+	version: "0.1.7",
+	apply(context) {
+		let selectedTheme = "dark";
+		context.set(interactiveContextKey, {
+			sessionChoices: () => [],
+			cancel: () => undefined,
+			retry: () => undefined,
+			theme: () => selectedTheme,
+			setTheme: (value) => {
+				selectedTheme = value;
+			},
+			keybindings: () => context.get(keybindingRegistryKey)?.snapshot(),
+		});
+	},
+};
+
 export const runtime: PluginDefinition = {
 	apiVersion: 1,
 	name: "runtime",
@@ -988,7 +1387,7 @@ export const modePrint: PluginDefinition = {
 	version: "0.1.7",
 	apply(context, _config, fiber) {
 		const commands = context.require(hostCommandRegistryKey);
-		const dispose = commands.register("print", async (input: unknown, signal?: AbortSignal): Promise<number> => {
+		const run = async (input: unknown, signal?: AbortSignal): Promise<number> => {
 			if (typeof input !== "object" || input === null) throw new Error("Print request is invalid");
 			const request = input as PrintRequest;
 			if (typeof request.prompt !== "string" || typeof request.stdout !== "function")
@@ -1000,14 +1399,28 @@ export const modePrint: PluginDefinition = {
 				.join("");
 			request.stdout(`${text}\n`);
 			return 0;
-		});
+		};
+		const dispose = commands.register("print", run);
 		fiber.addDisposer(dispose);
+		const modes = context.get(modeRegistryKey);
+		if (modes) fiber.addDisposer(modes.register({ name: "print", run }));
 	},
 };
 
 export const minimalProfile = {
 	entries: [
 		{ id: "Bootstrap", name: "@di-code/builtins/bootstrap" },
+		{ id: "command-core", name: "@di-code/builtins/command-core", dependsOn: ["Bootstrap"] },
+		{ id: "cli-parser", name: "@di-code/builtins/cli-parser", dependsOn: ["command-core"] },
+		{ id: "command-session", name: "@di-code/builtins/command-session", dependsOn: ["command-core"] },
+		{ id: "command-model", name: "@di-code/builtins/command-model", dependsOn: ["command-core"] },
+		{ id: "command-settings", name: "@di-code/builtins/command-settings", dependsOn: ["command-core"] },
+		{ id: "command-compact", name: "@di-code/builtins/command-compact", dependsOn: ["command-core"] },
+		{ id: "command-interactive-core", name: "@di-code/builtins/command-interactive-core", dependsOn: ["command-core"] },
+		{ id: "theme", name: "@di-code/builtins/theme", dependsOn: ["command-core"] },
+		{ id: "interactive-context", name: "@di-code/builtins/interactive-context", dependsOn: ["command-core"] },
+		{ id: "tui-renderer", name: "@di-code/builtins/tui-renderer", dependsOn: ["command-core"] },
+		{ id: "output-json", name: "@di-code/builtins/output-json", dependsOn: ["command-core"] },
 		{ id: "runtime", name: "@di-code/builtins/runtime", dependsOn: ["Bootstrap"] },
 		{ id: "diagnostics", name: "@di-code/builtins/diagnostics", dependsOn: ["runtime"] },
 		{ id: "process-exit", name: "@di-code/builtins/process-exit", dependsOn: ["runtime"] },
@@ -1097,12 +1510,27 @@ export const minimalProfile = {
 			name: "@di-code/builtins/agent-session",
 			dependsOn: ["agent-loop", "tool-registry", "system-prompt", "compaction-basic"],
 		},
-		{ id: "mode-print", name: "@di-code/builtins/mode-print", dependsOn: ["Bootstrap", "agent-loop"] },
+		{ id: "mode-print", name: "@di-code/builtins/mode-print", dependsOn: ["Bootstrap", "command-core", "agent-loop"] },
+		{ id: "mode-json", name: "@di-code/builtins/mode-json", dependsOn: ["command-core", "agent-loop"] },
+		{ id: "mode-interactive", name: "@di-code/builtins/mode-interactive", dependsOn: ["command-core", "agent-loop"] },
 	] as const,
 };
 
 export const pluginModules = {
 	Bootstrap: bootstrap,
+	cliParser,
+	commandCore,
+	commandSession,
+	commandModel,
+	commandSettings,
+	commandCompact,
+	commandInteractiveCore,
+	modeJson,
+	modeInteractive,
+	tuiRenderer,
+	theme,
+	outputJson,
+	interactiveContext,
 	runtime,
 	diagnostics,
 	processExit,

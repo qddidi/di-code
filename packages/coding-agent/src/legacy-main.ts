@@ -3,9 +3,10 @@ import { access, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Model, Provider } from "@di-code/ai";
+import { createBuiltinCommandRegistry, createModeRegistry, createRendererRegistry } from "@di-code/builtins";
 import type { McpServerConnectionStatus } from "@di-code/mcp";
-import { ProcessTerminal, TUI, truncateToWidth } from "@di-code/tui";
-import { type CliCommand, type CliDependencies, runCli } from "./cli.ts";
+import { truncateToWidth } from "@di-code/tui";
+import { type CliCommand, type CliDependencies, createCliParser, runCli } from "./cli.ts";
 import { loadImageInputs } from "./core/image-input.ts";
 import { loadResources } from "./core/resources/loader.ts";
 import { SessionManager } from "./core/session/session-manager.ts";
@@ -16,9 +17,10 @@ import { ProjectTrustManager } from "./extensions/trust.ts";
 import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
 import { addMcpConfig, getMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "./mcp/config.ts";
 import { loadProjectMcp } from "./mcp/loader.ts";
-import { InteractiveMode } from "./modes/interactive.ts";
-import { runJsonMode } from "./modes/json.ts";
-import { type PrintIo, runPrintMode } from "./modes/print.ts";
+import { runInteractiveMode } from "./modes/interactive-entry.ts";
+import { runJsonModeEntry } from "./modes/json-entry.ts";
+import type { PrintIo } from "./modes/print.ts";
+import { runPrintModeEntry } from "./modes/print-entry.ts";
 import { loadPlugins, type PluginLoadStatus } from "./plugins/loader.ts";
 import { PluginManager } from "./plugins/manager.ts";
 import type { StartupConfiguration } from "./startup.ts";
@@ -309,6 +311,7 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 		stderr: options.stderr,
 		version: options.version,
 		locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
+		parser: createCliParser(),
 		plugin: async (command) => {
 			const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 			const manager = new PluginManager({ agentDir });
@@ -510,87 +513,137 @@ export async function runMain(args: readonly string[], options: MainOptions): Pr
 				prompt: async (text: string) => session.promptWithImages(text, await loadImageInputs(imagePaths, allowedRoot)),
 				subscribe: session.subscribe.bind(session),
 			};
-			if (command.mode === "json") {
-				await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
-				try {
-					return await runJsonMode(command.prompt, promptRunner, options);
-				} finally {
-					await extensions.host.emit({ type: "session_shutdown", reason: "user" });
-					await mcp.manager.close();
-				}
-			}
-			if (command.mode === "interactive") {
-				const terminal = new ProcessTerminal();
-				const tui = new TUI(terminal);
-				const mode = new InteractiveMode({
-					session,
-					tui,
-					agentDir,
-					locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
-					onExit: () => {
-						void mcp.manager.close();
-					},
-					extensionHost: extensions.host,
-					...(options.startupConfiguration
-						? { providerOnboarding: { configuration: options.startupConfiguration, agentDir } }
-						: {}),
-					sessions: [
-						{
-							id: "new-session",
-							label: translate(options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE, "newSession"),
-							description: translate(
-								options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
-								"newSessionDescription",
-							),
-							open: async () => {
-								const filePath = newSessionPath(dirname(sessionFile), now);
-								const nextManager = await SessionManager.create({
-									filePath,
-									cwd: allowedRoot,
-									now,
-									deferCreate: true,
-								});
-								return new AgentSession({
-									allowedRoot,
-									provider: runtime.provider,
-									model: runtime.model,
-									...(thinkingLevel === undefined ? {} : { thinkingLevel }),
-									systemPrompt,
-									skills: resources.skills,
-									now: options.now,
-									sessionManager: nextManager,
-									extensionHost: extensions.host,
-									externalTools: mcp.tools,
-								});
-							},
+			const modes = createModeRegistry();
+			const renderers = createRendererRegistry();
+			renderers.register({ name: "json", render: (event) => JSON.stringify({ version: 2, event }) });
+			const commandRegistry = (() => {
+				const registry = createBuiltinCommandRegistry();
+				for (const command of extensions.host.listCommands()) {
+					if (registry.list().some((entry) => entry.name === command.name)) continue;
+					registry.register({
+						name: command.name,
+						description: command.description,
+						run: (input) => {
+							const args =
+								typeof input === "object" && input !== null && "args" in input && typeof input.args === "string"
+									? input.args
+									: "";
+							return extensions.host.runCommand(command.name, args).then(() => 0);
 						},
-						...(await sessionChoices(dirname(sessionFile), sessionFile, async (filePath) => {
-							const nextManager = await SessionManager.open(filePath, { now });
-							return new AgentSession({
-								allowedRoot,
-								provider: runtime.provider,
-								model: runtime.model,
-								...(thinkingLevel === undefined ? {} : { thinkingLevel }),
-								systemPrompt,
-								skills: resources.skills,
-								now: options.now,
-								sessionManager: nextManager,
-								extensionHost: extensions.host,
-								externalTools: mcp.tools,
-							});
-						})),
-					],
-				});
-				mode.start(command.prompt);
-				return 0;
-			}
-			await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
-			try {
-				return await runPrintMode(command.prompt, promptRunner, options);
-			} finally {
-				await extensions.host.emit({ type: "session_shutdown", reason: "user" });
-				await mcp.manager.close();
-			}
+					});
+				}
+				return registry;
+			})();
+			const sessions = [
+				{
+					id: "new-session",
+					label: translate(options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE, "newSession"),
+					description: translate(
+						options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
+						"newSessionDescription",
+					),
+					open: async () => {
+						const filePath = newSessionPath(dirname(sessionFile), now);
+						const nextManager = await SessionManager.create({ filePath, cwd: allowedRoot, now, deferCreate: true });
+						return new AgentSession({
+							allowedRoot,
+							provider: runtime.provider,
+							model: runtime.model,
+							...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+							systemPrompt,
+							skills: resources.skills,
+							now: options.now,
+							sessionManager: nextManager,
+							extensionHost: extensions.host,
+							externalTools: mcp.tools,
+						});
+					},
+				},
+				...(await sessionChoices(dirname(sessionFile), sessionFile, async (filePath) => {
+					const nextManager = await SessionManager.open(filePath, { now });
+					return new AgentSession({
+						allowedRoot,
+						provider: runtime.provider,
+						model: runtime.model,
+						...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+						systemPrompt,
+						skills: resources.skills,
+						now: options.now,
+						sessionManager: nextManager,
+						extensionHost: extensions.host,
+						externalTools: mcp.tools,
+					});
+				})),
+			];
+			let interactiveMode: import("./modes/interactive.ts").InteractiveMode | undefined;
+			const interactiveContext = {
+				sessionChoices: () => sessions,
+				cancel: () => interactiveMode?.cancelActivePrompt(),
+				retry: () => interactiveMode?.retryLastPrompt(),
+				theme: () => "dark",
+				setTheme: (_value: string) => undefined,
+				keybindings: () => undefined,
+			};
+			modes.register({
+				name: "json",
+				run: async () => {
+					await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+					try {
+						return await runJsonModeEntry({
+							prompt: command.prompt,
+							runner: promptRunner,
+							io: options,
+							renderer: renderers.find("json"),
+							onStart: () => undefined,
+							onStop: () => undefined,
+						});
+					} finally {
+						await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+						await mcp.manager.close();
+					}
+				},
+			});
+			modes.register({
+				name: "interactive",
+				run: async () => {
+					const result = runInteractiveMode({
+						session,
+						agentDir,
+						locale: options.locale ?? options.startupConfiguration?.locale ?? DEFAULT_LOCALE,
+						commandRegistry,
+						context: interactiveContext,
+						onCreated: (mode) => {
+							interactiveMode = mode;
+						},
+						onExit: () => void mcp.manager.close(),
+						extensionHost: extensions.host,
+						...(options.startupConfiguration
+							? { providerOnboarding: { configuration: options.startupConfiguration, agentDir } }
+							: {}),
+						initialPrompt: command.prompt,
+					});
+					return result;
+				},
+			});
+			modes.register({
+				name: "print",
+				run: async () => {
+					await extensions.host.emit({ type: "session_start", cwd: allowedRoot });
+					try {
+						return await runPrintModeEntry({
+							prompt: command.prompt,
+							runner: promptRunner,
+							io: options,
+							onStart: () => undefined,
+							onStop: () => undefined,
+						});
+					} finally {
+						await extensions.host.emit({ type: "session_shutdown", reason: "user" });
+						await mcp.manager.close();
+					}
+				},
+			});
+			return modes.execute(command.mode, {});
 		},
 	};
 

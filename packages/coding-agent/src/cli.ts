@@ -1,3 +1,4 @@
+import type { CliParser } from "@di-code/builtins";
 import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
 
 export type OutputMode = "print" | "json" | "interactive";
@@ -273,6 +274,14 @@ ${t("options")}
 `;
 }
 
+/** Product-owned parser service consumed by the CLI composition entry. */
+export function createCliParser(): CliParser<CliCommand> {
+	return {
+		parse: (args) => parseCliArgs(args),
+		help: (locale) => helpText(locale === "zh-CN" ? "zh-CN" : "en"),
+	};
+}
+
 export interface CliDependencies {
 	stdout(text: string): void;
 	stderr(text: string): void;
@@ -281,12 +290,13 @@ export interface CliDependencies {
 	mcp?(command: Extract<CliCommand, { kind: "mcp" }>): Promise<number>;
 	readonly version: string;
 	readonly locale?: Locale;
+	readonly parser?: CliParser<CliCommand>;
 }
 
 export async function runCli(args: readonly string[], dependencies: CliDependencies): Promise<number> {
 	let command: CliCommand;
 	try {
-		command = parseCliArgs(args);
+		command = dependencies.parser?.parse(args) ?? parseCliArgs(args);
 	} catch (cause) {
 		if (cause instanceof CliUsageError) {
 			dependencies.stderr(`${cause.message}\n`);
@@ -297,7 +307,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
 
 	switch (command.kind) {
 		case "help":
-			dependencies.stdout(helpText(dependencies.locale ?? DEFAULT_LOCALE));
+			dependencies.stdout(
+				dependencies.parser?.help(dependencies.locale ?? DEFAULT_LOCALE) ??
+					helpText(dependencies.locale ?? DEFAULT_LOCALE),
+			);
 			return 0;
 		case "plugin":
 			if (!dependencies.plugin) throw new Error("Plugin command handler is unavailable.");

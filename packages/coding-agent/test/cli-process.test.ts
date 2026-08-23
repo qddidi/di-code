@@ -82,9 +82,15 @@ describe("CLI process entry", () => {
 	it("writes versioned JSON events", async () => {
 		const result = await runCli(["--mode", "json", "hello"]);
 
-		expect(result.code).toBe(1);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("minimal profile supports only --print");
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		const records = result.stdout
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { version: number; event: { type: string } });
+		expect(records.length).toBeGreaterThan(0);
+		expect(records.every((record) => record.version === 2)).toBe(true);
+		expect(records.at(-1)?.event.type).toBe("agent_end");
 	});
 
 	it("keeps usage errors off stdout", async () => {
