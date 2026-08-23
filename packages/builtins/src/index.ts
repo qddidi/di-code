@@ -13,31 +13,26 @@ import {
 	createZhipuProvider,
 	MODELS,
 } from "@di-code/ai";
-import {
-	ContributionRegistry,
-	createServiceKey,
-	type PluginDefinition,
-	type RegistryOwner,
-	type ToolSchema,
-} from "@di-code/plugin-runtime";
+import { createServiceKey, type PluginDefinition, type RegistryOwner } from "@di-code/plugin-runtime";
 import { createBashTool, createLocalBashOperations } from "./tool-bash-implementation.ts";
-import {
-	createDefaultToolCapabilities,
-	type NetworkCapability,
-	type ProcessCapability,
-	type RuntimeAgentTool,
-	type ToolApprovalCapability,
-	type ToolCapabilitySnapshot,
-	type ToolFactory,
-	type ToolOutputCapability,
-	type ToolPolicyCapability,
-	type WorkspaceCapability,
+import type {
+	NetworkCapability,
+	ProcessCapability,
+	RuntimeAgentTool,
+	ToolApprovalCapability,
+	ToolCapabilitySnapshot,
+	ToolFactory,
+	ToolOutputCapability,
+	ToolPolicyCapability,
+	WorkspaceCapability,
 } from "./tool-capabilities.ts";
 import { createEditTool } from "./tool-edit-implementation.ts";
 import { createGlobTool } from "./tool-glob-implementation.ts";
 import { createGrepTool } from "./tool-grep-implementation.ts";
 import { createLoadSkillTool } from "./tool-load-skill-implementation.ts";
+import { toolRead } from "./tool-read.ts";
 import { createReadTool } from "./tool-read-implementation.ts";
+import { createToolRegistry, toolRegistry, toolRegistryKey } from "./tool-registry.ts";
 import { createWriteTool } from "./tool-write-implementation.ts";
 
 export * from "./edit-diff.ts";
@@ -85,11 +80,8 @@ export interface ProviderRegistry {
 	readonly select: (providerId: string, modelId?: string) => ProviderSelection;
 }
 
-export interface ToolRegistry {
-	readonly register: (tool: RuntimeAgentTool, owner?: RegistryOwner) => () => void;
-	readonly registerFactory: (name: string, factory: ToolFactory, owner?: RegistryOwner) => () => void;
-	readonly snapshot: (capabilities?: ToolCapabilitySnapshot) => readonly RuntimeAgentTool[];
-}
+export { type ToolRegistry, toolRegistry, toolRegistryKey } from "./tool-registry.ts";
+export { toolRead };
 
 export interface SessionStoreSnapshot {
 	readonly append?: (record: unknown) => void | Promise<void>;
@@ -147,7 +139,6 @@ export interface ContextBudgetService {
 }
 
 export const providerRegistryKey = createServiceKey<ProviderRegistry>("provider-registry");
-export const toolRegistryKey = createServiceKey<ToolRegistry>("tool-registry");
 export const workspaceCapabilityKey = createServiceKey<WorkspaceCapability>("workspace-capability");
 export const processCapabilityKey = createServiceKey<ProcessCapability>("process-capability");
 export const networkCapabilityKey = createServiceKey<NetworkCapability>("network-capability");
@@ -342,67 +333,6 @@ function createRegistry(): ProviderRegistry {
 				modelId === undefined ? provider.models[0] : provider.models.find((candidate) => candidate.id === modelId);
 			if (!model) throw new Error(`Unknown model "${modelId ?? ""}" for provider "${providerId}"`);
 			return { provider, model };
-		},
-	};
-}
-
-function createToolRegistry(): ToolRegistry {
-	const registry = new ContributionRegistry();
-	const factories = new Map<string, ToolFactory>();
-	const registeredTools = new Map<string, RuntimeAgentTool>();
-	const defaultCapabilities = createDefaultToolCapabilities(process.cwd());
-	return {
-		register(tool, owner) {
-			const registryOwner = owner ?? { fiberId: "context", pluginName: "context" };
-			const dispose = registry.register(
-				{
-					kind: "tool",
-					name: tool.name,
-					description: tool.description,
-					schema: tool.parameters as unknown as ToolSchema,
-					execute: (input, signal) => tool.execute("context", input as never, signal),
-				},
-				registryOwner,
-			);
-			registeredTools.set(tool.name, tool);
-			return () => {
-				if (registeredTools.get(tool.name) === tool) registeredTools.delete(tool.name);
-				dispose();
-			};
-		},
-		registerFactory(name, factory) {
-			if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid tool name: ${name}`);
-			if (factories.has(name)) throw new Error(`Reserved tool name: ${name}`);
-			factories.set(name, factory);
-			return () => {
-				if (factories.get(name) === factory) factories.delete(name);
-			};
-		},
-		snapshot: (capabilities = defaultCapabilities) => {
-			const staticTools = registry.list("tool").flatMap((entry) => {
-				const tool = registeredTools.get(entry.value.name);
-				return tool === undefined ? [] : [tool];
-			});
-			const factoryTools = [...factories.values()].flatMap((factory) => {
-				const tool = factory(capabilities);
-				return tool === undefined ? [] : [tool];
-			});
-			const tools = [...staticTools, ...factoryTools].sort((left, right) => left.name.localeCompare(right.name));
-			const names = new Set<string>();
-			for (const tool of tools) {
-				if (names.has(tool.name)) throw new Error(`Duplicate tool registration: ${tool.name}`);
-				names.add(tool.name);
-			}
-			return Object.freeze(
-				tools.map((tool) => ({
-					...tool,
-					execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
-						await capabilities.policy.authorize(tool.name, parameters, signal);
-						await capabilities.approval.request(tool.name, parameters, signal);
-						return capabilities.output.present(await tool.execute(toolCallId, parameters, signal));
-					},
-				})),
-			);
 		},
 	};
 }
@@ -622,15 +552,6 @@ export const providerRegistry: PluginDefinition = {
 	},
 };
 
-export const toolRegistry: PluginDefinition = {
-	apiVersion: 1,
-	name: "tool-registry",
-	version: "0.1.7",
-	apply(context) {
-		context.set(toolRegistryKey, createToolRegistry());
-	},
-};
-
 function registerToolFactory(
 	context: Parameters<PluginDefinition["apply"]>[0],
 	fiber: Parameters<PluginDefinition["apply"]>[2],
@@ -696,15 +617,6 @@ export const toolOutput: PluginDefinition = {
 	version: "0.1.7",
 	apply(context) {
 		context.set(toolOutputKey, { present: (result) => result });
-	},
-};
-
-export const toolRead: PluginDefinition = {
-	apiVersion: 1,
-	name: "tool-read",
-	version: "0.1.7",
-	apply(context, _config, fiber) {
-		registerToolFactory(context, fiber, "read", defaultToolFactories.read);
 	},
 };
 

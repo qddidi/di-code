@@ -176,7 +176,8 @@ async function executeToolCall(
 		content = [{ type: "text", text: "Tool execution aborted." }];
 		isError = true;
 	} else if (!tool) {
-		content = [{ type: "text", text: `Unknown tool "${toolCall.name}".` }];
+		content = [{ type: "text", text: `tool_unavailable: ${toolCall.name}` }];
+		details = { code: "tool_unavailable" };
 		isError = true;
 	} else {
 		try {

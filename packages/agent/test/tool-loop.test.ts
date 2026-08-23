@@ -91,7 +91,8 @@ describe("tool loop", () => {
 		expect(toolResult(agent.transcript, "missing-1")).toMatchObject({
 			toolName: "missing",
 			isError: true,
-			content: [{ type: "text", text: 'Unknown tool "missing".' }],
+			content: [{ type: "text", text: "tool_unavailable: missing" }],
+			details: { code: "tool_unavailable" },
 		});
 		expect(faux.pendingResponses()).toBe(0);
 	});
