@@ -126,6 +126,58 @@
 		"./agent-session": {
 			"types": "./dist/agent-session.d.ts",
 			"import": "./dist/agent-session.js"
+		},
+		"./workspace": {
+			"types": "./dist/tool-workspace.d.ts",
+			"import": "./dist/tool-workspace.js"
+		},
+		"./process": {
+			"types": "./dist/process.d.ts",
+			"import": "./dist/process.js"
+		},
+		"./network": {
+			"types": "./dist/network.d.ts",
+			"import": "./dist/network.js"
+		},
+		"./tool-read": {
+			"types": "./dist/tool-read.d.ts",
+			"import": "./dist/tool-read.js"
+		},
+		"./tool-write": {
+			"types": "./dist/tool-write.d.ts",
+			"import": "./dist/tool-write.js"
+		},
+		"./tool-edit": {
+			"types": "./dist/tool-edit.d.ts",
+			"import": "./dist/tool-edit.js"
+		},
+		"./tool-bash": {
+			"types": "./dist/tool-bash.d.ts",
+			"import": "./dist/tool-bash.js"
+		},
+		"./tool-glob": {
+			"types": "./dist/tool-glob.d.ts",
+			"import": "./dist/tool-glob.js"
+		},
+		"./tool-grep": {
+			"types": "./dist/tool-grep.d.ts",
+			"import": "./dist/tool-grep.js"
+		},
+		"./tool-load-skill": {
+			"types": "./dist/tool-load-skill.d.ts",
+			"import": "./dist/tool-load-skill.js"
+		},
+		"./tool-approval": {
+			"types": "./dist/tool-approval.d.ts",
+			"import": "./dist/tool-approval.js"
+		},
+		"./tool-policy": {
+			"types": "./dist/tool-policy.d.ts",
+			"import": "./dist/tool-policy.js"
+		},
+		"./tool-output": {
+			"types": "./dist/tool-output.d.ts",
+			"import": "./dist/tool-output.js"
 		}
 	},
 	"files": [
@@ -139,7 +191,9 @@
 	"dependencies": {
 		"@di-code/agent": "0.1.7",
 		"@di-code/ai": "0.1.7",
-		"@di-code/plugin-runtime": "0.1.7"
+		"@di-code/plugin-runtime": "0.1.7",
+		"@di-code/skills": "0.1.7",
+		"diff": "8.0.4"
 	},
 	"engines": {
 		"node": ">=22.19.0"

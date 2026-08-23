@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Agent, AgentEvent, AgentTool } from "@di-code/agent";
+import type { Agent, AgentEvent } from "@di-code/agent";
 import { Agent as AgentImpl } from "@di-code/agent";
 import type { AssistantMessage, FauxResponse, Message, Model, Provider, ThinkingLevel, Usage } from "@di-code/ai";
 import {
@@ -20,6 +20,38 @@ import {
 	type RegistryOwner,
 	type ToolSchema,
 } from "@di-code/plugin-runtime";
+import { createBashTool, createLocalBashOperations } from "./tool-bash-implementation.ts";
+import {
+	createDefaultToolCapabilities,
+	type NetworkCapability,
+	type ProcessCapability,
+	type RuntimeAgentTool,
+	type ToolApprovalCapability,
+	type ToolCapabilitySnapshot,
+	type ToolFactory,
+	type ToolOutputCapability,
+	type ToolPolicyCapability,
+	type WorkspaceCapability,
+} from "./tool-capabilities.ts";
+import { createEditTool } from "./tool-edit-implementation.ts";
+import { createGlobTool } from "./tool-glob-implementation.ts";
+import { createGrepTool } from "./tool-grep-implementation.ts";
+import { createLoadSkillTool } from "./tool-load-skill-implementation.ts";
+import { createReadTool } from "./tool-read-implementation.ts";
+import { createWriteTool } from "./tool-write-implementation.ts";
+
+export * from "./edit-diff.ts";
+export * from "./file-mutation-queue.ts";
+export * from "./file-search.ts";
+export * from "./path-boundary.ts";
+export * from "./tool-bash-implementation.ts";
+export * from "./tool-capabilities.ts";
+export * from "./tool-edit-implementation.ts";
+export * from "./tool-glob-implementation.ts";
+export * from "./tool-grep-implementation.ts";
+export * from "./tool-load-skill-implementation.ts";
+export * from "./tool-read-implementation.ts";
+export * from "./tool-write-implementation.ts";
 
 export interface ProviderSelection {
 	readonly provider: Provider;
@@ -54,8 +86,9 @@ export interface ProviderRegistry {
 }
 
 export interface ToolRegistry {
-	readonly register: (tool: AgentTool, owner?: RegistryOwner) => () => void;
-	readonly snapshot: () => readonly AgentTool[];
+	readonly register: (tool: RuntimeAgentTool, owner?: RegistryOwner) => () => void;
+	readonly registerFactory: (name: string, factory: ToolFactory, owner?: RegistryOwner) => () => void;
+	readonly snapshot: (capabilities?: ToolCapabilitySnapshot) => readonly RuntimeAgentTool[];
 }
 
 export interface SessionStoreSnapshot {
@@ -115,6 +148,12 @@ export interface ContextBudgetService {
 
 export const providerRegistryKey = createServiceKey<ProviderRegistry>("provider-registry");
 export const toolRegistryKey = createServiceKey<ToolRegistry>("tool-registry");
+export const workspaceCapabilityKey = createServiceKey<WorkspaceCapability>("workspace-capability");
+export const processCapabilityKey = createServiceKey<ProcessCapability>("process-capability");
+export const networkCapabilityKey = createServiceKey<NetworkCapability>("network-capability");
+export const toolApprovalKey = createServiceKey<ToolApprovalCapability>("tool-approval");
+export const toolPolicyKey = createServiceKey<ToolPolicyCapability>("tool-policy");
+export const toolOutputKey = createServiceKey<ToolOutputCapability>("tool-output");
 export const sessionStoreRegistryKey = createServiceKey<SessionStoreSnapshot>("session-store");
 export const promptRegistryKey = createServiceKey<PromptRegistry>("prompt-registry");
 export const compactionRegistryKey = createServiceKey<CompactionRegistry>("compaction-registry");
@@ -227,10 +266,13 @@ function createRegistry(): ProviderRegistry {
 
 function createToolRegistry(): ToolRegistry {
 	const registry = new ContributionRegistry();
+	const factories = new Map<string, ToolFactory>();
+	const registeredTools = new Map<string, RuntimeAgentTool>();
+	const defaultCapabilities = createDefaultToolCapabilities(process.cwd());
 	return {
 		register(tool, owner) {
 			const registryOwner = owner ?? { fiberId: "context", pluginName: "context" };
-			return registry.register(
+			const dispose = registry.register(
 				{
 					kind: "tool",
 					name: tool.name,
@@ -240,10 +282,73 @@ function createToolRegistry(): ToolRegistry {
 				},
 				registryOwner,
 			);
+			registeredTools.set(tool.name, tool);
+			return () => {
+				if (registeredTools.get(tool.name) === tool) registeredTools.delete(tool.name);
+				dispose();
+			};
 		},
-		snapshot: () => registry.list("tool").map((entry) => entry.value as unknown as AgentTool),
+		registerFactory(name, factory) {
+			if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid tool name: ${name}`);
+			if (factories.has(name)) throw new Error(`Reserved tool name: ${name}`);
+			factories.set(name, factory);
+			return () => {
+				if (factories.get(name) === factory) factories.delete(name);
+			};
+		},
+		snapshot: (capabilities = defaultCapabilities) => {
+			const staticTools = registry.list("tool").flatMap((entry) => {
+				const tool = registeredTools.get(entry.value.name);
+				return tool === undefined ? [] : [tool];
+			});
+			const factoryTools = [...factories.values()].flatMap((factory) => {
+				const tool = factory(capabilities);
+				return tool === undefined ? [] : [tool];
+			});
+			const tools = [...staticTools, ...factoryTools].sort((left, right) => left.name.localeCompare(right.name));
+			const names = new Set<string>();
+			for (const tool of tools) {
+				if (names.has(tool.name)) throw new Error(`Duplicate tool registration: ${tool.name}`);
+				names.add(tool.name);
+			}
+			return Object.freeze(
+				tools.map((tool) => ({
+					...tool,
+					execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
+						await capabilities.policy.authorize(tool.name, parameters, signal);
+						await capabilities.approval.request(tool.name, parameters, signal);
+						return capabilities.output.present(await tool.execute(toolCallId, parameters, signal));
+					},
+				})),
+			);
+		},
 	};
 }
+
+/** Creates a tool registry populated by the built-in tool entries for legacy product sessions. */
+export function createBuiltinToolSnapshot(
+	capabilities: ToolCapabilitySnapshot,
+	extraTools: readonly RuntimeAgentTool[] = [],
+): readonly RuntimeAgentTool[] {
+	const registry = createToolRegistry();
+	for (const [name, factory] of Object.entries(defaultToolFactories)) registry.registerFactory(name, factory);
+	for (const tool of extraTools) registry.register(tool);
+	return registry.snapshot(capabilities);
+}
+
+const defaultToolFactories: Readonly<Record<string, ToolFactory>> = {
+	read: (capabilities) => createReadTool(capabilities.workspace.allowedRoot),
+	write: (capabilities) => createWriteTool(capabilities.workspace.allowedRoot),
+	edit: (capabilities) => createEditTool(capabilities.workspace.allowedRoot),
+	bash: (capabilities) =>
+		createBashTool(capabilities.workspace.allowedRoot, { operations: capabilities.process.bashOperations }),
+	glob: (capabilities) => createGlobTool(capabilities.workspace.allowedRoot),
+	grep: (capabilities) => createGrepTool(capabilities.workspace.allowedRoot),
+	load_skill: (capabilities) => {
+		const catalog = capabilities.skills;
+		return catalog?.listForModel().length === 0 || catalog === undefined ? undefined : createLoadSkillTool(catalog);
+	},
+};
 
 function createNamedRegistry<T>(
 	kind: "prompt" | "compaction" | "resource",
@@ -312,6 +417,137 @@ export const toolRegistry: PluginDefinition = {
 	version: "0.1.7",
 	apply(context) {
 		context.set(toolRegistryKey, createToolRegistry());
+	},
+};
+
+function registerToolFactory(
+	context: Parameters<PluginDefinition["apply"]>[0],
+	fiber: Parameters<PluginDefinition["apply"]>[2],
+	name: string,
+	factory: ToolFactory,
+): void {
+	const dispose = context.require(toolRegistryKey).registerFactory(name, factory);
+	fiber.addDisposer(dispose);
+}
+
+export interface WorkspaceConfig {
+	readonly allowedRoot?: string;
+}
+
+export const workspace: PluginDefinition<WorkspaceConfig> = {
+	apiVersion: 1,
+	name: "workspace",
+	version: "0.1.7",
+	apply(context, config) {
+		context.set(workspaceCapabilityKey, { allowedRoot: config?.allowedRoot ?? process.cwd() });
+	},
+};
+
+export const processCapability: PluginDefinition = {
+	apiVersion: 1,
+	name: "process",
+	version: "0.1.7",
+	apply(context) {
+		context.set(processCapabilityKey, { bashOperations: createLocalBashOperations() });
+	},
+};
+
+export const networkCapability: PluginDefinition = {
+	apiVersion: 1,
+	name: "network",
+	version: "0.1.7",
+	apply(context) {
+		context.set(networkCapabilityKey, { available: false });
+	},
+};
+
+export const toolApproval: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-approval",
+	version: "0.1.7",
+	apply(context) {
+		context.set(toolApprovalKey, { request: () => undefined });
+	},
+};
+
+export const toolPolicy: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-policy",
+	version: "0.1.7",
+	apply(context) {
+		context.set(toolPolicyKey, { authorize: () => undefined });
+	},
+};
+
+export const toolOutput: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-output",
+	version: "0.1.7",
+	apply(context) {
+		context.set(toolOutputKey, { present: (result) => result });
+	},
+};
+
+export const toolRead: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-read",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "read", defaultToolFactories.read);
+	},
+};
+
+export const toolWrite: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-write",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "write", defaultToolFactories.write);
+	},
+};
+
+export const toolEdit: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-edit",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "edit", defaultToolFactories.edit);
+	},
+};
+
+export const toolBash: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-bash",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "bash", defaultToolFactories.bash);
+	},
+};
+
+export const toolGlob: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-glob",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "glob", defaultToolFactories.glob);
+	},
+};
+
+export const toolGrep: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-grep",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "grep", defaultToolFactories.grep);
+	},
+};
+
+export const toolLoadSkill: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-load-skill",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "load_skill", defaultToolFactories.load_skill);
 	},
 };
 
@@ -720,7 +956,14 @@ export const agentLoop: PluginDefinition = {
 	apply(context, _config, fiber) {
 		const selected = context.require(runtimeSelectionKey).selected();
 		const memory = context.require(sessionStoreKey);
-		const tools = context.get(toolRegistryKey)?.snapshot();
+		const tools = context.get(toolRegistryKey)?.snapshot({
+			workspace: context.require(workspaceCapabilityKey),
+			process: context.require(processCapabilityKey),
+			network: context.require(networkCapabilityKey),
+			policy: context.require(toolPolicyKey),
+			approval: context.require(toolApprovalKey),
+			output: context.require(toolOutputKey),
+		});
 		const agent = new AgentImpl({ provider: selected.provider, model: selected.model, tools });
 		const unsubscribe = agent.subscribe((event: AgentEvent) => memory.append(event));
 		let closed = false;
@@ -811,6 +1054,19 @@ export const minimalProfile = {
 		},
 		{ id: "session-memory", name: "@di-code/builtins/session-memory", dependsOn: ["runtime"] },
 		{ id: "tool-registry", name: "@di-code/builtins/tool-registry", dependsOn: ["runtime"] },
+		{ id: "workspace", name: "@di-code/builtins/workspace", dependsOn: ["tool-registry"] },
+		{ id: "process", name: "@di-code/builtins/process", dependsOn: ["tool-registry"] },
+		{ id: "network", name: "@di-code/builtins/network", dependsOn: ["tool-registry"] },
+		{ id: "tool-approval", name: "@di-code/builtins/tool-approval", dependsOn: ["tool-registry"] },
+		{ id: "tool-policy", name: "@di-code/builtins/tool-policy", dependsOn: ["tool-registry"] },
+		{ id: "tool-output", name: "@di-code/builtins/tool-output", dependsOn: ["tool-registry"] },
+		{ id: "tool-read", name: "@di-code/builtins/tool-read", dependsOn: ["tool-registry", "workspace"] },
+		{ id: "tool-write", name: "@di-code/builtins/tool-write", dependsOn: ["tool-registry", "workspace"] },
+		{ id: "tool-edit", name: "@di-code/builtins/tool-edit", dependsOn: ["tool-registry", "workspace"] },
+		{ id: "tool-bash", name: "@di-code/builtins/tool-bash", dependsOn: ["tool-registry", "workspace"] },
+		{ id: "tool-glob", name: "@di-code/builtins/tool-glob", dependsOn: ["tool-registry", "workspace"] },
+		{ id: "tool-grep", name: "@di-code/builtins/tool-grep", dependsOn: ["tool-registry", "workspace"] },
+		{ id: "tool-load-skill", name: "@di-code/builtins/tool-load-skill", dependsOn: ["tool-registry", "workspace"] },
 		{ id: "session-store-jsonl", name: "@di-code/builtins/session-store-jsonl", dependsOn: ["runtime"] },
 		{ id: "session-tree", name: "@di-code/builtins/session-tree", dependsOn: ["session-store-jsonl"] },
 		{ id: "session-query", name: "@di-code/builtins/session-query", dependsOn: ["session-store-jsonl"] },
@@ -823,7 +1079,18 @@ export const minimalProfile = {
 		{
 			id: "agent-loop",
 			name: "@di-code/builtins/agent-loop",
-			dependsOn: ["runtime-selection", "provider-faux", "session-memory", "tool-registry"],
+			dependsOn: [
+				"runtime-selection",
+				"provider-faux",
+				"session-memory",
+				"tool-registry",
+				"workspace",
+				"process",
+				"network",
+				"tool-approval",
+				"tool-policy",
+				"tool-output",
+			],
 		},
 		{
 			id: "agent-session",

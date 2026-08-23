@@ -20,18 +20,12 @@ import type {
 	Usage,
 	UserContent,
 } from "@di-code/ai";
+import { createBuiltinToolSnapshot, createDefaultToolCapabilities } from "@di-code/builtins";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { ExtensionHost } from "../extensions/runtime.ts";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
 import type { SessionDiagnostic, SessionEntry, SessionTreeNode } from "./session/types.ts";
-import { createBashTool } from "./tools/bash.ts";
-import { createEditTool } from "./tools/edit.ts";
-import { createGlobTool } from "./tools/glob.ts";
-import { createGrepTool } from "./tools/grep.ts";
-import { createLoadSkillTool } from "./tools/load-skill.ts";
-import { createReadTool } from "./tools/read.ts";
-import { createWriteTool } from "./tools/write.ts";
 
 export interface AgentSessionCompactionOptions {
 	readonly enabled?: boolean;
@@ -191,14 +185,7 @@ export class AgentSession {
 			thinkingLevel: this.thinkingLevelValue,
 			systemPrompt: options.systemPrompt,
 			sessionId: this.sessionIdValue,
-			tools: [
-				createReadTool(options.allowedRoot),
-				createWriteTool(options.allowedRoot),
-				createEditTool(options.allowedRoot),
-				createBashTool(options.allowedRoot),
-				createGlobTool(options.allowedRoot),
-				createGrepTool(options.allowedRoot),
-				...(this.skillCatalog.listForModel().length > 0 ? [createLoadSkillTool(this.skillCatalog)] : []),
+			tools: createBuiltinToolSnapshot(createDefaultToolCapabilities(options.allowedRoot, this.skillCatalog), [
 				...(this.extensionHost?.listTools().map((tool) => ({
 					name: tool.name,
 					description: tool.description,
@@ -210,7 +197,7 @@ export class AgentSession {
 					},
 				})) ?? []),
 				...(options.externalTools ?? []),
-			],
+			]),
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,
