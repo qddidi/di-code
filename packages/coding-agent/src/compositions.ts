@@ -2,13 +2,30 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+	type CompositionDocument,
 	type CompositionEntry,
+	type CompositionLayer,
+	mergeCompositionLayers,
 	PluginInstallManager,
 	type PluginModule,
+	readCompositionFile,
 	resolvePackagePluginExport,
 } from "@di-code/plugin-loader";
 
 export type DefaultCompositionName = "base" | "interactive" | "print" | "json" | "rpc";
+
+export interface CompositionResolutionOptions {
+	/** Work root used for project composition discovery and the workspace capability. */
+	readonly cwd?: string;
+	/** User data root containing the optional user composition document. */
+	readonly agentDir?: string;
+	/** Explicit JSON or YAML composition document applied last. */
+	readonly compositionPath?: string;
+	/** Excludes the project composition document for this invocation. */
+	readonly includeProjectComposition?: boolean;
+	readonly observability?: boolean;
+	readonly allowedRoot?: string;
+}
 
 const baseEntries = [
 	{ id: "Bootstrap", name: "@di-code/builtins/bootstrap" },
@@ -169,6 +186,93 @@ export function resolveDefaultComposition(
 			: entry,
 	);
 	return Object.freeze(entries);
+}
+
+function isJsonObject(
+	value: CompositionEntry["config"],
+): value is Readonly<Record<string, import("@di-code/plugin-loader").JsonValue>> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function withWorkspaceRoot(
+	entries: readonly CompositionEntry[],
+	allowedRoot: string | undefined,
+): readonly CompositionEntry[] {
+	if (allowedRoot === undefined) return entries;
+	return entries.map((entry) =>
+		entry.id === "workspace"
+			? { ...entry, config: { ...(isJsonObject(entry.config) ? entry.config : {}), allowedRoot } }
+			: entry,
+	);
+}
+
+function markProjectEntries(document: CompositionDocument): CompositionDocument {
+	const mark = (entry: CompositionEntry): CompositionEntry => ({ ...entry, projectLocal: true });
+	return {
+		...(document.entries ? { entries: document.entries.map(mark) } : {}),
+		...(document.patches
+			? {
+					patches: document.patches.map((patch) =>
+						"entry" in patch && patch.entry !== undefined ? { ...patch, entry: mark(patch.entry) } : patch,
+					),
+				}
+			: {}),
+	};
+}
+
+function isMissingFile(cause: unknown): boolean {
+	return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
+}
+
+async function readOptionalComposition(filePath: string): Promise<CompositionDocument | undefined> {
+	try {
+		return await readCompositionFile(filePath);
+	} catch (cause) {
+		if (isMissingFile(cause)) return undefined;
+		const message = cause instanceof Error ? cause.message : String(cause);
+		throw new Error(`Failed to read composition ${filePath}: ${message}`, { cause });
+	}
+}
+
+async function readRequiredComposition(filePath: string): Promise<CompositionDocument> {
+	try {
+		return await readCompositionFile(filePath);
+	} catch (cause) {
+		const message = cause instanceof Error ? cause.message : String(cause);
+		throw new Error(`Failed to read composition ${filePath}: ${message}`, { cause });
+	}
+}
+
+/**
+ * Resolves built-in, user, project, and explicit composition layers in their fixed precedence order.
+ * Project entries are marked local so the Loader retains trust checks for entries added through project configuration.
+ */
+export async function resolveCompositionEntries(
+	name: DefaultCompositionName,
+	options: CompositionResolutionOptions = {},
+): Promise<readonly CompositionEntry[]> {
+	const cwd = resolve(options.cwd ?? process.cwd());
+	const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
+	const layers: CompositionLayer[] = [
+		{ name: "base", document: { entries: defaultCompositions.base } },
+		{
+			name: "mode",
+			document: {
+				entries: [...defaultCompositions[name], ...(options.observability ? observabilityEntries : [])],
+			},
+		},
+	];
+	const userComposition = await readOptionalComposition(join(agentDir, "composition.yml"));
+	if (userComposition !== undefined) layers.push({ name: "user", document: userComposition });
+	if (options.includeProjectComposition !== false) {
+		const projectComposition = await readOptionalComposition(join(cwd, ".di-code", "composition.yml"));
+		if (projectComposition !== undefined)
+			layers.push({ name: "project", document: markProjectEntries(projectComposition) });
+	}
+	if (options.compositionPath !== undefined) {
+		layers.push({ name: "explicit", document: await readRequiredComposition(resolve(cwd, options.compositionPath)) });
+	}
+	return Object.freeze(withWorkspaceRoot(mergeCompositionLayers(layers), options.allowedRoot));
 }
 
 /**

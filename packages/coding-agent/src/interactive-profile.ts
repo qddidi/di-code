@@ -14,7 +14,7 @@ import { ProcessTerminal } from "@di-code/tui";
 import { type CliCommand, createCliParser } from "./cli.ts";
 import {
 	importCompositionModule,
-	resolveDefaultComposition,
+	resolveCompositionEntries,
 	resolveManagedCompositionEntries,
 } from "./compositions.ts";
 import { loadResources } from "./core/resources/loader.ts";
@@ -207,13 +207,17 @@ export async function runInteractiveProfile(
 			mode: "interactive",
 			trustedProject: projectTrusted,
 		});
+		const compositionEntries = await resolveCompositionEntries(command.profile ?? command.mode, {
+			cwd,
+			agentDir,
+			...(command.compositionPath ? { compositionPath: command.compositionPath } : {}),
+			includeProjectComposition: projectTrusted && !command.noProjectPlugins,
+			allowedRoot: cwd,
+		});
 		const unsubscribe = context.events.subscribe((event) => options.onRuntimeEvent?.(event));
 		const loader = createCompositionLoader({
 			context,
-			entries: [
-				...resolveDefaultComposition("interactive", { allowedRoot: cwd }),
-				...(await resolveManagedCompositionEntries(agentDir)),
-			],
+			entries: [...compositionEntries, ...(await resolveManagedCompositionEntries(agentDir))],
 			importModule: options.importModule ?? importCompositionModule,
 			projectTrusted,
 		});

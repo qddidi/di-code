@@ -127,6 +127,28 @@ describe("parseCliArgs", () => {
 		);
 	});
 
+	it("parses composition selection without treating configuration paths as prompt text", () => {
+		expect(
+			parseCliArgs(["--profile", "json", "--composition", "configs/ci.yml", "--no-project-plugins", "hello"]),
+		).toEqual({
+			kind: "run",
+			mode: "json",
+			profile: "json",
+			compositionPath: "configs/ci.yml",
+			noProjectPlugins: true,
+			prompt: "hello",
+		});
+		expect(() => parseCliArgs(["--profile", "rpc", "hello"])).toThrow(
+			"Option --profile expects print, json, or interactive.",
+		);
+		expect(() => parseCliArgs(["--profile", "json", "--mode", "print", "hello"])).toThrow(
+			"Cannot combine --profile json with --mode print.",
+		);
+		expect(() => parseCliArgs(["--composition", "one.yml", "--composition", "two.yml", "hello"])).toThrow(
+			"Option --composition may only be used once.",
+		);
+	});
+
 	it("parses continue as an explicit request to resume the most recent session", () => {
 		expect(parseCliArgs(["--continue", "hello"])).toEqual({
 			kind: "run",
@@ -192,6 +214,7 @@ describe("runCli", () => {
 		expect(stdout.mock.calls[0]?.[0]).toContain("Usage: di-code");
 		expect(stdout.mock.calls[0]?.[0]).toContain("--continue, -c");
 		expect(stdout.mock.calls[0]?.[0]).toContain("--image <path>");
+		expect(stdout.mock.calls[0]?.[0]).toContain("--composition <path>");
 		expect(stdout.mock.calls[1]?.[0]).toBe("0.0.0\n");
 		expect(stderr).not.toHaveBeenCalled();
 	});

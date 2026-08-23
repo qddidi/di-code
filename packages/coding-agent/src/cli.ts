@@ -2,6 +2,7 @@ import type { CliParser } from "@di-code/builtins";
 import { DEFAULT_LOCALE, type Locale, translate } from "./i18n.ts";
 
 export type OutputMode = "print" | "json" | "interactive";
+export type CompositionProfile = OutputMode;
 
 export type CliCommand =
 	| { kind: "help" }
@@ -31,6 +32,12 @@ export type CliCommand =
 			imagePaths?: readonly string[];
 			noSkills?: true;
 			noContextFiles?: true;
+			/** Selects the composition matching the output mode. */
+			profile?: CompositionProfile;
+			/** An explicit composition document applied after user and project layers. */
+			compositionPath?: string;
+			/** Excludes the project composition layer without affecting user-managed plugins. */
+			noProjectPlugins?: true;
 			skillPaths?: readonly string[];
 			projectTrust?: boolean;
 	  };
@@ -82,6 +89,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 	let continueSession = false;
 	let noSkills = false;
 	let noContextFiles = false;
+	let profile: CompositionProfile | undefined;
+	let compositionPath: string | undefined;
+	let noProjectPlugins = false;
+	let modeWasSelected = false;
 	let projectTrust: boolean | undefined;
 	const skillPaths: string[] = [];
 	const imagePaths: string[] = [];
@@ -94,7 +105,11 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			continue;
 		}
 		if (argument === "--interactive") {
+			if (profile !== undefined && profile !== "interactive") {
+				throw new CliUsageError(`Cannot combine --profile ${profile} with --mode interactive.`);
+			}
 			mode = "interactive";
+			modeWasSelected = true;
 			continue;
 		}
 		if (argument === "-c" || argument === "--continue") {
@@ -107,6 +122,33 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		}
 		if (argument === "--no-context-files") {
 			noContextFiles = true;
+			continue;
+		}
+		if (argument === "--no-project-plugins") {
+			noProjectPlugins = true;
+			continue;
+		}
+		if (argument === "--profile") {
+			const value = args[index + 1];
+			if (value !== "print" && value !== "json" && value !== "interactive") {
+				throw new CliUsageError("Option --profile expects print, json, or interactive.");
+			}
+			if (modeWasSelected && mode !== value) {
+				throw new CliUsageError(`Cannot combine --profile ${value} with --mode ${mode}.`);
+			}
+			profile = value;
+			mode = value;
+			index++;
+			continue;
+		}
+		if (argument === "--composition") {
+			const value = args[index + 1];
+			if (value === undefined || value.trim().length === 0) {
+				throw new CliUsageError("Option --composition requires a non-empty path.");
+			}
+			if (compositionPath !== undefined) throw new CliUsageError("Option --composition may only be used once.");
+			compositionPath = value;
+			index++;
 			continue;
 		}
 		if (argument === "--trust-project" || argument === "--untrust-project") {
@@ -143,7 +185,11 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			if (value !== "print" && value !== "json" && value !== "interactive") {
 				throw new CliUsageError(`Unsupported mode "${value}". Expected print, json, or interactive.`);
 			}
+			if (profile !== undefined && profile !== value) {
+				throw new CliUsageError(`Cannot combine --profile ${profile} with --mode ${value}.`);
+			}
 			mode = value;
+			modeWasSelected = true;
 			index++;
 			continue;
 		}
@@ -188,6 +234,9 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		...(continueSession ? { continueSession: true as const } : {}),
 		...(noSkills ? { noSkills: true as const } : {}),
 		...(noContextFiles ? { noContextFiles: true as const } : {}),
+		...(profile ? { profile } : {}),
+		...(compositionPath ? { compositionPath } : {}),
+		...(noProjectPlugins ? { noProjectPlugins: true as const } : {}),
 		...(skillPaths.length > 0 ? { skillPaths } : {}),
 		...(imagePaths.length > 0 ? { imagePaths } : {}),
 		...(projectTrust === undefined ? {} : { projectTrust }),
@@ -273,6 +322,9 @@ ${t("options")}
   --skill <path>     ${t("skill")}
   --no-skills        ${t("noSkills")}
   --no-context-files ${t("noContextFiles")}
+  --profile <profile> Select print, json, or interactive composition
+  --composition <path> Apply a JSON or YAML composition after project configuration
+  --no-project-plugins Skip .di-code/composition.yml for this run
   --trust-project    ${t("trustProject")}
   --untrust-project  ${t("untrustProject")}
   plugin <action>    ${t("plugin")}

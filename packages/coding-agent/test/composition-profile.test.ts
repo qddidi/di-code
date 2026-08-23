@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
 	defaultCompositions,
 	importCompositionModule,
+	resolveCompositionEntries,
 	resolveDefaultComposition,
 	resolveManagedCompositionEntries,
 } from "../src/compositions.ts";
@@ -132,6 +133,44 @@ describe("default compositions", () => {
 				await loader.dispose();
 				await context.dispose();
 			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("merges user, project, and explicit composition layers in order", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-composition-layers-"));
+		const agentDir = join(root, "agent");
+		const explicitPath = join(root, "explicit.yml");
+		try {
+			await mkdir(join(root, ".di-code"), { recursive: true });
+			await mkdir(agentDir, { recursive: true });
+			await writeFile(join(agentDir, "composition.yml"), "patches:\n  - op: disable\n    id: tool-write\n");
+			await writeFile(
+				join(root, ".di-code", "composition.yml"),
+				"entries:\n  - id: project-entry\n    name: test-project-entry\npatches:\n  - op: disable\n    id: tool-read\n",
+			);
+			await writeFile(explicitPath, "patches:\n  - op: enable\n    id: tool-read\n");
+
+			const resolved = await resolveCompositionEntries("print", {
+				cwd: root,
+				agentDir,
+				compositionPath: explicitPath,
+				allowedRoot: root,
+			});
+			expect(resolved.find((entry) => entry.id === "tool-read")?.disabled).toBe(false);
+			expect(resolved.find((entry) => entry.id === "tool-write")?.disabled).toBe(true);
+			expect(resolved.find((entry) => entry.id === "project-entry")?.projectLocal).toBe(true);
+			expect(resolved.find((entry) => entry.id === "workspace")?.config).toMatchObject({ allowedRoot: root });
+
+			const withoutProject = await resolveCompositionEntries("print", {
+				cwd: root,
+				agentDir,
+				includeProjectComposition: false,
+				allowedRoot: root,
+			});
+			expect(withoutProject.find((entry) => entry.id === "tool-read")?.disabled).toBeUndefined();
+			expect(withoutProject.find((entry) => entry.id === "project-entry")).toBeUndefined();
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

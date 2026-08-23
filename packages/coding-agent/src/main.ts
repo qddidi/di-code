@@ -1,10 +1,12 @@
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { agentLoopKey, modeRegistryKey, processExitKey, rendererRegistryKey, sessionStoreKey } from "@di-code/builtins";
-import { createCompositionLoader } from "@di-code/plugin-loader";
+import { createCompositionLoader, ProjectTrustStore } from "@di-code/plugin-loader";
 import { createRootContext, type RuntimeEvent, redactSensitiveText } from "@di-code/plugin-runtime";
 import { type CliCommand, createCliParser } from "./cli.ts";
 import {
 	importCompositionModule,
-	resolveDefaultComposition,
+	resolveCompositionEntries,
 	resolveManagedCompositionEntries,
 } from "./compositions.ts";
 import { pluginInventoryKey } from "./runtime/plugin-inventory-entry.ts";
@@ -58,17 +60,30 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 	}
 	const mode = isRun(command) ? command.mode : "print";
 	const observability = command.kind === "observe";
-	const managedEntries = await resolveManagedCompositionEntries(options.agentDir);
-	const context = createRootContext({ id: "minimal-profile", mode, trustedProject: true });
+	const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
+	const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
+	const trustStore = new ProjectTrustStore(join(agentDir, "trust.json"));
+	if (isRun(command) && command.projectTrust !== undefined) await trustStore.set(allowedRoot, command.projectTrust);
+	const projectTrusted = isRun(command) && !command.noProjectPlugins && (await trustStore.get(allowedRoot)) === true;
+	const managedEntries = await resolveManagedCompositionEntries(agentDir);
+	const compositionEntries = await resolveCompositionEntries(
+		isRun(command) ? (command.profile ?? command.mode) : "base",
+		{
+			cwd: allowedRoot,
+			agentDir,
+			...(isRun(command) && command.compositionPath ? { compositionPath: command.compositionPath } : {}),
+			includeProjectComposition: projectTrusted,
+			observability,
+			allowedRoot,
+		},
+	);
+	const context = createRootContext({ id: "minimal-profile", mode, trustedProject: projectTrusted });
 	const unsubscribe = context.events.subscribe((event) => options.onRuntimeEvent?.(event));
 	const loader = createCompositionLoader({
 		context,
-		entries: [
-			...resolveDefaultComposition(isRun(command) ? command.mode : "base", { observability }),
-			...managedEntries,
-		],
+		entries: [...compositionEntries, ...managedEntries],
 		importModule: importCompositionModule,
-		projectTrusted: true,
+		projectTrusted,
 	});
 	try {
 		await loader.load();

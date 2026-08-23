@@ -23,7 +23,9 @@ try {
 	const isInteractiveTerminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 	const interactiveRequest =
 		args.includes("--interactive") ||
-		args.some((argument, index) => argument === "--mode" && args[index + 1] === "interactive");
+		args.some(
+			(argument, index) => (argument === "--mode" || argument === "--profile") && args[index + 1] === "interactive",
+		);
 	if (interactiveRequest && !isInteractiveTerminal) {
 		process.stderr.write("Interactive mode requires an interactive TTY.\n");
 		process.exitCode = 1;

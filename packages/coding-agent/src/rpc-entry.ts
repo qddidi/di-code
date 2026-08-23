@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { agentSessionKey, rpcEventServiceKey, rpcMethodRegistryKey } from "@di-code/builtins";
-import { createCompositionLoader } from "@di-code/plugin-loader";
+import { createCompositionLoader, ProjectTrustStore } from "@di-code/plugin-loader";
 import { createRootContext } from "@di-code/plugin-runtime";
-import { importCompositionModule, resolveDefaultComposition } from "./compositions.ts";
+import { importCompositionModule, resolveCompositionEntries } from "./compositions.ts";
 import { disposeRpcComposition } from "./rpc/lifecycle.ts";
 import { RpcServer, type RpcSession } from "./rpc/server.ts";
 import { installAgentSessionFactory } from "./runtime/session-factory.ts";
@@ -26,13 +27,9 @@ function isRpcSession(value: unknown): value is RpcSession {
 }
 
 const allowedRoot = resolve(process.cwd());
+const agentDir = resolve(join(homedir(), ".di-code"));
 const context = createRootContext({ id: "rpc-profile", mode: "rpc", trustedProject: true });
-const loader = createCompositionLoader({
-	context,
-	entries: resolveDefaultComposition("rpc", { allowedRoot }),
-	importModule: importCompositionModule,
-	projectTrusted: true,
-});
+let loader: ReturnType<typeof createCompositionLoader> | undefined;
 
 let server: RpcServer | undefined;
 const stop = (): void => {
@@ -45,6 +42,18 @@ process.once("SIGTERM", stop);
 try {
 	const configuration = await loadStartupConfiguration(allowedRoot);
 	const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
+	const projectTrusted = (await new ProjectTrustStore(join(agentDir, "trust.json")).get(allowedRoot)) === true;
+	loader = createCompositionLoader({
+		context,
+		entries: await resolveCompositionEntries("rpc", {
+			cwd: allowedRoot,
+			agentDir,
+			includeProjectComposition: projectTrusted,
+			allowedRoot,
+		}),
+		importModule: importCompositionModule,
+		projectTrusted,
+	});
 	await loader.load();
 	const removeFactory = installAgentSessionFactory(context);
 	try {
@@ -76,7 +85,7 @@ try {
 	process.off("SIGTERM", stop);
 	try {
 		await disposeRpcComposition(
-			() => loader.dispose(),
+			() => loader?.dispose(),
 			() => context.dispose(),
 		);
 	} catch (cause) {

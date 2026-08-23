@@ -478,7 +478,7 @@ di-code plugin remove project-status
 
 安装过程固定使用 `npm --ignore-scripts`，但这并不使插件本身安全：插件在加载时仍是本机代码。`plugin` 管理命令不需要配置 Provider。
 
-默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。CLI 不接受 `--composition`：嵌入产品需要自定义 composition 时，使用 `@di-code/plugin-loader` 的公开 API。需要诊断 composition 时可运行：
+默认运行时先加载 `base` composition，再加载 `interactive`、`print`、`json` 或 `rpc` entry 集合。`--profile <print|json|interactive>` 选择 CLI profile；`--composition <path>` 将一个 JSON 或 YAML document 作为最后一层应用，固定优先级为 `base -> mode -> ~/.di-code/composition.yml -> <work-root>/.di-code/composition.yml -> --composition`。项目 composition 仅在该项目已被 `--trust-project` 信任时读取；`--no-project-plugins` 会为当前运行跳过它，但不会禁用用户托管插件。缺失的 user/project 文件会忽略，格式错误或显式文件不可读取则终止启动并显示路径。`plugin-manager` 是一个 command plugin，管理操作不会 import 已禁用插件。嵌入产品仍可直接使用 `@di-code/plugin-loader` 的公开 API。需要诊断 composition 时可运行：
 
 ```powershell
 di-code --trace-plugins
