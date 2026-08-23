@@ -82,6 +82,50 @@
 		"./mode-print": {
 			"types": "./dist/mode-print.d.ts",
 			"import": "./dist/mode-print.js"
+		},
+		"./tool-registry": {
+			"types": "./dist/tool-registry.d.ts",
+			"import": "./dist/tool-registry.js"
+		},
+		"./session-store-jsonl": {
+			"types": "./dist/session-store-jsonl.d.ts",
+			"import": "./dist/session-store-jsonl.js"
+		},
+		"./session-tree": {
+			"types": "./dist/session-tree.d.ts",
+			"import": "./dist/session-tree.js"
+		},
+		"./session-query": {
+			"types": "./dist/session-query.d.ts",
+			"import": "./dist/session-query.js"
+		},
+		"./usage-meter": {
+			"types": "./dist/usage-meter.d.ts",
+			"import": "./dist/usage-meter.js"
+		},
+		"./context-budget": {
+			"types": "./dist/context-budget.d.ts",
+			"import": "./dist/context-budget.js"
+		},
+		"./compaction-basic": {
+			"types": "./dist/compaction-basic.d.ts",
+			"import": "./dist/compaction-basic.js"
+		},
+		"./system-prompt": {
+			"types": "./dist/system-prompt.d.ts",
+			"import": "./dist/system-prompt.js"
+		},
+		"./resource-loader": {
+			"types": "./dist/resource-loader.d.ts",
+			"import": "./dist/resource-loader.js"
+		},
+		"./skills": {
+			"types": "./dist/skills.d.ts",
+			"import": "./dist/skills.js"
+		},
+		"./agent-session": {
+			"types": "./dist/agent-session.d.ts",
+			"import": "./dist/agent-session.js"
 		}
 	},
 	"files": [

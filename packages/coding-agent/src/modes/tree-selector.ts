@@ -49,6 +49,7 @@ function singleLine(value: string): string {
 
 function textContent(entry: SessionEntry): string {
 	if (entry.type === "summary") return singleLine(entry.summary);
+	if (entry.type === "plugin") return singleLine(`plugin:${entry.pluginId}`);
 	return singleLine(
 		entry.message.content
 			.filter((content) => content.type === "text")
@@ -214,6 +215,7 @@ export class TreeSelector implements Component, Focusable {
 	private entryDisplay(entry: SessionEntry): string {
 		const text = textContent(entry);
 		if (entry.type === "summary") return `${paint(YELLOW, "summary: ")}${text || paint(DIM, "(empty)")}`;
+		if (entry.type === "plugin") return `${paint(DIM, "plugin: ")}${text || paint(DIM, "(empty)")}`;
 		if (entry.message.role === "user") return `${paint(CYAN, "user: ")}${text || paint(DIM, "(empty)")}`;
 		if (entry.message.role === "assistant") {
 			if (text) return `${paint(GREEN, "assistant: ")}${text}`;

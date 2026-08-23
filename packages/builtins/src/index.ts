@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Agent, AgentEvent } from "@di-code/agent";
+import type { Agent, AgentEvent, AgentTool } from "@di-code/agent";
 import { Agent as AgentImpl } from "@di-code/agent";
-import type { AssistantMessage, FauxResponse, Model, Provider, ThinkingLevel } from "@di-code/ai";
+import type { AssistantMessage, FauxResponse, Message, Model, Provider, ThinkingLevel, Usage } from "@di-code/ai";
 import {
 	createAnthropicProvider,
 	createDeepSeekProvider,
@@ -13,7 +13,13 @@ import {
 	createZhipuProvider,
 	MODELS,
 } from "@di-code/ai";
-import { createServiceKey, type PluginDefinition } from "@di-code/plugin-runtime";
+import {
+	ContributionRegistry,
+	createServiceKey,
+	type PluginDefinition,
+	type RegistryOwner,
+	type ToolSchema,
+} from "@di-code/plugin-runtime";
 
 export interface ProviderSelection {
 	readonly provider: Provider;
@@ -43,10 +49,81 @@ export interface RuntimeProviderConfig {
 export interface ProviderRegistry {
 	readonly register: (selection: ProviderSelection) => void;
 	readonly list: () => readonly ProviderSelection[];
+	readonly snapshot: () => readonly ProviderSelection[];
 	readonly select: (providerId: string, modelId?: string) => ProviderSelection;
 }
 
+export interface ToolRegistry {
+	readonly register: (tool: AgentTool, owner?: RegistryOwner) => () => void;
+	readonly snapshot: () => readonly AgentTool[];
+}
+
+export interface SessionStoreSnapshot {
+	readonly append?: (record: unknown) => void | Promise<void>;
+	readonly records?: () => readonly unknown[];
+	readonly manager?: unknown;
+	readonly dispose?: () => void | Promise<void>;
+}
+
+export interface PromptRegistry {
+	readonly register: (name: string, get: (input?: unknown) => string | Promise<string>) => () => void;
+	readonly snapshot: () => readonly {
+		readonly name: string;
+		readonly get: (input?: unknown) => string | Promise<string>;
+	}[];
+}
+
+export interface CompactionRegistry {
+	readonly register: (
+		name: string,
+		compact: (input: unknown, signal?: AbortSignal) => unknown | Promise<unknown>,
+	) => () => void;
+	readonly snapshot: () => readonly {
+		readonly name: string;
+		readonly compact: (input: unknown, signal?: AbortSignal) => unknown | Promise<unknown>;
+	}[];
+}
+
+export interface ResourceRegistry {
+	readonly register: (name: string, resource: unknown) => () => void;
+	readonly snapshot: () => readonly { readonly name: string; readonly resource: unknown }[];
+}
+
+export interface UsageMeter {
+	readonly add: (usage: Usage) => void;
+	readonly snapshot: () => SessionUsageSnapshot;
+}
+
+export interface SessionUsageSnapshot {
+	readonly requestCount: number;
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly cacheReadTokens: number;
+	readonly cacheWriteTokens: number;
+	readonly totalTokens: number;
+	readonly cost: Usage["cost"];
+}
+
+export interface ContextBudgetService {
+	readonly resolve: (model: Model) => {
+		readonly contextWindow: number;
+		readonly reserveTokens: number;
+		readonly triggerTokens: number;
+	};
+	readonly estimate: (messages: readonly Message[]) => number;
+}
+
 export const providerRegistryKey = createServiceKey<ProviderRegistry>("provider-registry");
+export const toolRegistryKey = createServiceKey<ToolRegistry>("tool-registry");
+export const sessionStoreRegistryKey = createServiceKey<SessionStoreSnapshot>("session-store");
+export const promptRegistryKey = createServiceKey<PromptRegistry>("prompt-registry");
+export const compactionRegistryKey = createServiceKey<CompactionRegistry>("compaction-registry");
+export const resourceRegistryKey = createServiceKey<ResourceRegistry>("resource-registry");
+export const usageMeterKey = createServiceKey<UsageMeter>("usage-meter");
+export const contextBudgetKey = createServiceKey<ContextBudgetService>("context-budget");
+export const sessionTreeKey = createServiceKey<SessionTreeService>("session-tree");
+export const sessionQueryKey = createServiceKey<SessionQueryService>("session-query");
+export const agentSessionKey = createServiceKey<AgentSessionFactory>("agent-session");
 export const modelCatalogKey = createServiceKey<ModelCatalog>("model-catalog");
 export const credentialEnvKey = createServiceKey<CredentialEnv>("credential-env");
 export const runtimeSelectionKey = createServiceKey<RuntimeSelection>("runtime-selection");
@@ -101,6 +178,18 @@ export interface AgentLoopService {
 	readonly disposed: () => boolean;
 }
 
+export interface SessionTreeService {
+	readonly getTree: (session: unknown) => unknown;
+}
+
+export interface SessionQueryService {
+	readonly getBranch: (session: unknown, leafId?: string) => unknown;
+}
+
+export interface AgentSessionFactory {
+	readonly create: (options: unknown) => unknown | Promise<unknown>;
+}
+
 export interface MemorySessionStore {
 	readonly append: (record: unknown) => void;
 	readonly records: () => readonly unknown[];
@@ -121,6 +210,10 @@ function createRegistry(): ProviderRegistry {
 				const model = provider.models[0];
 				return model ? [{ provider, model }] : [];
 			}),
+		snapshot: () =>
+			entries
+				.map((provider) => ({ provider, model: provider.models[0] }))
+				.filter((entry): entry is ProviderSelection => entry.model !== undefined),
 		select(providerId, modelId) {
 			const provider = entries.find((candidate) => candidate.id === providerId);
 			if (!provider) throw new Error(`Unknown provider: ${providerId}`);
@@ -132,12 +225,224 @@ function createRegistry(): ProviderRegistry {
 	};
 }
 
+function createToolRegistry(): ToolRegistry {
+	const registry = new ContributionRegistry();
+	return {
+		register(tool, owner) {
+			const registryOwner = owner ?? { fiberId: "context", pluginName: "context" };
+			return registry.register(
+				{
+					kind: "tool",
+					name: tool.name,
+					description: tool.description,
+					schema: tool.parameters as unknown as ToolSchema,
+					execute: (input, signal) => tool.execute("context", input as never, signal),
+				},
+				registryOwner,
+			);
+		},
+		snapshot: () => registry.list("tool").map((entry) => entry.value as unknown as AgentTool),
+	};
+}
+
+function createNamedRegistry<T>(
+	kind: "prompt" | "compaction" | "resource",
+): PromptRegistry | CompactionRegistry | ResourceRegistry {
+	const entries = new Map<string, T>();
+	return {
+		register(name: string, value: T) {
+			if (entries.has(name)) throw new Error(`Duplicate ${kind} registration: ${name}`);
+			entries.set(name, value);
+			return () => {
+				if (entries.get(name) === value) entries.delete(name);
+			};
+		},
+		snapshot: () =>
+			[...entries.entries()].map(([name, value]) => ({
+				name,
+				...(kind === "prompt" ? { get: value } : kind === "compaction" ? { compact: value } : { resource: value }),
+			})) as never,
+	} as PromptRegistry | CompactionRegistry | ResourceRegistry;
+}
+
+function createUsageMeter(): UsageMeter {
+	let snapshot: SessionUsageSnapshot = {
+		requestCount: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	return {
+		add(usage) {
+			snapshot = {
+				requestCount: snapshot.requestCount + 1,
+				inputTokens: snapshot.inputTokens + usage.input,
+				outputTokens: snapshot.outputTokens + usage.output,
+				cacheReadTokens: snapshot.cacheReadTokens + usage.cacheRead,
+				cacheWriteTokens: snapshot.cacheWriteTokens + usage.cacheWrite,
+				totalTokens: snapshot.totalTokens + usage.totalTokens,
+				cost: {
+					input: snapshot.cost.input + usage.cost.input,
+					output: snapshot.cost.output + usage.cost.output,
+					cacheRead: snapshot.cost.cacheRead + usage.cost.cacheRead,
+					cacheWrite: snapshot.cost.cacheWrite + usage.cost.cacheWrite,
+					total: snapshot.cost.total + usage.cost.total,
+				},
+			};
+		},
+		snapshot: () => ({ ...snapshot, cost: { ...snapshot.cost } }),
+	};
+}
+
 export const providerRegistry: PluginDefinition = {
 	apiVersion: 1,
 	name: "provider-registry",
 	version: "0.1.7",
 	apply(context) {
 		context.set(providerRegistryKey, createRegistry());
+	},
+};
+
+export const toolRegistry: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-registry",
+	version: "0.1.7",
+	apply(context) {
+		context.set(toolRegistryKey, createToolRegistry());
+	},
+};
+
+export const sessionStoreJsonl: PluginDefinition = {
+	apiVersion: 1,
+	name: "session-store-jsonl",
+	version: "0.1.7",
+	apply(context) {
+		if (!context.get(sessionStoreRegistryKey)) context.set(sessionStoreRegistryKey, {});
+	},
+};
+
+export const sessionTree: PluginDefinition = {
+	apiVersion: 1,
+	name: "session-tree",
+	version: "0.1.7",
+	apply(context) {
+		context.set(sessionTreeKey, {
+			getTree: (session) => {
+				if (typeof session !== "object" || session === null || !("getTree" in session))
+					throw new TypeError("Session does not provide getTree");
+				const getTree = session.getTree;
+				if (typeof getTree !== "function") throw new TypeError("Session getTree is not callable");
+				return getTree.call(session);
+			},
+		});
+	},
+};
+
+export const sessionQuery: PluginDefinition = {
+	apiVersion: 1,
+	name: "session-query",
+	version: "0.1.7",
+	apply(context) {
+		context.set(sessionQueryKey, {
+			getBranch: (session, leafId) => {
+				if (typeof session !== "object" || session === null || !("getBranch" in session))
+					throw new TypeError("Session does not provide getBranch");
+				const getBranch = session.getBranch;
+				if (typeof getBranch !== "function") throw new TypeError("Session getBranch is not callable");
+				return getBranch.call(session, leafId);
+			},
+		});
+	},
+};
+
+export const usageMeter: PluginDefinition = {
+	apiVersion: 1,
+	name: "usage-meter",
+	version: "0.1.7",
+	apply(context) {
+		context.set(usageMeterKey, createUsageMeter());
+	},
+};
+
+export const contextBudget: PluginDefinition = {
+	apiVersion: 1,
+	name: "context-budget",
+	version: "0.1.7",
+	apply(context) {
+		context.set(contextBudgetKey, {
+			resolve: (model) => {
+				if (!Number.isInteger(model.contextWindow) || model.contextWindow <= 0)
+					throw new RangeError("model.contextWindow must be a positive integer");
+				if (!Number.isInteger(model.maxOutputTokens) || model.maxOutputTokens < 0)
+					throw new RangeError("model.maxOutputTokens must be a non-negative integer");
+				const reserveTokens = Math.max(model.maxOutputTokens, Math.ceil(model.contextWindow * 0.1));
+				if (reserveTokens >= model.contextWindow) throw new RangeError("Model context budget leaves no room for input");
+				return {
+					contextWindow: model.contextWindow,
+					reserveTokens,
+					triggerTokens: model.contextWindow - reserveTokens,
+				};
+			},
+			estimate: (messages) =>
+				messages.reduce((total, message) => total + Math.ceil(JSON.stringify(message).length / 4), 0),
+		});
+	},
+};
+
+export const compactionBasic: PluginDefinition = {
+	apiVersion: 1,
+	name: "compaction-basic",
+	version: "0.1.7",
+	apply(context) {
+		context.set(compactionRegistryKey, createNamedRegistry("compaction") as CompactionRegistry);
+	},
+};
+
+export const systemPrompt: PluginDefinition = {
+	apiVersion: 1,
+	name: "system-prompt",
+	version: "0.1.7",
+	apply(context) {
+		context.set(promptRegistryKey, createNamedRegistry("prompt") as PromptRegistry);
+	},
+};
+
+export const resourceLoader: PluginDefinition = {
+	apiVersion: 1,
+	name: "resource-loader",
+	version: "0.1.7",
+	apply(context) {
+		context.set(resourceRegistryKey, createNamedRegistry("resource") as ResourceRegistry);
+	},
+};
+
+export const skills: PluginDefinition = {
+	apiVersion: 1,
+	name: "skills",
+	version: "0.1.7",
+	apply(context) {
+		if (!context.get(resourceRegistryKey))
+			context.set(resourceRegistryKey, createNamedRegistry("resource") as ResourceRegistry);
+	},
+};
+
+export const agentSession: PluginDefinition = {
+	apiVersion: 1,
+	name: "agent-session",
+	version: "0.1.7",
+	apply(context) {
+		context.require(providerRegistryKey);
+		context.require(toolRegistryKey);
+		context.require(promptRegistryKey);
+		context.require(compactionRegistryKey);
+		context.set(agentSessionKey, {
+			create: () => {
+				throw new Error("AgentSession factory is owned by the coding-agent product layer");
+			},
+		});
 	},
 };
 
@@ -415,7 +720,8 @@ export const agentLoop: PluginDefinition = {
 	apply(context, _config, fiber) {
 		const selected = context.require(runtimeSelectionKey).selected();
 		const memory = context.require(sessionStoreKey);
-		const agent = new AgentImpl({ provider: selected.provider, model: selected.model });
+		const tools = context.get(toolRegistryKey)?.snapshot();
+		const agent = new AgentImpl({ provider: selected.provider, model: selected.model, tools });
 		const unsubscribe = agent.subscribe((event: AgentEvent) => memory.append(event));
 		let closed = false;
 		context.set(agentLoopKey, {
@@ -504,10 +810,25 @@ export const minimalProfile = {
 			required: false,
 		},
 		{ id: "session-memory", name: "@di-code/builtins/session-memory", dependsOn: ["runtime"] },
+		{ id: "tool-registry", name: "@di-code/builtins/tool-registry", dependsOn: ["runtime"] },
+		{ id: "session-store-jsonl", name: "@di-code/builtins/session-store-jsonl", dependsOn: ["runtime"] },
+		{ id: "session-tree", name: "@di-code/builtins/session-tree", dependsOn: ["session-store-jsonl"] },
+		{ id: "session-query", name: "@di-code/builtins/session-query", dependsOn: ["session-store-jsonl"] },
+		{ id: "usage-meter", name: "@di-code/builtins/usage-meter", dependsOn: ["runtime"] },
+		{ id: "context-budget", name: "@di-code/builtins/context-budget", dependsOn: ["runtime"] },
+		{ id: "compaction-basic", name: "@di-code/builtins/compaction-basic", dependsOn: ["context-budget"] },
+		{ id: "system-prompt", name: "@di-code/builtins/system-prompt", dependsOn: ["runtime"] },
+		{ id: "resource-loader", name: "@di-code/builtins/resource-loader", dependsOn: ["runtime"] },
+		{ id: "skills", name: "@di-code/builtins/skills", dependsOn: ["resource-loader"] },
 		{
 			id: "agent-loop",
 			name: "@di-code/builtins/agent-loop",
-			dependsOn: ["runtime-selection", "provider-faux", "session-memory"],
+			dependsOn: ["runtime-selection", "provider-faux", "session-memory", "tool-registry"],
+		},
+		{
+			id: "agent-session",
+			name: "@di-code/builtins/agent-session",
+			dependsOn: ["agent-loop", "tool-registry", "system-prompt", "compaction-basic"],
 		},
 		{ id: "mode-print", name: "@di-code/builtins/mode-print", dependsOn: ["Bootstrap", "agent-loop"] },
 	] as const,
@@ -529,6 +850,17 @@ export const pluginModules = {
 	credentialEnv,
 	runtimeSelection,
 	providerOnboarding,
+	toolRegistry,
+	sessionStoreJsonl,
+	sessionTree,
+	sessionQuery,
+	usageMeter,
+	contextBudget,
+	compactionBasic,
+	systemPrompt,
+	resourceLoader,
+	skills,
+	agentSession,
 	agentLoop,
 	sessionMemory,
 	modePrint,

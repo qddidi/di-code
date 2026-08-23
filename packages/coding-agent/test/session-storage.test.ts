@@ -141,6 +141,32 @@ describe("loadSessionFile", () => {
 		expect(loaded.diagnostics).toEqual([]);
 	});
 
+	it("retains unknown plugin records and their data in append order", async () => {
+		const pluginRecord = {
+			type: "plugin",
+			version: SESSION_FORMAT_VERSION,
+			id: "plugin-1",
+			parentId: "session-1",
+			timestamp: RECORD_TIME,
+			pluginId: "example",
+			pluginVersion: "1.0.0",
+			schemaVersion: 1,
+			data: { opaque: ["value", 2] },
+		};
+		await writeRecords(sessionFile, [createHeader(), pluginRecord]);
+
+		const loaded = await loadSessionFile(sessionFile);
+
+		expect(loaded.entries).toEqual([pluginRecord]);
+		expect(loaded.messages).toEqual([]);
+		expect(loaded.diagnostics).toEqual([]);
+		await appendSessionEntry(sessionFile, createEntry("entry-1", "plugin-1", userMessage), "plugin-1");
+		expect((await loadSessionFile(sessionFile)).entries).toEqual([
+			pluginRecord,
+			createEntry("entry-1", "plugin-1", userMessage),
+		]);
+	});
+
 	it("treats invalid summary fields as a corrupt record", async () => {
 		const kept = createEntry("entry-1", "session-1", userMessage);
 		const invalidSummaries = [

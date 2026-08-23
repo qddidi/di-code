@@ -1,4 +1,4 @@
-import type { Message } from "@di-code/ai";
+import type { JsonValue, Message } from "@di-code/ai";
 
 export const SESSION_FORMAT_VERSION = 2 as const;
 
@@ -29,7 +29,17 @@ export interface SessionSummaryEntry extends SessionRecordBase {
 	readonly tokensBefore: number;
 }
 
-export type SessionEntry = SessionMessageEntry | SessionSummaryEntry;
+/** Plugin-private records are retained verbatim so newer plugins survive older readers. */
+export interface SessionPluginEntry extends SessionRecordBase {
+	readonly type: "plugin";
+	readonly parentId: string;
+	readonly pluginId: string;
+	readonly pluginVersion: string;
+	readonly schemaVersion: number;
+	readonly data: JsonValue;
+}
+
+export type SessionEntry = SessionMessageEntry | SessionSummaryEntry | SessionPluginEntry;
 
 /** An immutable entry snapshot with its append-ordered descendants. */
 export interface SessionTreeNode {

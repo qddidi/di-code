@@ -8,6 +8,7 @@ import {
 	type SessionHeader,
 	SessionLoadError,
 	type SessionMessageEntry,
+	type SessionPluginEntry,
 	type SessionSummaryEntry,
 	SessionWriteError,
 } from "./types.ts";
@@ -186,8 +187,8 @@ function decodeHeader(value: unknown, filePath: string): SessionHeader {
 }
 
 function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; readonly reason?: string } {
-	if (!isObject(value) || (value.type !== "message" && value.type !== "summary")) {
-		return { reason: 'record type must be "message" or "summary"' };
+	if (!isObject(value) || (value.type !== "message" && value.type !== "summary" && value.type !== "plugin")) {
+		return { reason: 'record type must be "message", "summary", or "plugin"' };
 	}
 	if (value.version !== SESSION_FORMAT_VERSION) return { reason: `record version must be ${SESSION_FORMAT_VERSION}` };
 	if (!isRecordId(value.id)) return { reason: "record id is invalid" };
@@ -196,6 +197,20 @@ function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; re
 	if (value.type === "message") {
 		if (!isMessage(value.message)) return { reason: "record message does not match the Message contract" };
 		return { entry: value as unknown as SessionMessageEntry };
+	}
+	if (value.type === "plugin") {
+		if (
+			typeof value.pluginId !== "string" ||
+			value.pluginId.length === 0 ||
+			typeof value.pluginVersion !== "string" ||
+			value.pluginVersion.length === 0 ||
+			typeof value.schemaVersion !== "number" ||
+			!Number.isSafeInteger(value.schemaVersion) ||
+			value.schemaVersion < 0 ||
+			!isJsonValue(value.data)
+		)
+			return { reason: "record plugin fields are invalid" };
+		return { entry: value as unknown as SessionPluginEntry };
 	}
 	if (typeof value.summary !== "string" || value.summary.trim().length === 0) {
 		return { reason: "record summary must be a non-empty string" };
