@@ -37,6 +37,66 @@ export interface PluginCapabilities {
 	readonly credentials?: boolean;
 }
 
+export type CapabilityName = "filesystem" | "network" | "process" | "ui" | "credentials";
+
+export interface CapabilityPolicy {
+	readonly trustedProject: boolean;
+	readonly declared: PluginCapabilities;
+}
+
+export interface CapabilityView {
+	readonly trustedProject: boolean;
+	readonly declared: ReadonlySet<CapabilityName>;
+	readonly has: (capability: CapabilityName) => boolean;
+	readonly require: (capability: CapabilityName) => void;
+}
+
+export class CapabilityDeniedError extends Error {
+	readonly capability: CapabilityName;
+
+	constructor(capability: CapabilityName, reason: "undeclared" | "untrusted") {
+		super(`Capability ${capability} denied: ${reason}`);
+		this.name = "CapabilityDeniedError";
+		this.capability = capability;
+	}
+}
+
+export function createCapabilityView(policy: CapabilityPolicy): CapabilityView {
+	const declared = new Set<CapabilityName>();
+	for (const name of ["filesystem", "network", "process", "ui", "credentials"] as const) {
+		if (policy.declared[name] === true) declared.add(name);
+	}
+	return {
+		trustedProject: policy.trustedProject,
+		declared,
+		has: (capability) => policy.trustedProject && declared.has(capability),
+		require: (capability) => {
+			if (!policy.trustedProject) throw new CapabilityDeniedError(capability, "untrusted");
+			if (!declared.has(capability)) throw new CapabilityDeniedError(capability, "undeclared");
+		},
+	};
+}
+
+export interface FakeCapabilityOptions extends CapabilityPolicy {
+	readonly values?: Partial<Record<CapabilityName, unknown>>;
+}
+
+export interface FakeCapabilityView extends CapabilityView {
+	readonly get: <T>(capability: CapabilityName) => T;
+}
+
+export function createFakeCapabilityView(options: FakeCapabilityOptions): FakeCapabilityView {
+	const view = createCapabilityView(options);
+	const values = options.values ?? {};
+	return {
+		...view,
+		get: <T>(capability: CapabilityName) => {
+			view.require(capability);
+			return values[capability] as T;
+		},
+	};
+}
+
 export interface ConfigSchema<T> {
 	readonly parse: (input: unknown) => T;
 	readonly jsonSchema?: unknown;
@@ -113,6 +173,218 @@ export class RuntimeEventBus {
 	}
 }
 
+export type DiagnosticLevel = "debug" | "info" | "warn" | "error";
+
+export interface DiagnosticRecord {
+	readonly level: DiagnosticLevel;
+	readonly message: string;
+	readonly pluginName?: string;
+	readonly error?: Error;
+	readonly details?: Readonly<Record<string, unknown>>;
+}
+
+export interface DiagnosticSink {
+	report(record: DiagnosticRecord): void;
+}
+
+const sensitivePattern = /(token|secret|authorization|api[_-]?key)(\s*[=:]\s*|\s+)([^\s,;]+)/gi;
+
+export function redactSensitiveText(value: string): string {
+	return value.replace(sensitivePattern, (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`);
+}
+
+export function redactError(error: Error): Error {
+	const safe = new Error(redactSensitiveText(error.message));
+	safe.name = error.name;
+	if (error.stack) safe.stack = redactSensitiveText(error.stack);
+	return safe;
+}
+
+function redactDetails(
+	details: Readonly<Record<string, unknown>> | undefined,
+): Readonly<Record<string, unknown>> | undefined {
+	return details
+		? Object.fromEntries(Object.entries(details).map(([key, value]) => [key, redactSensitiveText(String(value))]))
+		: undefined;
+}
+
+export function createDiagnosticSink(report: (record: DiagnosticRecord) => void): DiagnosticSink {
+	return {
+		report: (record) => {
+			const error = record.error ? redactError(record.error) : undefined;
+			const details = redactDetails(record.details);
+			report({ ...record, error, details });
+		},
+	};
+}
+
+export interface PluginLogger {
+	readonly debug: (message: string, details?: Readonly<Record<string, unknown>>) => void;
+	readonly info: (message: string, details?: Readonly<Record<string, unknown>>) => void;
+	readonly warn: (message: string, details?: Readonly<Record<string, unknown>>) => void;
+	readonly error: (message: string, error?: Error, details?: Readonly<Record<string, unknown>>) => void;
+}
+
+export function createPluginLogger(sink: DiagnosticSink, pluginName?: string): PluginLogger {
+	const write = (
+		level: DiagnosticLevel,
+		message: string,
+		error?: Error,
+		details?: Readonly<Record<string, unknown>>,
+	): void => {
+		sink.report({
+			level,
+			message: redactSensitiveText(message),
+			error: error ? redactError(error) : undefined,
+			pluginName,
+			details: redactDetails(details),
+		});
+	};
+	return {
+		debug: (message, details) => write("debug", message, undefined, details),
+		info: (message, details) => write("info", message, undefined, details),
+		warn: (message, details) => write("warn", message, undefined, details),
+		error: (message, error, details) => write("error", message, error, details),
+	};
+}
+
+export interface EventHandlerOptions {
+	readonly priority?: number;
+	readonly critical?: boolean;
+	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal;
+	readonly name?: string;
+}
+
+export type EventHandler<E> = (event: E, signal: AbortSignal) => void | Promise<void>;
+
+export interface EventDispatchResult {
+	readonly handled: number;
+	readonly failures: readonly Error[];
+}
+
+interface EventSubscription<E> {
+	readonly handler: EventHandler<E>;
+	readonly priority: number;
+	readonly critical: boolean;
+	readonly timeoutMs?: number;
+	readonly name?: string;
+	readonly sequence: number;
+	active: boolean;
+}
+
+/** Typed asynchronous event bus with deterministic ordering and isolated observers. */
+export class EventBus<E> {
+	private readonly subscriptions = new Set<EventSubscription<E>>();
+	private readonly sink: DiagnosticSink;
+	private sequence = 0;
+	private closed = false;
+
+	constructor(sink: DiagnosticSink = createDiagnosticSink(() => undefined)) {
+		this.sink = sink;
+	}
+
+	subscribe(handler: EventHandler<E>, options: EventHandlerOptions = {}): Disposer {
+		if (this.closed) throw new Error("EventBus is disposed");
+		const subscription: EventSubscription<E> = {
+			handler,
+			priority: options.priority ?? 0,
+			critical: options.critical ?? false,
+			timeoutMs: options.timeoutMs,
+			name: options.name,
+			sequence: this.sequence++,
+			active: true,
+		};
+		this.subscriptions.add(subscription);
+		const remove = (): void => {
+			if (!subscription.active) return;
+			subscription.active = false;
+			this.subscriptions.delete(subscription);
+		};
+		if (options.signal) {
+			if (options.signal.aborted) remove();
+			else options.signal.addEventListener("abort", remove, { once: true });
+		}
+		return remove;
+	}
+
+	async emit(event: E, signal?: AbortSignal): Promise<EventDispatchResult> {
+		if (this.closed) throw new Error("EventBus is disposed");
+		const failures: Error[] = [];
+		const criticalFailures: Error[] = [];
+		let handled = 0;
+		const ordered = [...this.subscriptions]
+			.filter((entry) => entry.active)
+			.sort((a, b) => b.priority - a.priority || a.sequence - b.sequence);
+		for (const entry of ordered) {
+			if (!entry.active) continue;
+			handled += 1;
+			try {
+				await this.invoke(entry, event, signal);
+			} catch (cause) {
+				const error = cause instanceof Error ? cause : new Error(String(cause));
+				failures.push(error);
+				if (entry.critical) criticalFailures.push(error);
+				this.sink.report({
+					level: "error",
+					message: `Event handler${entry.name ? ` ${entry.name}` : ""} failed`,
+					error: redactError(error),
+				});
+				if (entry.critical) break;
+			}
+		}
+		if (criticalFailures.length > 0)
+			throw criticalFailures.length === 1
+				? criticalFailures[0]
+				: new AggregateError(criticalFailures, "Critical event handler failed");
+		return { handled, failures };
+	}
+
+	publish(event: E, signal?: AbortSignal): Promise<EventDispatchResult> {
+		return this.emit(event, signal);
+	}
+
+	dispose(): void {
+		if (this.closed) return;
+		this.closed = true;
+		for (const entry of this.subscriptions) entry.active = false;
+		this.subscriptions.clear();
+	}
+
+	private async invoke(entry: EventSubscription<E>, event: E, signal?: AbortSignal): Promise<void> {
+		const controller = new AbortController();
+		const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+		if (combined.aborted) throw combined.reason ?? new DOMException("Aborted", "AbortError");
+		const work = Promise.resolve().then(() => entry.handler(event, combined));
+		void work.catch(() => undefined);
+		const abort = new Promise<never>((_, reject) => {
+			if (combined.aborted) {
+				reject(combined.reason ?? new DOMException("Aborted", "AbortError"));
+				return;
+			}
+			combined.addEventListener("abort", () => reject(combined.reason ?? new DOMException("Aborted", "AbortError")), {
+				once: true,
+			});
+		});
+		if (entry.timeoutMs === undefined) {
+			await Promise.race([work, abort]);
+			return;
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => {
+				controller.abort(new Error("Event handler timed out"));
+				reject(new Error("Event handler timed out"));
+			}, entry.timeoutMs);
+		});
+		try {
+			await Promise.race([work, timeout, abort]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+	}
+}
+
 export interface ContextChildOptions {
 	readonly id?: string;
 	readonly isolate?: boolean;
@@ -125,6 +397,8 @@ export interface Context {
 	readonly mode: RuntimeMode;
 	readonly events: RuntimeEventBus;
 	readonly services: ServiceRegistry;
+	readonly capabilities: CapabilityView;
+	readonly logger: PluginLogger;
 	get<T>(key: ServiceKey<T>): T | undefined;
 	require<T>(key: ServiceKey<T>): T;
 	set<T>(key: ServiceKey<T>, value: T): Disposer;
@@ -139,6 +413,8 @@ export interface Fiber {
 	readonly context: Context;
 	readonly status: PluginStatus;
 	readonly signal: AbortSignal;
+	readonly capabilities: CapabilityView;
+	readonly logger: PluginLogger;
 	addDisposer(disposer: Disposer): void;
 	dispose(): Promise<void>;
 }
@@ -266,6 +542,8 @@ class ContextOwnerFiber implements Fiber {
 	readonly pluginName: string;
 	readonly signal: AbortSignal;
 	readonly context: Context;
+	readonly capabilities: CapabilityView;
+	readonly logger: PluginLogger;
 	readonly status = "active" as const;
 
 	constructor(context: Context) {
@@ -273,6 +551,8 @@ class ContextOwnerFiber implements Fiber {
 		this.pluginName = "context";
 		this.context = context;
 		this.signal = context.signal;
+		this.capabilities = context.capabilities;
+		this.logger = context.logger;
 	}
 
 	addDisposer(_disposer: Disposer): void {
@@ -291,6 +571,9 @@ class RuntimeContext implements Context {
 	readonly events: RuntimeEventBus;
 	readonly signal: AbortSignal;
 	readonly services: ServiceRegistry;
+	readonly capabilities: CapabilityView;
+	readonly logger: PluginLogger;
+	readonly diagnosticSink: DiagnosticSink;
 
 	private readonly inheritServices: boolean;
 	private readonly owner?: Fiber;
@@ -309,6 +592,10 @@ class RuntimeContext implements Context {
 		readonly owner?: Fiber;
 		readonly services?: ServiceRegistry;
 		readonly signal?: AbortSignal;
+		readonly capabilities?: CapabilityView;
+		readonly logger?: PluginLogger;
+		readonly diagnostics?: DiagnosticSink;
+		readonly trustedProject?: boolean;
 	}) {
 		this.id = options.id;
 		this.parent = options.parent;
@@ -318,6 +605,10 @@ class RuntimeContext implements Context {
 		this.inheritServices = !options.isolate;
 		this.owner = options.owner;
 		this.signal = options.signal ? combinedSignal(options.signal, this.controller.signal) : this.controller.signal;
+		this.diagnosticSink = options.diagnostics ?? createDiagnosticSink(() => undefined);
+		this.capabilities =
+			options.capabilities ?? createCapabilityView({ trustedProject: options.trustedProject ?? true, declared: {} });
+		this.logger = options.logger ?? createPluginLogger(this.diagnosticSink);
 		this.contextOwner = new ContextOwnerFiber(this);
 		if (options.parent) options.parent.children.add(this);
 		this.events.publish({ type: "context_created", contextId: this.id, parentId: options.parent?.id });
@@ -356,12 +647,15 @@ class RuntimeContext implements Context {
 			events: this.events,
 			owner,
 			signal: this.signal,
+			capabilities: this.capabilities,
+			logger: this.logger,
+			diagnostics: this.diagnosticSink,
 		});
 	}
 
 	async plugin<TConfig>(definition: PluginDefinition<TConfig>, config: TConfig): Promise<Fiber> {
 		if (this.disposed) throw new Error(`Context ${this.id} is disposed`);
-		const fiber = new RuntimeFiber(this, definition.name);
+		const fiber = new RuntimeFiber(this, definition.name, undefined, definition.capabilities);
 		this.registerFiber(fiber);
 		await fiber.start(definition.apply, config);
 		return fiber;
@@ -416,6 +710,8 @@ class BoundContext implements Context {
 	readonly events: RuntimeEventBus;
 	readonly signal: AbortSignal;
 	readonly services: ServiceRegistry;
+	readonly capabilities: CapabilityView;
+	readonly logger: PluginLogger;
 
 	private readonly base: RuntimeContext;
 	private readonly owner: RuntimeFiber;
@@ -429,6 +725,8 @@ class BoundContext implements Context {
 		this.events = base.events;
 		this.signal = combinedSignal(base.signal, owner.signal);
 		this.services = base.services;
+		this.capabilities = owner.capabilities;
+		this.logger = owner.logger;
 	}
 
 	get<T>(key: ServiceKey<T>): T | undefined {
@@ -466,6 +764,8 @@ export class RuntimeFiber implements Fiber {
 	readonly pluginName: string;
 	readonly signal: AbortSignal;
 	readonly context: Context;
+	readonly capabilities: CapabilityView;
+	readonly logger: PluginLogger;
 
 	private readonly controller = new AbortController();
 	private readonly disposers: Disposer[] = [];
@@ -474,11 +774,21 @@ export class RuntimeFiber implements Fiber {
 	private _status: PluginStatus = "pending";
 	private readonly baseContext: RuntimeContext;
 
-	constructor(baseContext: RuntimeContext, pluginName: string, id = generatedId("fiber")) {
+	constructor(
+		baseContext: RuntimeContext,
+		pluginName: string,
+		id = generatedId("fiber"),
+		declared?: PluginCapabilities,
+	) {
 		this.baseContext = baseContext;
 		this.id = id;
 		this.pluginName = pluginName;
 		this.signal = combinedSignal(baseContext.signal, this.controller.signal);
+		this.capabilities = createCapabilityView({
+			trustedProject: baseContext.capabilities.trustedProject,
+			declared: declared ?? {},
+		});
+		this.logger = createPluginLogger(baseContext.diagnosticSink, pluginName);
 		this.context = baseContext.bind(this);
 	}
 
@@ -576,8 +886,22 @@ export class RuntimeFiber implements Fiber {
 }
 
 export class RootContext extends RuntimeContext {
-	constructor(options: { readonly id?: string; readonly mode?: RuntimeMode; readonly signal?: AbortSignal } = {}) {
-		super({ id: options.id ?? "root", mode: options.mode ?? "test", signal: options.signal });
+	constructor(
+		options: {
+			readonly id?: string;
+			readonly mode?: RuntimeMode;
+			readonly signal?: AbortSignal;
+			readonly trustedProject?: boolean;
+			readonly diagnostics?: DiagnosticSink;
+		} = {},
+	) {
+		super({
+			id: options.id ?? "root",
+			mode: options.mode ?? "test",
+			signal: options.signal,
+			trustedProject: options.trustedProject,
+			diagnostics: options.diagnostics,
+		});
 	}
 }
 
@@ -590,12 +914,21 @@ export class ChildContext extends RuntimeContext {
 			isolate: options.isolate,
 			events: parent.events,
 			signal: parent.signal,
+			capabilities: parent.capabilities,
+			logger: parent.logger,
+			diagnostics: parent.diagnosticSink,
 		});
 	}
 }
 
 export function createRootContext(
-	options: { readonly id?: string; readonly mode?: RuntimeMode; readonly signal?: AbortSignal } = {},
+	options: {
+		readonly id?: string;
+		readonly mode?: RuntimeMode;
+		readonly signal?: AbortSignal;
+		readonly trustedProject?: boolean;
+		readonly diagnostics?: DiagnosticSink;
+	} = {},
 ): RootContext {
 	return new RootContext(options);
 }

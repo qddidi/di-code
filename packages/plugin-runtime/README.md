@@ -7,3 +7,7 @@ Provider-neutral runtime primitives for the pluggable runtime. This package owns
 `Fiber.dispose()` aborts its signal, waits for an in-flight apply, runs disposers in reverse registration order, and aggregates cleanup errors. Disposal is idempotent. Registrations made after a Fiber starts unloading are rejected. `ServiceRegistry` records retain the owning Fiber and only expose committed records through `getEntry()` and `snapshot()`.
 
 The package is intentionally limited to runtime behavior and fake plugin/service composition. It does not connect CLI, Agent, Provider, file tools, or product implementations. Plugins should import these types and factories from the package root.
+
+Stage 3 adds a typed asynchronous `EventBus<E>`. Handlers run in descending `priority` order with stable registration order; non-critical failures are reported and isolated, while a failed `critical` handler stops the gate and rejects the dispatch. A handler can be bounded by `timeoutMs`, receives an `AbortSignal`, and can be automatically unsubscribed with an option signal. `dispose()` rejects later registration and emission.
+
+`DiagnosticSink`, `createDiagnosticSink`, `PluginLogger`, and `redactSensitiveText` provide diagnostics with `token`, `secret`, `authorization`, and `api_key` values redacted before delivery. `CapabilityView` requires both a trusted project and a plugin-declared capability. `createFakeCapabilityView` is available for deterministic tests; these APIs do not expose Node `fs`, `spawn`, or `process`.
