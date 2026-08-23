@@ -26,6 +26,8 @@ try {
 
 `McpManager.reconnect(serverId)` 会重建单个失败的传输并刷新其能力。重连是显式操作，不会重试任意请求，也不会静默改变工具授权。
 
+`McpManagerOptions` 从 `@di-code/mcp` 根入口导出，可用于注入 `createClient` 或观察 `onServerConnectionStatus`；manager 的所有连接仍必须由创建它的宿主关闭。
+
 `McpError` 区分连接、认证、协议、超时、取消、工具和客户端已关闭等失败类型。服务器输出是不可信数据；诊断信息会脱敏并截断到 4 KiB。
 
 Streamable HTTP 的 URL 必须是绝对的 `http` 或 `https` 地址。请求头应在宿主配置中使用环境变量引用；该包不会持久化或记录这些请求头。

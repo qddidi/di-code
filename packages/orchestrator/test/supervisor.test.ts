@@ -1,7 +1,9 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { RpcServer, type RpcSession } from "@di-code/coding-agent/rpc";
+import { createRootContext } from "@di-code/plugin-runtime";
 import { describe, expect, it } from "vitest";
+import { orchestratorHost, orchestratorHostKey } from "../src/host-entry.ts";
 import { type RpcChildProcess, type RpcSpawnConfiguration, RpcSupervisor } from "../src/supervisor.ts";
 
 type RpcPromptMessage = Awaited<ReturnType<RpcSession["prompt"]>>;
@@ -99,6 +101,17 @@ function setup() {
 }
 
 describe("RpcSupervisor", () => {
+	it("registers a composition host without exposing coding-agent internals", async () => {
+		const context = createRootContext({ id: "orchestrator-host" });
+		try {
+			await context.plugin(orchestratorHost, undefined);
+			const host = context.require(orchestratorHostKey);
+			expect(host.create({ command: "node", cwd: process.cwd() })).toBeInstanceOf(RpcSupervisor);
+		} finally {
+			await context.dispose();
+		}
+	});
+
 	it("starts, exposes state, delegates prompts, and stops deterministically", async () => {
 		const { supervisor, session, child } = setup();
 		const states: string[] = [];

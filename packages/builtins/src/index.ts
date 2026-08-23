@@ -163,6 +163,8 @@ export const contextBudgetKey = createServiceKey<ContextBudgetService>("context-
 export const sessionTreeKey = createServiceKey<SessionTreeService>("session-tree");
 export const sessionQueryKey = createServiceKey<SessionQueryService>("session-query");
 export const agentSessionKey = createServiceKey<AgentSessionFactory>("agent-session");
+export const rpcMethodRegistryKey = createServiceKey<RpcMethodRegistry>("rpc-method-registry");
+export const rpcEventServiceKey = createServiceKey<RpcEventService>("rpc-events");
 export const modelCatalogKey = createServiceKey<ModelCatalog>("model-catalog");
 export const credentialEnvKey = createServiceKey<CredentialEnv>("credential-env");
 export const runtimeSelectionKey = createServiceKey<RuntimeSelection>("runtime-selection");
@@ -293,7 +295,20 @@ export interface SessionQueryService {
 }
 
 export interface AgentSessionFactory {
+	readonly register: (create: (options: unknown) => unknown | Promise<unknown>) => () => void;
 	readonly create: (options: unknown) => unknown | Promise<unknown>;
+}
+
+/** Registry-owned RPC methods. Names must be declared in a protocol namespace before a server accepts them. */
+export interface RpcMethodRegistry {
+	readonly register: (namespace: string, name: string) => () => void;
+	readonly has: (name: string) => boolean;
+	readonly list: () => readonly { readonly namespace: string; readonly name: string }[];
+}
+
+/** Projects typed session events onto the RPC event channel without owning an Agent loop. */
+export interface RpcEventService {
+	readonly enabled: () => boolean;
 }
 
 export interface MemorySessionStore {
@@ -870,11 +885,72 @@ export const agentSession: PluginDefinition = {
 		context.require(toolRegistryKey);
 		context.require(promptRegistryKey);
 		context.require(compactionRegistryKey);
+		let create: ((options: unknown) => unknown | Promise<unknown>) | undefined;
 		context.set(agentSessionKey, {
-			create: () => {
-				throw new Error("AgentSession factory is owned by the coding-agent product layer");
+			register(factory) {
+				if (create !== undefined) throw new Error("AgentSession factory is already registered");
+				create = factory;
+				return () => {
+					if (create === factory) create = undefined;
+				};
+			},
+			create(options) {
+				if (create === undefined) throw new Error("AgentSession factory is not registered");
+				return create(options);
 			},
 		});
+	},
+};
+
+function createRpcMethodRegistry(): RpcMethodRegistry {
+	const methods = new Map<string, { readonly namespace: string; readonly name: string }>();
+	return {
+		register(namespace, name) {
+			if (!/^[a-z0-9][a-z0-9._-]*$/.test(namespace)) throw new Error(`Invalid RPC method namespace: ${namespace}`);
+			if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid RPC method name: ${name}`);
+			if (methods.has(name)) throw new Error(`Duplicate RPC method: ${name}`);
+			const entry = Object.freeze({ namespace, name });
+			methods.set(name, entry);
+			return () => {
+				if (methods.get(name) === entry) methods.delete(name);
+			};
+		},
+		has: (name) => methods.has(name),
+		list: () => Object.freeze([...methods.values()].sort((left, right) => left.name.localeCompare(right.name))),
+	};
+}
+
+/** Registers the fixed RPC v1 method inventory. Server behavior remains versioned in @di-code/coding-agent/rpc. */
+export const rpcProtocolV1: PluginDefinition = {
+	apiVersion: 1,
+	name: "rpc-protocol-v1",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		const registry = createRpcMethodRegistry();
+		context.set(rpcMethodRegistryKey, registry);
+		for (const name of ["prompt", "cancel", "get_state"] as const)
+			fiber.addDisposer(registry.register("di-code.rpc-v1", name));
+	},
+};
+
+/** Declares that an RPC server consumes SessionFactory and RpcMethodRegistry services. */
+export const rpcServer: PluginDefinition = {
+	apiVersion: 1,
+	name: "rpc-server",
+	version: "0.1.7",
+	apply(context) {
+		context.require(agentSessionKey);
+		context.require(rpcMethodRegistryKey);
+	},
+};
+
+/** Enables the typed session-event projection used by the RPC server. */
+export const rpcEvents: PluginDefinition = {
+	apiVersion: 1,
+	name: "rpc-events",
+	version: "0.1.7",
+	apply(context) {
+		context.set(rpcEventServiceKey, { enabled: () => true });
 	},
 };
 
@@ -1508,8 +1584,11 @@ export const minimalProfile = {
 		{
 			id: "agent-session",
 			name: "@di-code/builtins/agent-session",
-			dependsOn: ["agent-loop", "tool-registry", "system-prompt", "compaction-basic"],
+			dependsOn: ["provider-registry", "tool-registry", "system-prompt", "compaction-basic"],
 		},
+		{ id: "rpc-protocol-v1", name: "@di-code/builtins/rpc-protocol-v1", dependsOn: ["agent-session"] },
+		{ id: "rpc-server", name: "@di-code/builtins/rpc-server", dependsOn: ["rpc-protocol-v1", "agent-session"] },
+		{ id: "rpc-events", name: "@di-code/builtins/rpc-events", dependsOn: ["rpc-server"] },
 		{ id: "mode-print", name: "@di-code/builtins/mode-print", dependsOn: ["Bootstrap", "command-core", "agent-loop"] },
 		{ id: "mode-json", name: "@di-code/builtins/mode-json", dependsOn: ["command-core", "agent-loop"] },
 		{ id: "mode-interactive", name: "@di-code/builtins/mode-interactive", dependsOn: ["command-core", "agent-loop"] },
@@ -1556,6 +1635,9 @@ export const pluginModules = {
 	resourceLoader,
 	skills,
 	agentSession,
+	rpcProtocolV1,
+	rpcServer,
+	rpcEvents,
 	agentLoop,
 	sessionMemory,
 	modePrint,

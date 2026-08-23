@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import type { AssistantMessage } from "@di-code/ai";
 import { describe, expect, it } from "vitest";
 import type { AgentSessionEvent, AgentSessionListener } from "../src/core/session.ts";
 import { RpcClient, type RpcRemoteError, type RpcTransport } from "../src/rpc/client.ts";
+import { disposeRpcComposition } from "../src/rpc/lifecycle.ts";
 import { RpcServer, type RpcSession } from "../src/rpc/server.ts";
 
 function assistant(text: string, stopReason: "stop" | "aborted" = "stop"): AssistantMessage {
@@ -161,6 +162,72 @@ describe("RPC client/server", () => {
 		expect(message.stopReason).toBe("aborted");
 		client.close();
 		server.stop();
+	});
+
+	it("serializes racing shutdown calls after returning the cancelled prompt response", async () => {
+		const { client, server, session } = createConnectedPair();
+		const prompt = client.prompt("shutdown");
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		const first = server.shutdown();
+		const second = server.shutdown();
+
+		expect(second).toBe(first);
+		await expect(prompt).resolves.toMatchObject({ stopReason: "aborted" });
+		await first;
+		await expect(server.finished()).resolves.toBeUndefined();
+		expect(session.signalAborted).toBe(true);
+		client.close();
+	});
+
+	it("reports a flush failure only after it has finished request shutdown", async () => {
+		const input = new PassThrough();
+		const output = new Writable({
+			write(chunk, _encoding, callback) {
+				callback(chunk.length === 0 ? new Error("flush failed") : undefined);
+			},
+		});
+		output.on("error", () => undefined);
+		const server = new RpcServer({ session: new FakeSession(), input, output });
+		server.start();
+
+		await expect(server.shutdown()).rejects.toThrow("flush failed");
+		await expect(server.finished()).resolves.toBeUndefined();
+	});
+});
+
+describe("RPC composition disposal", () => {
+	it("disposes the context after a loader disposal failure", async () => {
+		const calls: string[] = [];
+		await expect(
+			disposeRpcComposition(
+				() => {
+					calls.push("loader");
+					throw new Error("loader dispose failed");
+				},
+				() => {
+					calls.push("context");
+				},
+			),
+		).rejects.toThrow("loader dispose failed");
+		expect(calls).toEqual(["loader", "context"]);
+	});
+
+	it("surfaces both failures after attempting every composition disposer", async () => {
+		const calls: string[] = [];
+		await expect(
+			disposeRpcComposition(
+				() => {
+					calls.push("loader");
+					throw new Error("loader dispose failed");
+				},
+				() => {
+					calls.push("context");
+					throw new Error("context dispose failed");
+				},
+			),
+		).rejects.toThrow(AggregateError);
+		expect(calls).toEqual(["loader", "context"]);
 	});
 });
 

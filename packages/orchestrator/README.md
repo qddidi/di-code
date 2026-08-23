@@ -37,6 +37,8 @@ await supervisor.stop();
 
 Windows 下 npm 安装的可执行 shim（命令包装器）是 `di-code-rpc.cmd`。如果宿主程序使用其他运行时位置，请传入绝对路径。
 
+组合运行时时，可从根入口使用 `orchestratorHost` 和 `orchestratorHostKey` 创建 `RpcSupervisor`。host 只封装公开 RPC SDK，不会导入 coding-agent 的内部实现。
+
 ## 配置
 
 `RpcSupervisor` 会把 `cwd` 和 `env` 传给子进程。子进程配置与 `di-code` CLI 相同：OpenAI 使用 `DI_CODE_PROVIDER=openai` 和 `OPENAI_API_KEY`；DeepSeek 使用 `DI_CODE_PROVIDER=deepseek` 和 `DEEPSEEK_API_KEY`；自定义网关使用 `cwd` 下的 `.di-code/settings.json`。`apiKey` 应引用环境变量，不能写入真实凭据。

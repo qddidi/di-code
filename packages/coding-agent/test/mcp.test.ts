@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
+import { createRootContext } from "@di-code/plugin-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectTrustManager } from "../src/extensions/trust.ts";
 import { runMain } from "../src/legacy-main.ts";
@@ -14,6 +15,14 @@ import {
 	loadMcpConfig,
 	removeMcpConfig,
 } from "../src/mcp/config.ts";
+import {
+	mcpClient,
+	mcpClientServiceKey,
+	mcpConfig,
+	mcpConfigServiceKey,
+	mcpToolServiceKey,
+	mcpTools,
+} from "../src/mcp/entries.ts";
 
 const roots: string[] = [];
 const fixture = fileURLToPath(new URL("../../mcp/test/fixture-server.mjs", import.meta.url));
@@ -28,6 +37,20 @@ function runtime(responses: readonly FauxResponse[]) {
 }
 
 describe("project MCP integration", () => {
+	it("registers config, client, and tool services without creating another Agent loop", async () => {
+		const context = createRootContext({ id: "mcp-entries" });
+		try {
+			await context.plugin(mcpConfig, undefined);
+			await context.plugin(mcpClient, undefined);
+			await context.plugin(mcpTools, undefined);
+			expect(context.require(mcpConfigServiceKey).load).toBe(loadEffectiveMcpConfig);
+			expect(typeof context.require(mcpClientServiceKey).connect).toBe("function");
+			expect(typeof context.require(mcpToolServiceKey).create).toBe("function");
+		} finally {
+			await context.dispose();
+		}
+	});
+
 	it("parses stdio configuration and resolves environment references without exposing values", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-mcp-config-"));
 		roots.push(root);

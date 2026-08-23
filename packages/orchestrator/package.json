@@ -41,7 +41,8 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/coding-agent": "0.1.7"
+		"@di-code/coding-agent": "0.1.7",
+		"@di-code/plugin-runtime": "0.1.7"
 	},
 	"engines": {
 		"node": ">=22.19.0"

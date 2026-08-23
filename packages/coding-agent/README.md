@@ -576,6 +576,8 @@ di-code --mode json "检查测试状态" | ForEach-Object {
 
 `di-code-rpc` 是供宿主程序启动的子进程入口，不是交互命令。它从 stdin 接收一行一个 JSON 请求，并从 stdout 写一行一个版本化响应或事件；stderr 仅用于诊断。
 
+worker 通过 composition 的 `AgentSessionFactory` 创建 session，而不是入口直接构造 session。stdin 结束或收到终止信号时，它会先结束或取消活跃请求并写入终态 response，再 flush stdout、dispose composition，最后退出。嵌入 `RpcServer` 时，使用可 await 的 `shutdown()` 获得同一顺序；`stop()` 保留为兼容的非阻塞入口。
+
 公开 RPC 方法：
 
 | 方法 | 参数 | 结果 |

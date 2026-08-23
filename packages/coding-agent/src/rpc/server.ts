@@ -21,10 +21,16 @@ export interface RpcSession {
 	subscribeSession(listener: AgentSessionListener): () => void;
 }
 
+/** Read-only method inventory supplied by the composition-owned RpcMethodRegistry. */
+export interface RpcMethodCatalog {
+	readonly has: (name: string) => boolean;
+}
+
 export interface RpcServerOptions {
 	readonly session: RpcSession;
 	readonly input: Readable;
 	readonly output: Writable;
+	readonly methods?: RpcMethodCatalog;
 	readonly onError?: (error: Error) => void;
 	readonly maxLineBytes?: number;
 }
@@ -42,27 +48,43 @@ export class RpcServer {
 	private readonly session: RpcSession;
 	private readonly input: Readable;
 	private readonly output: Writable;
+	private readonly methods?: RpcMethodCatalog;
 	private readonly onError: (error: Error) => void;
 	private readonly decoder: JsonlLineDecoder;
 	private readonly inFlightIds = new Set<string>();
 	private activePrompt?: ActivePrompt;
 	private unsubscribeSession?: () => void;
+	private readonly activeRequests = new Set<Promise<void>>();
+	private readonly finishedPromise: Promise<void>;
+	private resolveFinished?: () => void;
+	private shutdownPromise?: Promise<void>;
 	private started = false;
+	private shuttingDown = false;
 
 	constructor(options: RpcServerOptions) {
 		this.session = options.session;
 		this.input = options.input;
 		this.output = options.output;
+		this.methods = options.methods;
 		this.onError = options.onError ?? (() => undefined);
 		this.decoder = new JsonlLineDecoder((line) => this.acceptLine(line), {
 			maxLineBytes: options.maxLineBytes,
 		});
+		this.finishedPromise = new Promise((resolve) => {
+			this.resolveFinished = resolve;
+		});
+	}
+
+	/** Resolves after active requests have responded and stdout has acknowledged the final flush. */
+	finished(): Promise<void> {
+		return this.finishedPromise;
 	}
 
 	start(): void {
 		if (this.started) throw new Error("RPC server is already started.");
 		this.started = true;
 		this.unsubscribeSession = this.session.subscribeSession(async (event) => {
+			if (this.shuttingDown) return;
 			const active = this.activePrompt;
 			if (!active) return;
 			await this.write({
@@ -78,7 +100,16 @@ export class RpcServer {
 	}
 
 	stop(): void {
-		if (!this.started) return;
+		void this.shutdown().catch(this.onError);
+	}
+
+	/**
+	 * Stops intake, aborts in-flight work, waits for its terminal response, then flushes stdout.
+	 * Product composition disposal happens after this method resolves so protocol output remains intact.
+	 */
+	shutdown(): Promise<void> {
+		if (this.shutdownPromise) return this.shutdownPromise;
+		this.shuttingDown = true;
 		this.started = false;
 		this.input.off("data", this.handleData);
 		this.input.off("end", this.handleEnd);
@@ -86,6 +117,18 @@ export class RpcServer {
 		this.unsubscribeSession?.();
 		this.unsubscribeSession = undefined;
 		this.activePrompt?.controller.abort();
+		this.shutdownPromise = this.finishShutdown();
+		return this.shutdownPromise;
+	}
+
+	private async finishShutdown(): Promise<void> {
+		try {
+			await Promise.allSettled([...this.activeRequests]);
+			await this.flush();
+		} finally {
+			this.resolveFinished?.();
+			this.resolveFinished = undefined;
+		}
 	}
 
 	private readonly handleData = (chunk: string | Buffer): void => {
@@ -105,15 +148,16 @@ export class RpcServer {
 		} catch (cause) {
 			this.onError(errorFrom(cause));
 		}
-		this.stop();
+		void this.shutdown().catch(this.onError);
 	};
 
 	private readonly handleInputError = (cause: Error): void => {
 		this.onError(cause);
-		this.stop();
+		void this.shutdown().catch(this.onError);
 	};
 
 	private acceptLine(line: string): void {
+		if (this.shuttingDown) return;
 		let request: RpcRequest;
 		try {
 			request = parseRpcRequest(line);
@@ -131,12 +175,20 @@ export class RpcServer {
 			return;
 		}
 		this.inFlightIds.add(request.id);
-		void this.handleRequest(request)
+		const work = this.handleRequest(request)
 			.catch((cause) => this.onError(errorFrom(cause)))
-			.finally(() => this.inFlightIds.delete(request.id));
+			.finally(() => {
+				this.inFlightIds.delete(request.id);
+				this.activeRequests.delete(work);
+			});
+		this.activeRequests.add(work);
 	}
 
 	private async handleRequest(request: RpcRequest): Promise<void> {
+		if (this.methods && !this.methods.has(request.method)) {
+			await this.writeError(request.id, "METHOD_NOT_FOUND", "RPC method is not registered for this server.");
+			return;
+		}
 		switch (request.method) {
 			case "get_state":
 				await this.write({
@@ -216,6 +268,15 @@ export class RpcServer {
 	private write(message: RpcServerMessage): Promise<void> {
 		return new Promise((resolve, reject) => {
 			this.output.write(serializeJsonLine(message), (error) => {
+				if (error) reject(error);
+				else resolve();
+			});
+		});
+	}
+
+	private flush(): Promise<void> {
+		return new Promise((resolve, reject) => {
+			this.output.write("", (error) => {
 				if (error) reject(error);
 				else resolve();
 			});

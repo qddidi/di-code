@@ -179,6 +179,18 @@
 			"types": "./dist/agent-session.d.ts",
 			"import": "./dist/agent-session.js"
 		},
+		"./rpc-protocol-v1": {
+			"types": "./dist/rpc-protocol-v1.d.ts",
+			"import": "./dist/rpc-protocol-v1.js"
+		},
+		"./rpc-server": {
+			"types": "./dist/rpc-server.d.ts",
+			"import": "./dist/rpc-server.js"
+		},
+		"./rpc-events": {
+			"types": "./dist/rpc-events.d.ts",
+			"import": "./dist/rpc-events.js"
+		},
 		"./workspace": {
 			"types": "./dist/tool-workspace.d.ts",
 			"import": "./dist/tool-workspace.js"
