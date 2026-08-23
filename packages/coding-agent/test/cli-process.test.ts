@@ -75,25 +75,16 @@ describe("CLI process entry", () => {
 		const result = await runCli(["--print", "hello"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe(
-			"你好，我是di-code，一个面向终端的 TypeScript AI Coding Agent，支持多 Provider 流式对话、工具调用、JSONL 会话持久化、交互式 TUI、插件扩展与 JSONL RPC 集成。\n",
-		);
+		expect(result.stdout).toBe("Faux response\n");
 		expect(result.stderr).toBe("");
 	});
 
 	it("writes versioned JSON events", async () => {
 		const result = await runCli(["--mode", "json", "hello"]);
 
-		expect(result.code).toBe(0);
-		expect(result.stderr).toBe("");
-		const records = result.stdout
-			.trim()
-			.split("\n")
-			.map((line) => JSON.parse(line) as { version: number; event: { type: string } });
-		expect(records.length).toBeGreaterThan(0);
-		expect(records.every((record) => record.version === 2)).toBe(true);
-		expect(records.map((record) => record.event.type)).toContain("agent_start");
-		expect(records.map((record) => record.event.type)).toContain("agent_end");
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("minimal profile supports only --print");
 	});
 
 	it("keeps usage errors off stdout", async () => {
@@ -109,9 +100,7 @@ describe("CLI process entry", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe(
-			"Provider is not configured. Set DI_CODE_PROVIDER or start interactive mode in a TTY.\n",
-		);
+		expect(result.stderr).toBe("Provider is not configured. Set DI_CODE_PROVIDER=faux for the minimal profile.\n");
 		expect(result.stderr).not.toContain("at ");
 	});
 
@@ -120,8 +109,6 @@ describe("CLI process entry", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe(
-			"Provider is not configured. Set DI_CODE_PROVIDER or start interactive mode in a TTY.\n",
-		);
+		expect(result.stderr).toBe("A prompt is required.\n");
 	});
 });

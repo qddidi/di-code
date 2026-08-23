@@ -6,7 +6,7 @@ import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { workspaceStorageKey } from "../src/core/user-data.ts";
-import { formatSessionLabel, runMain, StartupStatusRenderer } from "../src/main.ts";
+import { formatSessionLabel, runMain, StartupStatusRenderer } from "../src/legacy-main.ts";
 
 function createIo() {
 	return { stdout: vi.fn(), stderr: vi.fn() };

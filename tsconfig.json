@@ -4,6 +4,7 @@
 		"noEmit": true,
 		"baseUrl": ".",
 		"paths": {
+			"@di-code/builtins": ["packages/builtins/src/index.ts"],
 			"@di-code/plugin-runtime": ["packages/plugin-runtime/src/index.ts"],
 			"@di-code/plugin-loader": ["packages/plugin-loader/src/index.ts"],
 			"@di-code/plugin-sdk": ["packages/plugin-sdk/src/index.ts"]

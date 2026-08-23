@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createFauxProvider, type FauxResponse } from "@di-code/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectTrustManager } from "../src/extensions/trust.ts";
-import { runMain } from "../src/main.ts";
+import { runMain } from "../src/legacy-main.ts";
 import {
 	addMcpConfig,
 	getMcpConfig,

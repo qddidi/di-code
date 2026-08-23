@@ -22,6 +22,30 @@
 		"./session-memory": {
 			"types": "./dist/session-memory.d.ts",
 			"import": "./dist/session-memory.js"
+		},
+		"./bootstrap": {
+			"types": "./dist/bootstrap.d.ts",
+			"import": "./dist/bootstrap.js"
+		},
+		"./runtime": {
+			"types": "./dist/runtime.d.ts",
+			"import": "./dist/runtime.js"
+		},
+		"./diagnostics": {
+			"types": "./dist/diagnostics.d.ts",
+			"import": "./dist/diagnostics.js"
+		},
+		"./process-exit": {
+			"types": "./dist/process-exit.d.ts",
+			"import": "./dist/process-exit.js"
+		},
+		"./agent-loop": {
+			"types": "./dist/agent-loop.d.ts",
+			"import": "./dist/agent-loop.js"
+		},
+		"./mode-print": {
+			"types": "./dist/mode-print.d.ts",
+			"import": "./dist/mode-print.js"
 		}
 	},
 	"files": [
@@ -33,6 +57,7 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
+		"@di-code/agent": "0.1.7",
 		"@di-code/ai": "0.1.7",
 		"@di-code/plugin-runtime": "0.1.7"
 	},

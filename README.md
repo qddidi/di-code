@@ -31,6 +31,8 @@ $env:DI_CODE_PROVIDER = "faux"
 npm run dev -- --print "用一句话介绍这个项目"
 ```
 
+Stage 7 的最小源码 profile 通过 Loader 组合 `runtime`、Faux Provider、Agent loop、memory 和 `print`；该 profile 仅支持 `--print`，用于离线启动和生命周期验证。完整交互、JSON、RPC 和其他 Provider 仍属于旧产品 baseline，待后续 profile 阶段迁移。
+
 要使用真实 Provider，请在项目根目录创建未提交的 `.env`，再运行：
 
 ```powershell
