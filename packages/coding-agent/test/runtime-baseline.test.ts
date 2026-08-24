@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { JsonlLineDecoder, serializeJsonLine } from "../src/rpc/jsonl.ts";
 import { RPC_PROTOCOL_VERSION, type RpcServerMessage } from "../src/rpc/protocol.ts";
+import { createFauxSessionBaseline } from "./fixtures/faux-session-baseline.ts";
 
 const entryPath = resolve(process.cwd(), "src/rpc-entry.ts");
 
@@ -31,6 +32,55 @@ async function readRpcRecord(
 }
 
 describe("stage 0 runtime behavior baseline", () => {
+	it("persists a faux prompt and cancellation, observes events, and resumes the same session", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-baseline-session-"));
+		const filePath = join(root, "baseline.jsonl");
+		try {
+			const baseline = await createFauxSessionBaseline({
+				root,
+				filePath,
+				chunkSize: 1,
+				responses: [
+					{ type: "success", content: [{ type: "text", text: "saved answer" }] },
+					{ type: "success", content: [{ type: "text", text: "cancel this response" }] },
+				],
+			});
+
+			await expect(baseline.session.prompt("saved question")).resolves.toMatchObject({ stopReason: "stop" });
+			const sessionId = baseline.session.sessionId;
+			const controller = new AbortController();
+			controller.abort();
+			const cancelled = await baseline.session.prompt("cancelled question", controller.signal);
+
+			expect(cancelled.stopReason).toBe("aborted");
+			expect(baseline.events.map((event) => event.type)).toEqual(
+				expect.arrayContaining(["agent_start", "message_update", "message_end", "usage_update", "agent_end"]),
+			);
+
+			const resumed = await createFauxSessionBaseline({
+				root,
+				filePath,
+				open: true,
+				responses: [{ type: "success", content: [{ type: "text", text: "resumed answer" }] }],
+			});
+			expect(resumed.session.sessionId).toBe(sessionId);
+			expect(resumed.session.transcript.map((message) => message.role)).toEqual([
+				"user",
+				"assistant",
+				"user",
+				"assistant",
+			]);
+			expect(resumed.session.transcript.at(-1)).toMatchObject({ role: "assistant", stopReason: "aborted" });
+			await expect(resumed.session.prompt("resume question")).resolves.toMatchObject({
+				stopReason: "stop",
+				content: [{ type: "text", text: "resumed answer" }],
+			});
+			expect(resumed.events.map((event) => event.type)).toContain("agent_end");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("runs faux RPC get_state, prompt, and cancel through the source entry", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-baseline-rpc-"));
 		const child = spawn(process.execPath, ["--experimental-strip-types", entryPath], {
