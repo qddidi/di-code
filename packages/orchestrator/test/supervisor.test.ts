@@ -154,4 +154,19 @@ describe("RpcSupervisor", () => {
 		await expect(prompt).resolves.toMatchObject({ stopReason: "aborted" });
 		await supervisor.stop();
 	});
+
+	it("negotiates typed RPC capabilities and makes repeated shutdown idempotent", async () => {
+		const { supervisor, child } = setup();
+		await supervisor.start();
+		await expect(supervisor.negotiate(["sequence", "operation_update"])).resolves.toMatchObject({
+			methods: expect.arrayContaining(["prompt", "cancel"]),
+			events: ["sequence", "operation_update"],
+		});
+		const first = supervisor.stop();
+		const second = supervisor.stop();
+		expect(second).toBe(first);
+		await first;
+		expect(child()?.killed).toBe(true);
+		expect(supervisor.state).toBe("stopped");
+	});
 });

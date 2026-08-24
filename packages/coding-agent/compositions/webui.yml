@@ -1,0 +1,4 @@
+entries:
+  - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, system-prompt, compaction-basic, compaction-tool-result] }
+  - { id: session-factory, name: "@di-code/coding-agent/session-factory-entry", dependsOn: [agent-session] }
+  - { id: interactive-resources, name: "@di-code/coding-agent/interactive-resources-entry", dependsOn: [system-prompt, resource-loader, skills] }

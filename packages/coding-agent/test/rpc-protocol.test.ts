@@ -148,4 +148,55 @@ describe("RPC protocol v1", () => {
 			),
 		).toThrow(RpcProtocolError);
 	});
+
+	it("validates attachment, operation, and negotiated event payloads", () => {
+		expect(
+			parseRpcRequest(
+				JSON.stringify({
+					version: 1,
+					kind: "request",
+					id: "attachment-1",
+					method: "create_attachment",
+					params: { name: "diagram.png", contentType: "image/png", data: "aGVsbG8=" },
+				}),
+			),
+		).toMatchObject({ method: "create_attachment" });
+		expect(() =>
+			parseRpcRequest(
+				JSON.stringify({
+					version: 1,
+					kind: "request",
+					id: "attachment-2",
+					method: "create_attachment",
+					params: { name: "secret.txt", contentType: "text/plain", data: "aGVsbG8=" },
+				}),
+			),
+		).toThrow(RpcProtocolError);
+
+		expect(
+			parseRpcServerMessage(
+				JSON.stringify({
+					version: 1,
+					kind: "event",
+					requestId: "prompt-1",
+					sequence: 3,
+					event: {
+						type: "operation_update",
+						operation: { requestId: "prompt-1", kind: "prompt", status: "running" },
+					},
+				}),
+			),
+		).toMatchObject({ kind: "event" });
+		expect(() =>
+			parseRpcServerMessage(
+				JSON.stringify({
+					version: 1,
+					kind: "response",
+					id: "operation-1",
+					ok: true,
+					result: { method: "get_operation", operation: { requestId: "prompt-1", kind: "prompt", status: "unknown" } },
+				}),
+			),
+		).toThrow(RpcProtocolError);
+	});
 });

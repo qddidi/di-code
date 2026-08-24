@@ -12,7 +12,7 @@ import {
 	resolvePackagePluginExport,
 } from "@di-code/plugin-loader";
 
-export type DefaultCompositionName = "base" | "interactive" | "print" | "json" | "rpc";
+export type DefaultCompositionName = "base" | "interactive" | "print" | "json" | "rpc" | "webui";
 
 export interface CompositionResolutionOptions {
 	/** Work root used for project composition discovery and the workspace capability. */

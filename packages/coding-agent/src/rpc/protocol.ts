@@ -4,43 +4,104 @@ import type { AgentSessionEvent } from "../core/session.ts";
 export const RPC_PROTOCOL_VERSION = 1 as const;
 export const RPC_MAX_ID_LENGTH = 128;
 export const RPC_MAX_PROMPT_LENGTH = 1_000_000;
+export const RPC_MAX_ATTACHMENTS_PER_REQUEST = 4;
+export const RPC_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
-export type RpcMethod = "prompt" | "cancel" | "get_state";
+/** v1 grows only by methods and optional fields. Clients must negotiate extended events first. */
+export const RPC_METHODS = [
+	"prompt",
+	"cancel",
+	"get_state",
+	"get_capabilities",
+	"resume_events",
+	"list_sessions",
+	"new_session",
+	"open_session",
+	"get_transcript",
+	"get_tree",
+	"navigate_tree",
+	"steer",
+	"retry",
+	"get_operation",
+	"get_models",
+	"set_model",
+	"get_runtime",
+	"set_runtime",
+	"set_thinking_level",
+	"compact",
+	"set_compaction_enabled",
+	"get_usage",
+	"list_skills",
+	"get_resources",
+	"get_product_state",
+	"list_providers",
+	"login",
+	"logout",
+	"get_project_trust",
+	"set_project_trust",
+	"list_context_files",
+	"list_mcp_servers",
+	"configure_mcp_server",
+	"remove_mcp_server",
+	"reconnect_mcp_server",
+	"create_attachment",
+	"approve_tool",
+] as const;
+export type RpcMethod = (typeof RPC_METHODS)[number];
 
-export type RpcRequest =
-	| {
-			readonly version: typeof RPC_PROTOCOL_VERSION;
-			readonly kind: "request";
-			readonly id: string;
-			readonly method: "prompt";
-			readonly params: { readonly message: string };
-	  }
-	| {
-			readonly version: typeof RPC_PROTOCOL_VERSION;
-			readonly kind: "request";
-			readonly id: string;
-			readonly method: "cancel";
-			readonly params: { readonly requestId: string };
-	  }
-	| {
-			readonly version: typeof RPC_PROTOCOL_VERSION;
-			readonly kind: "request";
-			readonly id: string;
-			readonly method: "get_state";
-			readonly params: Record<string, never>;
-	  };
+export interface RpcRequest {
+	readonly version: typeof RPC_PROTOCOL_VERSION;
+	readonly kind: "request";
+	readonly id: string;
+	readonly method: RpcMethod;
+	readonly params: Record<string, unknown>;
+}
 
 export interface RpcSessionState {
 	readonly sessionId: string;
 	readonly modelId: string;
 	readonly isStreaming: boolean;
 	readonly messageCount: number;
+	readonly sequence?: number;
 }
 
-export type RpcSuccessResult =
-	| { readonly method: "prompt"; readonly message: AssistantMessage }
-	| { readonly method: "cancel"; readonly cancelled: boolean }
-	| { readonly method: "get_state"; readonly state: RpcSessionState };
+/** Metadata for an attachment kept only in the live RPC server memory. */
+export interface RpcAttachmentInfo {
+	readonly id: string;
+	readonly name: string;
+	readonly contentType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+	readonly bytes: number;
+}
+
+export interface RpcCapabilities {
+	readonly methods: readonly RpcMethod[];
+	readonly events: readonly RpcExtendedEventName[];
+	readonly eventBufferSize: number;
+}
+
+export type RpcExtendedEventName =
+	| "sequence"
+	| "operation_update"
+	| "snapshot_required"
+	| "session_changed"
+	| "tool_approval";
+
+export interface RpcProductState {
+	readonly projectTrusted: boolean;
+}
+
+export type OperationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "crashed";
+export interface OperationState {
+	readonly requestId: string;
+	readonly kind: RpcMethod;
+	readonly status: OperationStatus;
+	readonly sessionId?: string;
+	readonly message?: AssistantMessage;
+	readonly error?: { readonly code: RpcErrorCode; readonly message: string };
+}
+
+/** Method-specific result fields are validated at the wire boundary. */
+export type RpcSuccessResult = { readonly method: RpcMethod; readonly [key: string]: unknown };
 
 export type RpcErrorCode =
 	| "PARSE_ERROR"
@@ -51,6 +112,8 @@ export type RpcErrorCode =
 	| "BUSY"
 	| "NOT_FOUND"
 	| "CANCELLED"
+	| "DISPOSED"
+	| "UNAUTHORIZED"
 	| "INTERNAL_ERROR"
 	| "PROCESS_EXIT";
 
@@ -63,11 +126,12 @@ const RPC_ERROR_CODES: ReadonlySet<RpcErrorCode> = new Set([
 	"BUSY",
 	"NOT_FOUND",
 	"CANCELLED",
+	"DISPOSED",
+	"UNAUTHORIZED",
 	"INTERNAL_ERROR",
 	"PROCESS_EXIT",
 ]);
-
-const RPC_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
+const LEGACY_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
 	"agent_start",
 	"turn_start",
 	"message_start",
@@ -79,9 +143,18 @@ const RPC_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
 	"agent_end",
 	"compaction_start",
 	"compaction_end",
+	"queue_update",
+	"tree_navigated",
 	"usage_update",
 ]);
-
+const EXTENDED_EVENT_TYPES = new Set(["snapshot_required", "operation_update", "session_changed", "tool_approval"]);
+const EXTENDED_EVENT_NAMES: ReadonlySet<RpcExtendedEventName> = new Set([
+	"sequence",
+	"operation_update",
+	"snapshot_required",
+	"session_changed",
+	"tool_approval",
+]);
 const ASSISTANT_STOP_REASONS = new Set(["stop", "length", "tool_use", "error", "aborted"]);
 
 export interface RpcSuccessResponse {
@@ -91,7 +164,6 @@ export interface RpcSuccessResponse {
 	readonly ok: true;
 	readonly result: RpcSuccessResult;
 }
-
 export interface RpcErrorResponse {
 	readonly version: typeof RPC_PROTOCOL_VERSION;
 	readonly kind: "response";
@@ -99,14 +171,19 @@ export interface RpcErrorResponse {
 	readonly ok: false;
 	readonly error: { readonly code: RpcErrorCode; readonly message: string };
 }
-
 export interface RpcEventRecord {
 	readonly version: typeof RPC_PROTOCOL_VERSION;
 	readonly kind: "event";
 	readonly requestId: string;
-	readonly event: AgentSessionEvent;
+	readonly event:
+		| AgentSessionEvent
+		| {
+				readonly type: "snapshot_required" | "operation_update" | "session_changed" | "tool_approval";
+				readonly [key: string]: unknown;
+		  };
+	readonly sessionId?: string;
+	readonly sequence?: number;
 }
-
 export type RpcResponse = RpcSuccessResponse | RpcErrorResponse;
 export type RpcServerMessage = RpcResponse | RpcEventRecord;
 
@@ -127,76 +204,136 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
 		? (value as Record<string, unknown>)
 		: undefined;
 }
-
 function requiredId(value: unknown, field: string, requestId?: string): string {
-	if (typeof value !== "string" || value.length === 0 || value.length > RPC_MAX_ID_LENGTH) {
+	if (typeof value !== "string" || value.length === 0 || value.length > RPC_MAX_ID_LENGTH)
 		throw new RpcProtocolError(
 			"INVALID_REQUEST",
 			`${field} must be a non-empty string of at most ${RPC_MAX_ID_LENGTH} characters.`,
 			requestId,
 		);
-	}
 	return value;
 }
-
 function parseJsonObject(line: string): Record<string, unknown> {
-	let value: unknown;
 	try {
-		value = JSON.parse(line);
-	} catch {
+		const result = objectRecord(JSON.parse(line));
+		if (!result) throw new RpcProtocolError("INVALID_REQUEST", "RPC input must be a JSON object.");
+		return result;
+	} catch (cause) {
+		if (cause instanceof RpcProtocolError) throw cause;
 		throw new RpcProtocolError("PARSE_ERROR", "RPC input must be valid JSON.");
 	}
-	const record = objectRecord(value);
-	if (!record) throw new RpcProtocolError("INVALID_REQUEST", "RPC input must be a JSON object.");
-	return record;
 }
-
 function assertVersion(record: Record<string, unknown>, requestId?: string): void {
-	if (record.version !== RPC_PROTOCOL_VERSION) {
+	if (record.version !== RPC_PROTOCOL_VERSION)
 		throw new RpcProtocolError(
 			"UNSUPPORTED_VERSION",
 			`Unsupported RPC protocol version; expected ${RPC_PROTOCOL_VERSION}.`,
 			requestId,
 		);
-	}
+}
+function stringParam(params: Record<string, unknown>, name: string, id: string, optional = false): void {
+	const value = params[name];
+	if (optional && value === undefined) return;
+	if (typeof value !== "string" || value.length === 0 || value.length > RPC_MAX_PROMPT_LENGTH)
+		throw new RpcProtocolError("INVALID_PARAMS", `${name} must be a non-empty string.`, id);
+}
+function booleanParam(params: Record<string, unknown>, name: string, id: string): void {
+	if (typeof params[name] !== "boolean") throw new RpcProtocolError("INVALID_PARAMS", `${name} must be a boolean.`, id);
+}
+function attachmentIdsParam(params: Record<string, unknown>, id: string): void {
+	if (params.attachmentIds === undefined) return;
+	if (
+		!Array.isArray(params.attachmentIds) ||
+		params.attachmentIds.length > RPC_MAX_ATTACHMENTS_PER_REQUEST ||
+		!params.attachmentIds.every(
+			(value) => typeof value === "string" && value.length > 0 && value.length <= RPC_MAX_ID_LENGTH,
+		)
+	)
+		throw new RpcProtocolError(
+			"INVALID_PARAMS",
+			`attachmentIds must contain at most ${RPC_MAX_ATTACHMENTS_PER_REQUEST} attachment IDs.`,
+			id,
+		);
 }
 
+/** Parses every public v1 method before any dispatcher or transport observes it. */
 export function parseRpcRequest(line: string): RpcRequest {
 	const record = parseJsonObject(line);
 	const candidateId = typeof record.id === "string" ? record.id : undefined;
 	assertVersion(record, candidateId);
-	if (record.kind !== "request") {
+	if (record.kind !== "request")
 		throw new RpcProtocolError("INVALID_REQUEST", 'RPC request kind must be "request".', candidateId);
-	}
 	const id = requiredId(record.id, "id", candidateId);
 	const params = objectRecord(record.params);
 	if (!params) throw new RpcProtocolError("INVALID_PARAMS", "RPC params must be an object.", id);
-
-	switch (record.method) {
-		case "prompt": {
-			const message = params.message;
-			if (typeof message !== "string" || message.trim().length === 0 || message.length > RPC_MAX_PROMPT_LENGTH) {
-				throw new RpcProtocolError(
-					"INVALID_PARAMS",
-					`prompt.message must be non-empty and at most ${RPC_MAX_PROMPT_LENGTH} characters.`,
-					id,
-				);
-			}
-			return { version: RPC_PROTOCOL_VERSION, kind: "request", id, method: "prompt", params: { message } };
-		}
+	if (typeof record.method !== "string" || !RPC_METHODS.includes(record.method as RpcMethod))
+		throw new RpcProtocolError("METHOD_NOT_FOUND", "Unknown RPC method.", id);
+	const method = record.method as RpcMethod;
+	switch (method) {
+		case "prompt":
+		case "steer":
+			stringParam(params, "message", id);
+			attachmentIdsParam(params, id);
+			break;
 		case "cancel":
-			return {
-				version: RPC_PROTOCOL_VERSION,
-				kind: "request",
+		case "get_operation":
+		case "open_session":
+		case "navigate_tree":
+		case "set_model":
+		case "logout":
+		case "remove_mcp_server":
+		case "reconnect_mcp_server":
+			stringParam(
+				params,
+				method === "cancel" || method === "get_operation"
+					? "requestId"
+					: method === "open_session"
+						? "sessionId"
+						: method === "navigate_tree"
+							? "entryId"
+							: method === "set_model"
+								? "modelId"
+								: method === "logout"
+									? "providerId"
+									: "serverId",
 				id,
-				method: "cancel",
-				params: { requestId: requiredId(params.requestId, "cancel.requestId", id) },
-			};
-		case "get_state":
-			return { version: RPC_PROTOCOL_VERSION, kind: "request", id, method: "get_state", params: {} };
-		default:
-			throw new RpcProtocolError("METHOD_NOT_FOUND", "Unknown RPC method.", id);
+			);
+			break;
+		case "set_runtime":
+			stringParam(params, "providerId", id);
+			stringParam(params, "modelId", id);
+			break;
+		case "set_compaction_enabled":
+		case "set_project_trust":
+			booleanParam(params, method === "set_compaction_enabled" ? "enabled" : "trusted", id);
+			break;
+		case "get_capabilities":
+			if (
+				params.events !== undefined &&
+				(!Array.isArray(params.events) || !params.events.every((item) => typeof item === "string"))
+			)
+				throw new RpcProtocolError("INVALID_PARAMS", "get_capabilities.events must be a string array.", id);
+			break;
+		case "resume_events":
+			if (
+				params.lastSequence !== undefined &&
+				(!Number.isSafeInteger(params.lastSequence) || (params.lastSequence as number) < 0)
+			)
+				throw new RpcProtocolError("INVALID_PARAMS", "resume_events.lastSequence must be a non-negative integer.", id);
+			break;
+		case "create_attachment":
+			stringParam(params, "name", id);
+			stringParam(params, "contentType", id);
+			stringParam(params, "data", id);
+			if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(params.contentType as string))
+				throw new RpcProtocolError("INVALID_PARAMS", "Attachment contentType is unsupported.", id);
+			break;
+		case "approve_tool":
+			stringParam(params, "approvalId", id);
+			booleanParam(params, "approved", id);
+			break;
 	}
+	return { version: RPC_PROTOCOL_VERSION, kind: "request", id, method, params };
 }
 
 export function parseRpcServerMessage(line: string): RpcServerMessage {
@@ -205,14 +342,20 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 	if (record.kind === "event") {
 		requiredId(record.requestId, "requestId");
 		const event = objectRecord(record.event);
-		if (!event || typeof event.type !== "string" || !RPC_EVENT_TYPES.has(event.type as AgentSessionEvent["type"])) {
+		const type = event?.type;
+		if (
+			typeof type !== "string" ||
+			(!LEGACY_EVENT_TYPES.has(type as AgentSessionEvent["type"]) && !EXTENDED_EVENT_TYPES.has(type))
+		)
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
-		}
+		if (!event) throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
+		if (record.sequence !== undefined && (!Number.isSafeInteger(record.sequence) || (record.sequence as number) < 0))
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC event sequence is invalid.");
+		assertEvent(event, type);
 		return record as unknown as RpcEventRecord;
 	}
-	if (record.kind !== "response") {
+	if (record.kind !== "response")
 		throw new RpcProtocolError("INVALID_REQUEST", 'RPC server message kind must be "response" or "event".');
-	}
 	if (record.ok === false) {
 		const error = objectRecord(record.error);
 		if (
@@ -220,117 +363,235 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 			typeof error.code !== "string" ||
 			!RPC_ERROR_CODES.has(error.code as RpcErrorCode) ||
 			typeof error.message !== "string"
-		) {
+		)
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC error response has an invalid error object.");
-		}
 		if (record.id !== undefined) requiredId(record.id, "id");
 		return record as unknown as RpcErrorResponse;
 	}
 	if (record.ok !== true) throw new RpcProtocolError("INVALID_REQUEST", "RPC response ok must be a boolean.");
 	requiredId(record.id, "id");
 	const result = objectRecord(record.result);
-	if (!result) {
-		throw new RpcProtocolError("INVALID_REQUEST", "RPC success response must contain a result object.");
-	}
+	if (!result || typeof result.method !== "string" || !RPC_METHODS.includes(result.method as RpcMethod))
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC success response has an unknown method.");
 	assertSuccessResult(result);
 	return record as unknown as RpcSuccessResponse;
 }
-
 function assertSuccessResult(result: Record<string, unknown>): void {
-	switch (result.method) {
-		case "prompt": {
-			const message = objectRecord(result.message);
-			if (
-				!message ||
-				message.role !== "assistant" ||
-				!Array.isArray(message.content) ||
-				!message.content.every(isAssistantContent) ||
-				typeof message.provider !== "string" ||
-				typeof message.model !== "string" ||
-				!finiteNumber(message.timestamp) ||
-				typeof message.stopReason !== "string" ||
-				!ASSISTANT_STOP_REASONS.has(message.stopReason) ||
-				!isUsage(message.usage) ||
-				(message.stopReason === "error" || message.stopReason === "aborted"
-					? typeof message.errorMessage !== "string"
-					: message.errorMessage !== undefined)
-			) {
-				throw new RpcProtocolError("INVALID_REQUEST", "RPC prompt response has an invalid message.");
-			}
+	switch (result.method as RpcMethod) {
+		case "prompt":
+		case "retry":
+			assertAssistantMessage(result.message);
 			return;
-		}
 		case "cancel":
-			if (typeof result.cancelled !== "boolean") {
-				throw new RpcProtocolError("INVALID_REQUEST", "RPC cancel response has an invalid result.");
-			}
+			if (typeof result.cancelled !== "boolean")
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC cancel result is invalid.");
 			return;
-		case "get_state": {
-			const state = objectRecord(result.state);
-			if (
-				!state ||
-				typeof state.sessionId !== "string" ||
-				state.sessionId.length === 0 ||
-				typeof state.modelId !== "string" ||
-				state.modelId.length === 0 ||
-				typeof state.isStreaming !== "boolean" ||
-				!Number.isInteger(state.messageCount) ||
-				(state.messageCount as number) < 0
-			) {
-				throw new RpcProtocolError("INVALID_REQUEST", "RPC get_state response has an invalid state.");
-			}
+		case "get_state":
+			assertState(result.state);
 			return;
-		}
-		default:
-			throw new RpcProtocolError("INVALID_REQUEST", "RPC success response has an unknown method.");
+		case "get_capabilities":
+			assertCapabilities(result);
+			return;
+		case "resume_events":
+			if (typeof result.snapshotRequired !== "boolean")
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC resume_events result is invalid.");
+			return;
+		case "get_operation":
+			assertOperationState(result.operation);
+			return;
+		case "create_attachment":
+			assertAttachmentInfo(result.attachment);
+			return;
+		case "get_product_state":
+			assertProductState(result.state);
+			return;
+		case "get_project_trust":
+			if (typeof result.trusted !== "boolean")
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC get_project_trust result is invalid.");
+			return;
+		case "list_sessions":
+			if (!Array.isArray(result.sessions))
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC list_sessions result is invalid.");
+			for (const session of result.sessions) assertSessionInfo(session);
+			return;
+		case "new_session":
+		case "open_session":
+			assertSessionInfo(result.session);
+			return;
 	}
 }
-
-function finiteNumber(value: unknown): value is number {
-	return typeof value === "number" && Number.isFinite(value);
+function assertCapabilities(result: Record<string, unknown>): void {
+	if (
+		!Array.isArray(result.methods) ||
+		!result.methods.every((method) => typeof method === "string" && RPC_METHODS.includes(method as RpcMethod)) ||
+		!Array.isArray(result.events) ||
+		!result.events.every(
+			(event) => typeof event === "string" && EXTENDED_EVENT_NAMES.has(event as RpcExtendedEventName),
+		) ||
+		!Number.isSafeInteger(result.eventBufferSize) ||
+		(result.eventBufferSize as number) < 0
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC get_capabilities result is invalid.");
 }
-
-function nonNegativeNumber(value: unknown): value is number {
-	return finiteNumber(value) && value >= 0;
+function assertSessionInfo(value: unknown): void {
+	const session = objectRecord(value);
+	if (!session || typeof session.id !== "string" || !session.id || typeof session.label !== "string")
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC Session result is invalid.");
+	if (session.modifiedAt !== undefined && !Number.isFinite(session.modifiedAt))
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC Session modifiedAt is invalid.");
 }
-
-function isAssistantContent(value: unknown): boolean {
-	const content = objectRecord(value);
-	if (!content) return false;
-	switch (content.type) {
-		case "text":
-			return typeof content.text === "string";
-		case "thinking":
-			return typeof content.thinking === "string";
-		case "tool_call":
-			return (
-				typeof content.id === "string" &&
-				typeof content.name === "string" &&
-				objectRecord(content.arguments) !== undefined
-			);
-		default:
-			return false;
+function assertOperationState(value: unknown): void {
+	const operation = objectRecord(value);
+	if (
+		!operation ||
+		typeof operation.requestId !== "string" ||
+		!operation.requestId ||
+		typeof operation.kind !== "string" ||
+		!RPC_METHODS.includes(operation.kind as RpcMethod) ||
+		typeof operation.status !== "string" ||
+		!["queued", "running", "completed", "failed", "cancelled", "crashed"].includes(operation.status)
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC operation state is invalid.");
+	if (operation.sessionId !== undefined && typeof operation.sessionId !== "string")
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC operation session ID is invalid.");
+	if (operation.message !== undefined) assertAssistantMessage(operation.message);
+	if (operation.error !== undefined) assertError(operation.error);
+}
+function assertAttachmentInfo(value: unknown): void {
+	const attachment = objectRecord(value);
+	if (
+		!attachment ||
+		typeof attachment.id !== "string" ||
+		!attachment.id ||
+		typeof attachment.name !== "string" ||
+		!attachment.name ||
+		typeof attachment.contentType !== "string" ||
+		!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(attachment.contentType) ||
+		!Number.isSafeInteger(attachment.bytes) ||
+		(attachment.bytes as number) < 0
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC attachment result is invalid.");
+}
+function assertProductState(value: unknown): void {
+	const state = objectRecord(value);
+	if (!state || typeof state.projectTrusted !== "boolean")
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC product state is invalid.");
+}
+function assertError(value: unknown): void {
+	const error = objectRecord(value);
+	if (
+		!error ||
+		typeof error.code !== "string" ||
+		!RPC_ERROR_CODES.has(error.code as RpcErrorCode) ||
+		typeof error.message !== "string"
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC error result is invalid.");
+}
+function assertEvent(event: Record<string, unknown>, type: string): void {
+	if (type === "operation_update") {
+		assertOperationState(event.operation);
+		return;
+	}
+	if (type === "session_changed") {
+		if (event.session !== undefined) assertSessionInfo(event.session);
+		return;
+	}
+	if (type === "snapshot_required") return;
+	if (type === "tool_approval") {
+		if (typeof event.approvalId !== "string")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC tool_approval event is invalid.");
+		return;
+	}
+	if (type === "tool_execution_start") {
+		if (typeof event.toolCallId !== "string" || typeof event.toolName !== "string" || !objectRecord(event.arguments))
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC tool event is invalid.");
+		return;
+	}
+	if (type === "tool_execution_end") {
+		if (typeof event.toolCallId !== "string" || typeof event.toolName !== "string" || !objectRecord(event.result))
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC tool event is invalid.");
+		return;
+	}
+	if (type === "message_start" || type === "message_end") {
+		if (!objectRecord(event.message)) throw new RpcProtocolError("INVALID_REQUEST", "RPC message event is invalid.");
+		return;
+	}
+	if (type === "message_update") {
+		const update = objectRecord(event.event);
+		if (!update || typeof update.type !== "string")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC message update event is invalid.");
+		return;
+	}
+	if (type === "turn_end") {
+		if (!objectRecord(event.message) || !Array.isArray(event.toolResults))
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC turn event is invalid.");
+		return;
+	}
+	if (type === "agent_end") {
+		if (!Array.isArray(event.messages)) throw new RpcProtocolError("INVALID_REQUEST", "RPC agent event is invalid.");
+		return;
+	}
+	if (type === "compaction_start") {
+		if (event.reason !== "threshold" && event.reason !== "manual")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC compaction event is invalid.");
+		return;
+	}
+	if (type === "compaction_end") {
+		if (
+			(event.reason !== "threshold" && event.reason !== "manual") ||
+			typeof event.success !== "boolean" ||
+			(event.errorMessage !== undefined && typeof event.errorMessage !== "string")
+		)
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC compaction event is invalid.");
+		return;
+	}
+	if (type === "queue_update") {
+		if (!Array.isArray(event.steering) || !event.steering.every((item) => typeof item === "string"))
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC queue event is invalid.");
+		return;
+	}
+	if (type === "tree_navigated") {
+		if (
+			typeof event.oldLeafId !== "string" ||
+			typeof event.newLeafId !== "string" ||
+			typeof event.selectedEntryId !== "string" ||
+			typeof event.restoredEditorText !== "boolean"
+		)
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC tree event is invalid.");
+		return;
+	}
+	if (type === "usage_update" && !objectRecord(event.usage)) {
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC usage event is invalid.");
 	}
 }
-
-function isUsage(value: unknown): boolean {
-	const usage = objectRecord(value);
-	const cost = objectRecord(usage?.cost);
-	return Boolean(
-		usage &&
-			cost &&
-			nonNegativeNumber(usage.input) &&
-			nonNegativeNumber(usage.output) &&
-			nonNegativeNumber(usage.cacheRead) &&
-			nonNegativeNumber(usage.cacheWrite) &&
-			nonNegativeNumber(usage.totalTokens) &&
-			nonNegativeNumber(cost.input) &&
-			nonNegativeNumber(cost.output) &&
-			nonNegativeNumber(cost.cacheRead) &&
-			nonNegativeNumber(cost.cacheWrite) &&
-			nonNegativeNumber(cost.total),
-	);
+function assertState(value: unknown): void {
+	const state = objectRecord(value);
+	if (
+		!state ||
+		typeof state.sessionId !== "string" ||
+		!state.sessionId ||
+		typeof state.modelId !== "string" ||
+		!state.modelId ||
+		typeof state.isStreaming !== "boolean" ||
+		!Number.isInteger(state.messageCount) ||
+		(state.messageCount as number) < 0
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC get_state response has an invalid state.");
 }
-
+function assertAssistantMessage(value: unknown): void {
+	const message = objectRecord(value);
+	if (
+		!message ||
+		message.role !== "assistant" ||
+		!Array.isArray(message.content) ||
+		typeof message.provider !== "string" ||
+		typeof message.model !== "string" ||
+		!Number.isFinite(message.timestamp) ||
+		typeof message.stopReason !== "string" ||
+		!ASSISTANT_STOP_REASONS.has(message.stopReason)
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC prompt response has an invalid message.");
+}
 export function rpcErrorResponse(error: RpcProtocolError): RpcErrorResponse {
 	return {
 		version: RPC_PROTOCOL_VERSION,

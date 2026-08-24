@@ -26,6 +26,10 @@ export default defineConfig({
 				replacement: fileURLToPath(new URL("./packages/plugin-sdk/src/index.ts", import.meta.url)),
 			},
 			{
+				find: /^@di-code\/coding-agent\/ui-host$/,
+				replacement: fileURLToPath(new URL("./packages/coding-agent/src/ui-host.ts", import.meta.url)),
+			},
+			{
 				find: /^@di-code\/skills$/,
 				replacement: fileURLToPath(new URL("./packages/skills/src/index.ts", import.meta.url)),
 			},

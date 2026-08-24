@@ -37,6 +37,12 @@ unsubscribe();
 await supervisor.stop();
 ```
 
+运行中的 supervisor 还转发公开 SDK 的 `cancel()`、`getOperation()`、`negotiate()`、`resumeEvents()`、Session
+列表/创建/打开、Product/项目 trust 快照和 `createAttachment()`。这些方法的参数和结果来自
+`@di-code/coding-agent/rpc`，不会暴露或接受 coding-agent 的 `SessionHost`、`SessionManager` 或其他内部对象。
+附件只保存在子进程内存并由命名 prompt/steer 一次性消费。宿主应先协商 sequence 事件，并在恢复要求快照时重新读取状态，不能
+假定事件会被永久保存。
+
 Windows 下 npm 安装的可执行 shim（命令包装器）是 `di-code-rpc.cmd`。如果宿主程序使用其他运行时位置，请传入绝对路径。
 
 组合运行时时，可从根入口使用 `orchestratorHost` 和 `orchestratorHostKey` 创建 `RpcSupervisor`。host 只封装公开 RPC SDK，不会导入 coding-agent 的内部实现。
@@ -45,7 +51,7 @@ Windows 下 npm 安装的可执行 shim（命令包装器）是 `di-code-rpc.cmd
 
 `RpcSupervisor` 会把 `cwd` 和 `env` 传给子进程。子进程配置与 `di-code` CLI 相同：OpenAI 使用 `DI_CODE_PROVIDER=openai` 和 `OPENAI_API_KEY`；DeepSeek 使用 `DI_CODE_PROVIDER=deepseek` 和 `DEEPSEEK_API_KEY`；自定义网关使用 `cwd` 下的 `.di-code/settings.json`。`apiKey` 应引用环境变量，不能写入真实凭据。
 
-不要记录传入的 `env` 对象。supervisor 最多保留子进程 stderr 的最后 16 KiB。它不会自动重启崩溃进程，也不会重放请求，以免重复执行工具副作用。
+不要记录传入的 `env` 对象。supervisor 最多保留子进程 stderr 的最后 16 KiB。它不会自动重启崩溃进程，也不会重放请求，以免重复执行工具副作用。子进程退出会将状态设为 `crashed` 并以 `PROCESS_EXIT` 拒绝全部 pending request；`stop()` 可重复调用且共享同一关闭过程。
 
 ## 生命周期和取消
 

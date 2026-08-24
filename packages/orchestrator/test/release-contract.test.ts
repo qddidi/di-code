@@ -43,11 +43,12 @@ describe("release package contract", () => {
 		}
 	});
 
-	it("exposes both CLI entry points and the public RPC SDK", async () => {
+	it("exposes CLI, WebUI, and public RPC entry points", async () => {
 		const codingAgent = await readPackage(join(repositoryRoot, "packages", "coding-agent", "package.json"));
 		expect(codingAgent.bin).toEqual({
 			"di-code": "./dist/entry.js",
 			"di-code-rpc": "./dist/rpc-entry.js",
+			"di-code-webui": "./dist/webui-entry.js",
 		});
 		expect(codingAgent.exports).toHaveProperty("./rpc");
 	});

@@ -1,43 +1,15 @@
 import type { Readable, Writable } from "node:stream";
-import type { AssistantMessage, Message } from "@di-code/ai";
-import type { AgentSessionListener } from "../core/session.ts";
+import { RpcDispatcher, type RpcDispatcherOptions } from "./dispatcher.ts";
 import { JsonlLineDecoder, serializeJsonLine } from "./jsonl.ts";
-import {
-	parseRpcRequest,
-	RPC_PROTOCOL_VERSION,
-	type RpcErrorCode,
-	RpcProtocolError,
-	type RpcRequest,
-	type RpcServerMessage,
-	rpcErrorResponse,
-} from "./protocol.ts";
+import { parseRpcRequest, RpcProtocolError, type RpcServerMessage, rpcErrorResponse } from "./protocol.ts";
 
-export interface RpcSession {
-	readonly sessionId: string;
-	readonly modelId: string;
-	readonly isStreaming: boolean;
-	readonly transcript: readonly Message[];
-	prompt(text: string, signal?: AbortSignal): Promise<AssistantMessage>;
-	subscribeSession(listener: AgentSessionListener): () => void;
-}
+export type { RpcMethodCatalog, RpcSession } from "./dispatcher.ts";
 
-/** Read-only method inventory supplied by the composition-owned RpcMethodRegistry. */
-export interface RpcMethodCatalog {
-	readonly has: (name: string) => boolean;
-}
-
-export interface RpcServerOptions {
-	readonly session: RpcSession;
+/** JSONL process adapter. Protocol dispatch belongs to RpcDispatcher and is transport independent. */
+export interface RpcServerOptions extends RpcDispatcherOptions {
 	readonly input: Readable;
 	readonly output: Writable;
-	readonly methods?: RpcMethodCatalog;
-	readonly onError?: (error: Error) => void;
 	readonly maxLineBytes?: number;
-}
-
-interface ActivePrompt {
-	readonly requestId: string;
-	readonly controller: AbortController;
 }
 
 function errorFrom(cause: unknown): Error {
@@ -45,68 +17,47 @@ function errorFrom(cause: unknown): Error {
 }
 
 export class RpcServer {
-	private readonly session: RpcSession;
 	private readonly input: Readable;
 	private readonly output: Writable;
-	private readonly methods?: RpcMethodCatalog;
 	private readonly onError: (error: Error) => void;
 	private readonly decoder: JsonlLineDecoder;
-	private readonly inFlightIds = new Set<string>();
-	private activePrompt?: ActivePrompt;
-	private unsubscribeSession?: () => void;
-	private readonly activeRequests = new Set<Promise<void>>();
+	private readonly dispatcher: RpcDispatcher;
+	private readonly requests = new Set<Promise<void>>();
 	private readonly finishedPromise: Promise<void>;
 	private resolveFinished?: () => void;
+	private unsubscribe?: () => void;
 	private shutdownPromise?: Promise<void>;
 	private started = false;
 	private shuttingDown = false;
+	private writeChain = Promise.resolve();
 
 	constructor(options: RpcServerOptions) {
-		this.session = options.session;
 		this.input = options.input;
 		this.output = options.output;
-		this.methods = options.methods;
 		this.onError = options.onError ?? (() => undefined);
-		this.decoder = new JsonlLineDecoder((line) => this.acceptLine(line), {
-			maxLineBytes: options.maxLineBytes,
-		});
+		this.dispatcher = new RpcDispatcher(options);
+		this.decoder = new JsonlLineDecoder((line) => this.acceptLine(line), { maxLineBytes: options.maxLineBytes });
 		this.finishedPromise = new Promise((resolve) => {
 			this.resolveFinished = resolve;
 		});
 	}
 
-	/** Resolves after active requests have responded and stdout has acknowledged the final flush. */
 	finished(): Promise<void> {
 		return this.finishedPromise;
 	}
-
 	start(): void {
 		if (this.started) throw new Error("RPC server is already started.");
 		this.started = true;
-		this.unsubscribeSession = this.session.subscribeSession(async (event) => {
-			if (this.shuttingDown) return;
-			const active = this.activePrompt;
-			if (!active) return;
-			await this.write({
-				version: RPC_PROTOCOL_VERSION,
-				kind: "event",
-				requestId: active.requestId,
-				event,
-			});
+		this.unsubscribe = this.dispatcher.subscribe((message) => {
+			if (!this.shuttingDown) void this.write(message).catch(this.onError);
 		});
 		this.input.on("data", this.handleData);
 		this.input.once("end", this.handleEnd);
 		this.input.once("error", this.handleInputError);
 	}
-
 	stop(): void {
 		void this.shutdown().catch(this.onError);
 	}
-
-	/**
-	 * Stops intake, aborts in-flight work, waits for its terminal response, then flushes stdout.
-	 * Product composition disposal happens after this method resolves so protocol output remains intact.
-	 */
 	shutdown(): Promise<void> {
 		if (this.shutdownPromise) return this.shutdownPromise;
 		this.shuttingDown = true;
@@ -114,23 +65,21 @@ export class RpcServer {
 		this.input.off("data", this.handleData);
 		this.input.off("end", this.handleEnd);
 		this.input.off("error", this.handleInputError);
-		this.unsubscribeSession?.();
-		this.unsubscribeSession = undefined;
-		this.activePrompt?.controller.abort();
+		this.unsubscribe?.();
+		this.unsubscribe = undefined;
 		this.shutdownPromise = this.finishShutdown();
 		return this.shutdownPromise;
 	}
-
 	private async finishShutdown(): Promise<void> {
 		try {
-			await Promise.allSettled([...this.activeRequests]);
+			await this.dispatcher.dispose();
+			await Promise.allSettled([...this.requests]);
 			await this.flush();
 		} finally {
 			this.resolveFinished?.();
 			this.resolveFinished = undefined;
 		}
 	}
-
 	private readonly handleData = (chunk: string | Buffer): void => {
 		try {
 			this.decoder.push(chunk);
@@ -141,7 +90,6 @@ export class RpcServer {
 			this.stop();
 		}
 	};
-
 	private readonly handleEnd = (): void => {
 		try {
 			this.decoder.end();
@@ -150,136 +98,46 @@ export class RpcServer {
 		}
 		void this.shutdown().catch(this.onError);
 	};
-
 	private readonly handleInputError = (cause: Error): void => {
 		this.onError(cause);
 		void this.shutdown().catch(this.onError);
 	};
-
 	private acceptLine(line: string): void {
 		if (this.shuttingDown) return;
-		let request: RpcRequest;
+		let request: import("./protocol.ts").RpcRequest;
 		try {
 			request = parseRpcRequest(line);
 		} catch (cause) {
-			const protocolError =
+			const error =
 				cause instanceof RpcProtocolError
 					? cause
 					: new RpcProtocolError("INVALID_REQUEST", "RPC request validation failed.");
-			void this.write(rpcErrorResponse(protocolError)).catch(this.onError);
+			void this.write(rpcErrorResponse(error)).catch(this.onError);
 			return;
 		}
-
-		if (this.inFlightIds.has(request.id)) {
-			void this.writeError(request.id, "INVALID_REQUEST", "RPC request id is already in flight.");
-			return;
-		}
-		this.inFlightIds.add(request.id);
-		const work = this.handleRequest(request)
+		const work = this.dispatcher
+			.dispatch(request)
+			.then((response) => this.write(response))
 			.catch((cause) => this.onError(errorFrom(cause)))
-			.finally(() => {
-				this.inFlightIds.delete(request.id);
-				this.activeRequests.delete(work);
-			});
-		this.activeRequests.add(work);
+			.finally(() => this.requests.delete(work));
+		this.requests.add(work);
 	}
-
-	private async handleRequest(request: RpcRequest): Promise<void> {
-		if (this.methods && !this.methods.has(request.method)) {
-			await this.writeError(request.id, "METHOD_NOT_FOUND", "RPC method is not registered for this server.");
-			return;
-		}
-		switch (request.method) {
-			case "get_state":
-				await this.write({
-					version: RPC_PROTOCOL_VERSION,
-					kind: "response",
-					id: request.id,
-					ok: true,
-					result: {
-						method: "get_state",
-						state: {
-							sessionId: this.session.sessionId,
-							modelId: this.session.modelId,
-							isStreaming: this.session.isStreaming,
-							messageCount: this.session.transcript.length,
-						},
-					},
-				});
-				return;
-			case "cancel": {
-				const active = this.activePrompt;
-				const cancelled = active?.requestId === request.params.requestId;
-				if (cancelled) active.controller.abort();
-				await this.write({
-					version: RPC_PROTOCOL_VERSION,
-					kind: "response",
-					id: request.id,
-					ok: true,
-					result: { method: "cancel", cancelled },
-				});
-				return;
-			}
-			case "prompt":
-				await this.handlePrompt(request);
-		}
+	private writeError(id: string | undefined, code: "INVALID_REQUEST", message: string): Promise<void> {
+		return this.write({ version: 1, kind: "response", ...(id ? { id } : {}), ok: false, error: { code, message } });
 	}
-
-	private async handlePrompt(request: Extract<RpcRequest, { method: "prompt" }>): Promise<void> {
-		if (this.activePrompt || this.session.isStreaming) {
-			await this.writeError(request.id, "BUSY", "The RPC session is already processing a prompt.");
-			return;
-		}
-		const active: ActivePrompt = { requestId: request.id, controller: new AbortController() };
-		this.activePrompt = active;
-		try {
-			const message = await this.session.prompt(request.params.message, active.controller.signal);
-			await this.write({
-				version: RPC_PROTOCOL_VERSION,
-				kind: "response",
-				id: request.id,
-				ok: true,
-				result: { method: "prompt", message },
-			});
-		} catch (cause) {
-			const error = errorFrom(cause);
-			const aborted = active.controller.signal.aborted || error.name === "AbortError";
-			await this.writeError(
-				request.id,
-				aborted ? "CANCELLED" : "INTERNAL_ERROR",
-				aborted ? "The RPC prompt was cancelled." : "The RPC prompt failed.",
-			);
-			if (!aborted) this.onError(error);
-		} finally {
-			if (this.activePrompt === active) this.activePrompt = undefined;
-		}
-	}
-
-	private writeError(id: string | undefined, code: RpcErrorCode, message: string): Promise<void> {
-		return this.write({
-			version: RPC_PROTOCOL_VERSION,
-			kind: "response",
-			...(id === undefined ? {} : { id }),
-			ok: false,
-			error: { code, message },
-		});
-	}
-
 	private write(message: RpcServerMessage): Promise<void> {
-		return new Promise((resolve, reject) => {
-			this.output.write(serializeJsonLine(message), (error) => {
-				if (error) reject(error);
-				else resolve();
-			});
-		});
+		const write = this.writeChain.then(
+			() =>
+				new Promise<void>((resolve, reject) =>
+					this.output.write(serializeJsonLine(message), (error) => (error ? reject(error) : resolve())),
+				),
+		);
+		this.writeChain = write.catch(() => undefined);
+		return write;
 	}
-
 	private flush(): Promise<void> {
-		return new Promise((resolve, reject) => {
-			this.output.write("", (error) => {
-				if (error) reject(error);
-				else resolve();
-			});
-		});
+		return this.writeChain.then(
+			() => new Promise((resolve, reject) => this.output.write("", (error) => (error ? reject(error) : resolve()))),
+		);
 	}
 }

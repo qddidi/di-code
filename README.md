@@ -53,6 +53,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - 可组合的 namespace plugin 运行时：Provider、Agent、工具、Session、CLI/TUI、RPC、MCP 与 Skills 都通过 Composition entry 装配；默认体验只是内建 composition。
 - 受项目 trust 保护的 MCP `stdio` / Streamable HTTP Server tools，可接入现有 Agent 工具循环，并提供 `di-code mcp add/list/get/remove` 配置命令。
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
+- 本地优先的 `di-code-webui` HTTP/SSE 入口，复用 RPC Dispatcher、SessionHost 和既有 Agent loop。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
 ## 架构
@@ -518,6 +519,28 @@ $request = '{"version":1,"kind":"request","id":"state-1","method":"get_state","p
 $request | node packages/coding-agent/dist/rpc-entry.js
 ```
 
+### WebUI HTTP/SSE
+
+构建后，`di-code-webui` 提供受 token 认证的本地 HTTP/SSE 传输层。它默认仅绑定 `127.0.0.1`，并且必须设置至少 32 个字符的
+`DI_CODE_WEBUI_TOKEN`；token 只能放在 `Authorization: Bearer ...` 或 `X-Di-Code-Token` 请求头中，不能放在 URL、日志或事件中。
+
+```powershell
+$env:DI_CODE_PROVIDER = "faux"
+$env:DI_CODE_WEBUI_TOKEN = "replace-with-a-random-token-of-at-least-32-characters"
+di-code-webui
+```
+
+入口只授权启动目录对应的真实工作区，拒绝浏览器提供的其他路径。`POST /rpc` 接收已有 RPC v1 request；`GET /events` 用 SSE 返回流事件；
+`POST /attachments` 接收 `{ name, contentType, data }` JSON，其中 `data` 是 base64。附件只接受 PNG、JPEG、WebP、GIF，单个最大 5 MiB，
+每个浏览器 client 最多保留 32 个或 64 MiB，总计 10 分钟后过期，并以 opaque `attachmentId` 引用，不暴露服务器路径。
+
+首次响应返回 `X-Di-Code-Client-Id`。SSE `ready` 事件带 `resumeToken`；重连在 header 发送该 token 和 `Last-Event-ID`，服务器重放有界事件或发送
+`snapshot_required`。HTTP/SSE 断开不会取消 prompt、steer、retry 或 compact；用 `get_operation` 查询终态，只有 `cancel` 会显式取消。
+
+远程绑定必须同时设置 `DI_CODE_WEBUI_ALLOW_REMOTE=1` 和显式 token。仍应配置允许的 Origin；默认只接受同源 `http` Origin，拒绝错误的 Host。
+WebUI 不是沙箱：经过认证的客户端可请求当前工作区内的本地文件工具和 shell 工具。远程开放会把这些能力交给持有 token 的客户端，除非你明确
+理解网络隔离、token 分发和项目 trust 的后果，否则不要启用。
+
 所有协议记录都包含 `version: 1`。请求 `id` 关联最终响应，prompt 期间的事件使用 `requestId` 关联原请求。当前公开方法为：
 
 | 方法 | 参数 | 结果 |
@@ -525,6 +548,8 @@ $request | node packages/coding-agent/dist/rpc-entry.js
 | `get_state` | `{}` | Session ID、模型、是否正在生成、消息数。 |
 | `prompt` | `{ "message": "..." }` | 最终 `AssistantMessage`；中间事件另行输出。 |
 | `cancel` | `{ "requestId": "..." }` | 是否找到并中止对应 prompt。 |
+
+`RpcServer` 保留为 JSONL process adapter：它负责逐行 framing、stdout 串行化、stdin shutdown 和脱敏 stderr 诊断。传输无关的 `RpcDispatcher` 负责严格 schema 校验、方法分发、request ID 操作表、事件 sequence 和环形重放缓冲。扩展客户端必须先用 `get_capabilities` 声明支持的事件；未协商连接继续只收到旧 Agent event。协商后可使用持久化 Session、transcript/tree、steer/retry、模型、压缩、usage、资源快照和 `get_operation`，通过 `resume_events` 恢复事件或处理 `snapshot_required`。v1 只增加方法和可选字段，不能经由 RPC 执行任意 slash command 或 plugin command。
 
 SDK 从公开子路径导入：
 

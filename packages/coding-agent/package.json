@@ -18,7 +18,8 @@
 	"types": "./dist/index.d.ts",
 	"bin": {
 		"di-code": "./dist/entry.js",
-		"di-code-rpc": "./dist/rpc-entry.js"
+		"di-code-rpc": "./dist/rpc-entry.js",
+		"di-code-webui": "./dist/webui-entry.js"
 	},
 	"exports": {
 		".": {
@@ -28,6 +29,14 @@
 		"./rpc": {
 			"types": "./dist/rpc/index.d.ts",
 			"import": "./dist/rpc/index.js"
+		},
+		"./ui-host": {
+			"types": "./dist/ui-host.d.ts",
+			"import": "./dist/ui-host.js"
+		},
+		"./webui": {
+			"types": "./dist/webui.d.ts",
+			"import": "./dist/webui.js"
 		},
 		"./plugin-manager": {
 			"types": "./dist/plugin-manager.d.ts",

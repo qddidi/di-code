@@ -4,6 +4,7 @@
 
 - `di-code`：面向人的交互式、单次输出和 JSON 事件 CLI；
 - `di-code-rpc`：供 Node.js 宿主程序管理的 JSONL RPC 子进程入口；
+- `di-code-webui`：本地 HTTP/SSE WebUI 传输入口；
 - 内置的 `read`、`write`、`edit`、`glob`、`grep`、`bash` 工具、JSONL 会话、图片输入、上下文压缩；
 - 可复用的 **Skills（技能指令）**、`AGENTS.md` 项目说明，以及插件扩展机制。
 
@@ -261,6 +262,12 @@ di-code --continue "继续上一次工作"
 
 运行 `di-code` 或 `di-code --interactive` 后，在底部输入框输入请求并按 `Enter`。生成过程中输入的新请求会排队，按顺序执行。
 
+### 自定义 TUI Host
+
+第三方 ANSI TUI 可通过 `@di-code/coding-agent/ui-host` API v1 替换 composition 中的 `interactive-host`，而无需复制 Provider、MCP、Skills、JSONL Session 或 Agent loop bootstrap。entry 使用 `createUiHostEntry()` 注册自己的 UI 生命周期；回调获得的 `UiHost.session` 提供 prompt、取消、retry、受管 Session 切换、树和压缩，`UiHost.product` 只提供只读资源快照、主题/键位注册和脱敏诊断。它不暴露 `commandRegistry` 任意执行器，也不提供 HTTP/SSE WebUI 或新的 RPC 方法。
+
+回调必须持续到 UI 退出，并监听传入的 `AbortSignal`。正常退出、取消、抛错或 composition dispose 时，产品会取消并等待 Session 操作、释放 MCP/Session 资源，再使 facade 失效；之后访问 facade 会得到 `UiHostLifecycleError`（`DISPOSED`）。Session 操作错误通过稳定 code 表示，例如 `BUSY`、`INVALID_INPUT`、`NOT_FOUND` 和 `SESSION_IN_USE`。自定义 TUI 与所有插件一样运行在同一 Node.js 进程中，manifest `permissions` 仅供声明和审计，并不是操作系统级沙箱。完整 package、composition patch 和生命周期示例见 [插件使用指南](../../docs/插件使用指南.md#自定义-tui-host)。
+
 ### Slash commands 与快捷键
 
 输入 `/` 后可补全命令；补全菜单打开时按 `Enter` 会直接运行当前选中的 slash command，按 `Tab` 只补全到输入框。
@@ -307,7 +314,7 @@ di-code --continue "继续上一次工作"
 
 产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。interactive 的 JSONL 持久化通过 `SessionStoreRegistry` 的 `jsonl` entry 创建或打开，不能绕过 registry 直接在宿主启动分支中组装 Session。直接构造 `AgentSession` 必须传入不可变 `tools` 快照；SDK 集成应使用 Composition factory 或自行从其注册表创建该快照。
 
-产品层内部 `SessionHost`/`SessionActor` 会集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表；每个 actor 按 principal 与真实 workspace 隔离。它使用 opaque Session ID 解析受管 JSONL 文件，并在重复打开时返回稳定的所有权冲突。Host 的 `dispose()` 与 `AgentSession.dispose()` 都是幂等的，会先结束或取消活跃操作，再释放 listener、子 Context、锁和 MCP 连接；该内部入口尚未接入 TUI、RPC 或 WebUI 公开契约。
+产品层内部 `SessionHost`/`SessionActor` 会集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表；每个 actor 按 principal 与真实 workspace 隔离。它使用 opaque Session ID 解析受管 JSONL 文件，并在重复打开时返回稳定的所有权冲突。Host 的 `dispose()` 与 `AgentSession.dispose()` 都是幂等的，会先结束或取消活跃操作，再释放 listener、子 Context、锁和 MCP 连接。内建 interactive TUI 通过私有 `UiHost` facade 使用这些能力；该 facade 不是 WebUI、RPC 或第三方公开契约。
 
 会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在本地历史中的密钥或敏感材料。
 
@@ -567,15 +574,50 @@ worker 由 composition 的 `session-factory` 创建 session，并由同一 compo
 | `prompt` | `{ "message": "..." }` | 最终 `AssistantMessage`，中间事件另行输出 |
 | `cancel` | `{ "requestId": "..." }` | 是否找到并取消该请求 |
 
+`RpcServer` 是 JSONL 传输适配器；协议解析、参数校验、方法分发、操作表和事件恢复由无 stdin/stdout 依赖的 `RpcDispatcher` 完成。嵌入其他传输时只能复用 dispatcher，不得让网络写入等待 Agent 事件处理。
+
+新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
+
+v1 只新增方法与可选字段。产品配置、附件、工具审批和插件命名空间仍要求对应的显式 Host capability、schema、权限和 owner disposer；没有这些能力的 composition 会以 `METHOD_NOT_FOUND` 拒绝，绝不映射到 `commandRegistry` 或任意插件命令。
+
 Node.js 宿主从公开入口导入 SDK：
 
 ```ts
 import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 ```
 
+`RpcClient` 提供类型化的 `getState()`、`prompt()`、`cancel()`、`negotiate()`、`resumeEvents()`、`getOperation()`、Session
+列表/创建/打开、`getProductState()`、`getProjectTrust()` 和 `createAttachment()` facade；`call()` 只保留给已协商的低层方法。
+附件先经 `createAttachment(name, contentType, base64Data)` 上传，再将返回 ID 传给 `prompt(message, { attachmentIds })`。只接受
+PNG、JPEG、WebP、GIF，每次请求最多 4 个、每个最多 5 MiB；数据仅保存在 RPC 子进程内存，并在首次 prompt/steer 使用时消费。
+SDK 不自动重放任何请求，即使子进程退出或事件恢复失败也不例外；调用方必须使用新的 request ID 明确发起重试。
+
+事件订阅使用 `subscribe()`。调用 `negotiate(["sequence", "operation_update", "snapshot_required"])` 后，保存收到记录的
+`sequence`，并在重连后通过 `resumeEvents(lastSequence)` 恢复。返回 `snapshotRequired: true` 时，重新读取 state、transcript、tree
+和 usage，而不要推测遗漏的事件。所有 response、event、error code 和 version 都在 SDK JSONL 边界验证；未知事件或不符合 v1
+形状的记录会关闭 client 并拒绝 pending request。
+
 RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入式宿主可以从 `@di-code/coding-agent/rpc-client-sdk` 导入其 `rpcClientSdkKey`，由 Loader 创建 `RpcClient`。`runtime-core`、`composition-loader` 和 `project-trust` 同样提供独立 entry，分别拥有运行时服务、Loader factory 和 trust store 服务。
 
 需要监督子进程生命周期时，使用 `@di-code/orchestrator`，不要依赖 coding-agent 的内部文件路径。
+
+### WebUI HTTP/SSE
+
+`di-code-webui` 使用 `webui` composition 创建 `HostManager` 和每个浏览器 client 的 `SessionActor`，再由 `RpcDispatcher` 执行所有 RPC v1
+方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
+`127.0.0.1` 和随机可用端口，可用 `DI_CODE_WEBUI_PORT` 指定端口。`DI_CODE_WEBUI_HOST` 只有与 `DI_CODE_WEBUI_ALLOW_REMOTE=1` 同时设置时才可绑定非回环地址。
+
+`POST /rpc`、`GET /events` 和 `POST /attachments` 都要求 `Authorization: Bearer <token>` 或 `X-Di-Code-Token` header。服务拒绝不匹配的
+Host、Origin、token、工作区和超限请求；默认只授权启动时的真实 workspace。每个 client 的持久化 Session 与附件 storage 分离，不能通过 opaque
+Session 或 attachment ID 访问其他 client 的数据。`WebUiServer.rotateToken()` 和 `revokeToken()` 会关闭现有 SSE 订阅并使旧 token 立即失效。
+
+SSE 的 `ready` 数据提供 `resumeToken`；重连以 `X-Di-Code-Resume-Token` 和 `Last-Event-ID` headers 恢复事件。重放窗口不足时会收到
+`snapshot_required`，调用方必须重新读取 state、transcript、tree 和 usage。连接关闭不会取消 detached operation；使用 `get_operation` 查询，只有
+`cancel` 会取消。附件通过 JSON base64 上传，限制为 PNG/JPEG/WebP/GIF、每个 5 MiB、每 client 32 个或 64 MiB、TTL 10 分钟，首次 prompt/steer
+使用后删除。
+
+WebUI 不是沙箱。认证客户端能触发当前 workspace 内的文件和 shell 工具，远程绑定等同于向 token 持有者开放这些能力；不要把 token、Provider
+凭据或 attachment 内容记录到 URL、事件、日志或错误文本。
 
 ## 安全边界与故障排查
 

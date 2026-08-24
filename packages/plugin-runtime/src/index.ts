@@ -10,7 +10,7 @@ export function createServiceKey<T>(description: string): ServiceKey<T> {
 	return Symbol(description) as ServiceKey<T>;
 }
 
-export type RuntimeMode = "interactive" | "print" | "json" | "rpc" | "test";
+export type RuntimeMode = "interactive" | "print" | "json" | "rpc" | "webui" | "test";
 
 export type PluginStatus = "pending" | "loading" | "active" | "failed" | "unloading" | "disposed";
 

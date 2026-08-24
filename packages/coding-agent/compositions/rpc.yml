@@ -4,6 +4,9 @@ entries:
   - { id: mode-rpc, name: "@di-code/builtins/mode-rpc", dependsOn: [command-core] }
   - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, system-prompt, compaction-basic, compaction-tool-result] }
   - { id: session-factory, name: "@di-code/coding-agent/session-factory-entry", dependsOn: [agent-session] }
+
+  # RpcDispatcher uses the same persistent product host as the interactive profile.
+  - { id: interactive-resources, name: "@di-code/coding-agent/interactive-resources-entry", dependsOn: [system-prompt, resource-loader, skills] }
   - { id: rpc-protocol-v1, name: "@di-code/builtins/rpc-protocol-v1", dependsOn: [session-factory] }
-  - { id: rpc-server, name: "@di-code/coding-agent/rpc-server-entry", dependsOn: [rpc-protocol-v1, session-factory, mode-rpc] }
+  - { id: rpc-server, name: "@di-code/coding-agent/rpc-server-entry", dependsOn: [rpc-protocol-v1, session-factory, session-store-jsonl, interactive-resources, mcp-config, mcp-client, mcp-tools, mode-rpc] }
   - { id: rpc-events, name: "@di-code/builtins/rpc-events", dependsOn: [rpc-server] }

@@ -1005,7 +1005,47 @@ export const rpcProtocolV1: PluginDefinition = {
 	apply(context, _config, fiber) {
 		const registry = createRpcMethodRegistry();
 		context.set(rpcMethodRegistryKey, registry);
-		for (const name of ["prompt", "cancel", "get_state"] as const)
+		// The dispatcher validates every method schema. This inventory is intentionally explicit so a
+		// composition plugin cannot turn commandRegistry entries into remotely executable methods.
+		for (const name of [
+			"prompt",
+			"cancel",
+			"get_state",
+			"get_capabilities",
+			"resume_events",
+			"list_sessions",
+			"new_session",
+			"open_session",
+			"get_transcript",
+			"get_tree",
+			"navigate_tree",
+			"steer",
+			"retry",
+			"get_operation",
+			"get_models",
+			"set_model",
+			"get_runtime",
+			"set_runtime",
+			"set_thinking_level",
+			"compact",
+			"set_compaction_enabled",
+			"get_usage",
+			"list_skills",
+			"get_resources",
+			"get_product_state",
+			"list_providers",
+			"login",
+			"logout",
+			"get_project_trust",
+			"set_project_trust",
+			"list_context_files",
+			"list_mcp_servers",
+			"configure_mcp_server",
+			"remove_mcp_server",
+			"reconnect_mcp_server",
+			"create_attachment",
+			"approve_tool",
+		] as const)
 			fiber.addDisposer(registry.register("di-code.rpc-v1", name));
 	},
 };

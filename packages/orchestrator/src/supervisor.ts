@@ -1,6 +1,17 @@
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { RpcClient, type RpcEventRecord, type RpcSessionState } from "@di-code/coding-agent/rpc";
+import {
+	type OperationState,
+	type RpcAttachmentInfo,
+	type RpcCapabilities,
+	RpcClient,
+	type RpcEventRecord,
+	type RpcExtendedEventName,
+	type RpcProductState,
+	type RpcPromptOptions,
+	type RpcSessionInfo,
+	type RpcSessionState,
+} from "@di-code/coding-agent/rpc";
 
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const MAX_STDERR_LENGTH = 16_384;
@@ -59,6 +70,7 @@ export class RpcSupervisor {
 	private stateValue: RpcSupervisorState = "idle";
 	private lastExitValue?: RpcProcessExit;
 	private stderrValue = "";
+	private stopPromise?: Promise<void>;
 
 	constructor(options: RpcSupervisorOptions) {
 		this.configuration = {
@@ -137,11 +149,65 @@ export class RpcSupervisor {
 		return this.requireRunningClient().getState();
 	}
 
-	prompt(message: string, options: { readonly signal?: AbortSignal } = {}): ReturnType<RpcClient["prompt"]> {
+	prompt(message: string, options: RpcPromptOptions = {}): ReturnType<RpcClient["prompt"]> {
 		return this.requireRunningClient().prompt(message, options);
 	}
 
-	async stop(): Promise<void> {
+	cancel(requestId: string): Promise<boolean> {
+		return this.requireRunningClient().cancel(requestId);
+	}
+
+	getOperation(requestId: string): Promise<OperationState> {
+		return this.requireRunningClient().getOperation(requestId);
+	}
+
+	negotiate(events: readonly RpcExtendedEventName[] = []): Promise<RpcCapabilities> {
+		return this.requireRunningClient().negotiate(events);
+	}
+
+	resumeEvents(lastSequence?: number): Promise<{ readonly snapshotRequired: boolean }> {
+		return this.requireRunningClient().resumeEvents(lastSequence);
+	}
+
+	listSessions(): Promise<readonly RpcSessionInfo[]> {
+		return this.requireRunningClient().listSessions();
+	}
+
+	newSession(): Promise<RpcSessionInfo> {
+		return this.requireRunningClient().newSession();
+	}
+
+	openSession(sessionId: string): Promise<RpcSessionInfo> {
+		return this.requireRunningClient().openSession(sessionId);
+	}
+
+	getProductState(): Promise<RpcProductState> {
+		return this.requireRunningClient().getProductState();
+	}
+
+	getProjectTrust(): Promise<boolean> {
+		return this.requireRunningClient().getProjectTrust();
+	}
+
+	createAttachment(
+		name: string,
+		contentType: RpcAttachmentInfo["contentType"],
+		data: string,
+	): Promise<RpcAttachmentInfo> {
+		return this.requireRunningClient().createAttachment(name, contentType, data);
+	}
+
+	stop(): Promise<void> {
+		if (this.stopPromise) return this.stopPromise;
+		const stopping = this.stopInternal();
+		const result = stopping.finally(() => {
+			if (this.stopPromise === result) this.stopPromise = undefined;
+		});
+		this.stopPromise = result;
+		return result;
+	}
+
+	private async stopInternal(): Promise<void> {
 		const child = this.child;
 		if (!child || this.stateValue === "idle" || this.stateValue === "stopped") {
 			this.client?.close();
@@ -154,8 +220,6 @@ export class RpcSupervisor {
 			this.setState("stopped");
 			return;
 		}
-		if (this.stateValue === "stopping") throw new Error("RPC supervisor is already stopping.");
-
 		this.setState("stopping");
 		const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 		child.kill("SIGTERM");

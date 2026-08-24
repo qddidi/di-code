@@ -1,12 +1,11 @@
 import type { CommandRegistry, InteractiveContextService } from "@di-code/builtins";
 import { ProcessTerminal, TUI } from "@di-code/tui";
-import type { AgentSession } from "../core/session.ts";
 import type { Locale } from "../i18n.ts";
 import type { InteractiveProviderOnboardingOptions } from "../provider-onboarding.ts";
-import { InteractiveMode } from "./interactive.ts";
+import { InteractiveMode, type InteractiveSessionHandle } from "./interactive.ts";
 
 export interface InteractiveModeEntryOptions {
-	readonly session: AgentSession;
+	readonly session: InteractiveSessionHandle;
 	readonly agentDir: string;
 	readonly locale: Locale;
 	readonly commandRegistry: CommandRegistry;

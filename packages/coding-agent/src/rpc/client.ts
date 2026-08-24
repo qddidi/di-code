@@ -3,11 +3,15 @@ import type { Readable, Writable } from "node:stream";
 import type { AssistantMessage } from "@di-code/ai";
 import { JsonlLineDecoder, serializeJsonLine } from "./jsonl.ts";
 import {
+	type OperationState,
 	parseRpcServerMessage,
 	RPC_PROTOCOL_VERSION,
+	type RpcAttachmentInfo,
+	type RpcCapabilities,
 	type RpcErrorCode,
 	type RpcEventRecord,
 	type RpcMethod,
+	type RpcProductState,
 	type RpcRequest,
 	type RpcSessionState,
 	type RpcSuccessResult,
@@ -18,6 +22,18 @@ export interface RpcTransport {
 	readonly writable: Writable;
 	onExit?(listener: (code: number | null, signal: NodeJS.Signals | null) => void): () => void;
 	close?(): void;
+}
+
+export interface RpcPromptOptions {
+	readonly signal?: AbortSignal;
+	/** Attachments are uploaded explicitly and consumed by this request; requests are never replayed automatically. */
+	readonly attachmentIds?: readonly string[];
+}
+
+export interface RpcSessionInfo {
+	readonly id: string;
+	readonly label: string;
+	readonly modifiedAt?: number;
 }
 
 interface PendingRequest {
@@ -62,32 +78,102 @@ export class RpcClient {
 	}
 
 	async getState(): Promise<RpcSessionState> {
-		const result = await this.request("get_state", {});
+		const result = await this.send("get_state", {});
 		if (result.method !== "get_state") throw new Error("RPC get_state returned an incompatible result.");
-		return result.state;
+		return result.state as RpcSessionState;
 	}
 
-	async prompt(message: string, options: { readonly signal?: AbortSignal } = {}): Promise<AssistantMessage> {
+	async prompt(message: string, options: RpcPromptOptions = {}): Promise<AssistantMessage> {
 		const requestId = randomUUID();
 		const onAbort = () => {
 			void this.cancel(requestId).catch(() => undefined);
 		};
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		try {
-			const response = this.request("prompt", { message }, requestId);
+			const response = this.send(
+				"prompt",
+				{ message, ...(options.attachmentIds === undefined ? {} : { attachmentIds: [...options.attachmentIds] }) },
+				requestId,
+			);
 			if (options.signal?.aborted) onAbort();
 			const result = await response;
 			if (result.method !== "prompt") throw new Error("RPC prompt returned an incompatible result.");
-			return result.message;
+			return result.message as AssistantMessage;
 		} finally {
 			options.signal?.removeEventListener("abort", onAbort);
 		}
 	}
 
 	async cancel(requestId: string): Promise<boolean> {
-		const result = await this.request("cancel", { requestId });
+		const result = await this.send("cancel", { requestId });
 		if (result.method !== "cancel") throw new Error("RPC cancel returned an incompatible result.");
-		return result.cancelled;
+		return result.cancelled as boolean;
+	}
+
+	/**
+	 * Sends an explicitly named, schema-validated RPC request. Consumers should negotiate capabilities
+	 * before using extended methods so old process servers remain usable.
+	 */
+	call(method: RpcMethod, params: Record<string, unknown> = {}, id?: string): Promise<RpcSuccessResult> {
+		return this.send(method, params, id);
+	}
+
+	async getCapabilities(events: readonly string[] = []): Promise<RpcSuccessResult> {
+		const result = await this.send("get_capabilities", { events: [...events] });
+		return result;
+	}
+
+	async negotiate(events: readonly import("./protocol.ts").RpcExtendedEventName[] = []): Promise<RpcCapabilities> {
+		const result = await this.getCapabilities(events);
+		return {
+			methods: result.methods as readonly RpcMethod[],
+			events: result.events as readonly import("./protocol.ts").RpcExtendedEventName[],
+			eventBufferSize: result.eventBufferSize as number,
+		};
+	}
+
+	async resumeEvents(lastSequence?: number): Promise<{ readonly snapshotRequired: boolean }> {
+		const result = await this.send("resume_events", lastSequence === undefined ? {} : { lastSequence });
+		return { snapshotRequired: result.snapshotRequired as boolean };
+	}
+
+	async getOperation(requestId: string): Promise<OperationState> {
+		const result = await this.send("get_operation", { requestId });
+		return result.operation as OperationState;
+	}
+
+	async listSessions(): Promise<readonly RpcSessionInfo[]> {
+		const result = await this.send("list_sessions", {});
+		return result.sessions as readonly RpcSessionInfo[];
+	}
+
+	async newSession(): Promise<RpcSessionInfo> {
+		const result = await this.send("new_session", {});
+		return result.session as RpcSessionInfo;
+	}
+
+	async openSession(sessionId: string): Promise<RpcSessionInfo> {
+		const result = await this.send("open_session", { sessionId });
+		return result.session as RpcSessionInfo;
+	}
+
+	async getProductState(): Promise<RpcProductState> {
+		const result = await this.send("get_product_state", {});
+		return result.state as RpcProductState;
+	}
+
+	async getProjectTrust(): Promise<boolean> {
+		const result = await this.send("get_project_trust", {});
+		return result.trusted as boolean;
+	}
+
+	async createAttachment(
+		name: string,
+		contentType: RpcAttachmentInfo["contentType"],
+		data: string,
+	): Promise<RpcAttachmentInfo> {
+		const result = await this.send("create_attachment", { name, contentType, data });
+		return result.attachment as RpcAttachmentInfo;
 	}
 
 	close(): void {
@@ -98,14 +184,15 @@ export class RpcClient {
 		this.rejectPending(new Error("RPC client is closed."));
 	}
 
-	private request(method: "prompt", params: { readonly message: string }, id?: string): Promise<RpcSuccessResult>;
-	private request(method: "cancel", params: { readonly requestId: string }, id?: string): Promise<RpcSuccessResult>;
-	private request(method: "get_state", params: Record<string, never>, id?: string): Promise<RpcSuccessResult>;
-	private request(
-		method: RpcMethod,
-		params: { readonly message: string } | { readonly requestId: string } | Record<string, never>,
-		id = randomUUID(),
-	): Promise<RpcSuccessResult> {
+	private send(
+		method: "prompt",
+		params: { readonly message: string; readonly attachmentIds?: readonly string[] },
+		id?: string,
+	): Promise<RpcSuccessResult>;
+	private send(method: "cancel", params: { readonly requestId: string }, id?: string): Promise<RpcSuccessResult>;
+	private send(method: "get_state", params: Record<string, never>, id?: string): Promise<RpcSuccessResult>;
+	private send(method: RpcMethod, params: Record<string, unknown>, id?: string): Promise<RpcSuccessResult>;
+	private send(method: RpcMethod, params: Record<string, unknown>, id = randomUUID()): Promise<RpcSuccessResult> {
 		if (this.closed) return Promise.reject(new Error("RPC client is closed."));
 		const request = { version: RPC_PROTOCOL_VERSION, kind: "request", id, method, params } as RpcRequest;
 		return new Promise<RpcSuccessResult>((resolve, reject) => {

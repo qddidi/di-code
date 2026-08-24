@@ -5,6 +5,8 @@
 		"baseUrl": ".",
 		"paths": {
 			"@di-code/builtins": ["packages/builtins/src/index.ts"],
+			"@di-code/coding-agent/rpc": ["packages/coding-agent/src/rpc/index.ts"],
+			"@di-code/coding-agent/ui-host": ["packages/coding-agent/src/ui-host.ts"],
 			"@di-code/plugin-runtime": ["packages/plugin-runtime/src/index.ts"],
 			"@di-code/plugin-loader": ["packages/plugin-loader/src/index.ts"],
 			"@di-code/plugin-sdk": ["packages/plugin-sdk/src/index.ts"]

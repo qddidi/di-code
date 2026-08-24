@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access, lstat, mkdir, open, readdir, readFile, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import type { AssistantMessage, Model, Provider, ThinkingLevel } from "@di-code/ai";
+import type { AssistantMessage, ImageContent, Message, Model, Provider, ThinkingLevel } from "@di-code/ai";
 import {
 	agentSessionKey,
 	providerRegistryKey,
@@ -30,6 +30,7 @@ export type RequestId = string & { readonly __requestId: unique symbol };
 
 export interface SessionInfo {
 	readonly id: SessionId;
+	readonly displayId?: string;
 	readonly cwd: string;
 	readonly label: string;
 	readonly modifiedAt?: number;
@@ -63,6 +64,8 @@ export interface SessionHostBootstrapOptions {
 	readonly model?: Model;
 	readonly signal?: AbortSignal;
 	readonly compaction?: AgentSessionCompactionOptions;
+	/** Optional managed JSONL file to open before the host is returned. */
+	readonly initialSessionPath?: string;
 }
 
 export interface SessionHost {
@@ -72,7 +75,13 @@ export interface SessionHost {
 	readonly openSession: (sessionId: string) => Promise<SessionInfo>;
 	readonly closeSession: () => Promise<void>;
 	readonly prompt: (input: PromptInput | string, signal?: AbortSignal) => Promise<AssistantMessage>;
+	readonly promptWithImages: (
+		text: string,
+		images: readonly ImageContent[],
+		signal?: AbortSignal,
+	) => Promise<AssistantMessage>;
 	readonly steer: (input: PromptInput | string, signal?: AbortSignal) => Promise<void>;
+	readonly steerWithImages: (text: string, images: readonly ImageContent[], signal?: AbortSignal) => Promise<void>;
 	readonly retry: (signal?: AbortSignal) => Promise<AssistantMessage>;
 	readonly cancel: (requestId: string) => boolean;
 	readonly transcript: () => readonly import("@di-code/ai").Message[];
@@ -84,8 +93,35 @@ export interface SessionHost {
 	readonly compact: (signal?: AbortSignal) => Promise<void>;
 	readonly setCompactionEnabled: (enabled: boolean) => boolean;
 	readonly usage: () => SessionUsage;
+	readonly ui: () => SessionHostUi;
 	readonly subscribe: (listener: SessionHostListener) => () => void;
 	readonly dispose: () => Promise<void>;
+}
+
+/** Internal presentation facade. It exposes snapshots and host-owned operations, never Session internals. */
+export interface SessionHostUi {
+	readonly allowedRoot: string;
+	readonly modelId: string;
+	readonly providerId: string;
+	readonly thinkingLevel?: ThinkingLevel;
+	readonly availableModels: readonly Model[];
+	readonly availableSkills: readonly import("../core/resources/types.ts").SkillResource[];
+	readonly compactionEnabled: boolean;
+	readonly sessionFile?: string;
+	readonly sessionTree: readonly SessionTreeNode[];
+	readonly sessionLeafId?: string;
+	readonly transcript: readonly Message[];
+	readonly usage: SessionUsage;
+	readonly promptWithImages: SessionHost["promptWithImages"];
+	readonly retry: SessionHost["retry"];
+	readonly steerWithImages: SessionHost["steerWithImages"];
+	readonly subscribeSession: (listener: (event: AgentSessionEvent) => void | Promise<void>) => () => void;
+	readonly setModel: SessionHost["setModel"];
+	readonly setRuntime: (provider: Provider, model: Model) => Model;
+	readonly cycleThinkingLevel: SessionHost["setThinkingLevel"];
+	readonly setCompactionEnabled: SessionHost["setCompactionEnabled"];
+	readonly navigateTree: SessionHost["navigateTree"];
+	readonly compact: SessionHost["compact"];
 }
 
 export class SessionHostError extends Error {
@@ -250,7 +286,8 @@ async function createBootstrap(context: Context, options: SessionHostBootstrapOp
 	const workspace = await validateWorkspace(options.cwd);
 	const agentDir = await validateDataRoot(options.agentDir);
 	const sessionsRoot = await ensureRealChildDirectory(agentDir, "sessions");
-	const sessionDirectory = await ensureRealChildDirectory(sessionsRoot, workspaceStorageKey(workspace));
+	// Preserve the CLI's historical workspace hash (which uses the user-supplied path casing/alias).
+	const sessionDirectory = await ensureRealChildDirectory(sessionsRoot, workspaceStorageKey(options.cwd));
 	const resources = await context.require(interactiveResourceServiceKey).load({
 		cwd: workspace,
 		agentDir,
@@ -338,6 +375,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 	};
 	const infoFor = (manager: SessionManager): SessionInfo => ({
 		id: asId(manager.header.id),
+		displayId: basename(manager.filePath, extname(manager.filePath)),
 		cwd: manager.header.cwd,
 		label: sessionLabel(manager),
 	});
@@ -478,7 +516,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				} catch {
 					continue;
 				}
-				if (managerWorkspace !== bootstrap.workspace) continue;
+				if (managerWorkspace.toLowerCase() !== bootstrap.workspace.toLowerCase()) continue;
 				result.push(infoFor(manager));
 			}
 			return result;
@@ -543,6 +581,16 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				return result;
 			});
 		},
+		promptWithImages: (text, images, signal) => {
+			if (!text?.trim()) return Promise.reject(new SessionHostError("INVALID_INPUT", "Prompt text must not be empty."));
+			assertIdle("start a prompt");
+			return withOperation("prompt", undefined, signal, async (operationSignal) => {
+				const result = await current().session.promptWithImages(text, images, operationSignal);
+				if (result.stopReason === "error" || result.stopReason === "aborted") lastFailedPrompt = text;
+				else lastFailedPrompt = undefined;
+				return result;
+			});
+		},
 		steer: (input, signal) => {
 			const parsed = typeof input === "string" ? { text: input } : input;
 			if (!parsed.text?.trim())
@@ -551,6 +599,10 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				await current().session.steer(parsed.text, operationSignal);
 			});
 		},
+		steerWithImages: (text, images, signal) =>
+			withOperation("steer", undefined, signal, async (operationSignal) => {
+				await current().session.steerWithImages(text, images, operationSignal);
+			}),
 		retry: (signal) => {
 			ensureOpen();
 			assertIdle("retry");
@@ -602,6 +654,60 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			return current().session.setCompactionEnabled(enabled);
 		},
 		usage: () => current().session.usage,
+		ui: () => {
+			const session = current().session;
+			return {
+				get allowedRoot() {
+					return session.allowedRoot;
+				},
+				get modelId() {
+					return session.modelId;
+				},
+				get providerId() {
+					return session.providerId;
+				},
+				get thinkingLevel() {
+					return session.thinkingLevel;
+				},
+				get availableModels() {
+					return session.availableModels;
+				},
+				get availableSkills() {
+					return session.availableSkills;
+				},
+				get compactionEnabled() {
+					return session.compactionEnabled;
+				},
+				get sessionFile() {
+					return session.sessionFile;
+				},
+				get sessionTree() {
+					return session.sessionTree;
+				},
+				get sessionLeafId() {
+					return session.sessionLeafId;
+				},
+				get transcript() {
+					return session.transcript;
+				},
+				get usage() {
+					return session.usage;
+				},
+				promptWithImages: api.promptWithImages,
+				retry: api.retry,
+				steerWithImages: api.steerWithImages,
+				subscribeSession: (listener) =>
+					api.subscribe((event) => {
+						if (event.type !== "session_changed") return listener(event);
+					}),
+				setModel: api.setModel,
+				setRuntime: (provider, model) => api.setRuntime(provider.id, model.id),
+				cycleThinkingLevel: api.setThinkingLevel,
+				setCompactionEnabled: api.setCompactionEnabled,
+				navigateTree: api.navigateTree,
+				compact: api.compact,
+			} satisfies SessionHostUi;
+		},
 		subscribe: (listener) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
@@ -624,6 +730,15 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			await bootstrap.closeMcp();
 		},
 	};
+	if (options.initialSessionPath !== undefined) {
+		const initialPath = resolve(options.initialSessionPath);
+		if (dirname(await realpath(initialPath)) !== (await realpath(bootstrap.sessionDirectory)))
+			throw new SessionHostError("INVALID_WORKSPACE", "Initial Session path escaped its managed directory.");
+		const initial = await store.open(initialPath);
+		if (!(initial instanceof SessionManager))
+			throw new SessionHostError("INTERNAL", "JSONL SessionStore returned an incompatible SessionManager.");
+		await openManager(initial);
+	}
 	return api;
 }
 

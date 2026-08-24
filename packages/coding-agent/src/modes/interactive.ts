@@ -29,6 +29,7 @@ import {
 	type InteractiveProviderOnboardingOptions,
 	showInteractiveProviderOnboarding,
 } from "../provider-onboarding.ts";
+import type { SessionHostUi } from "../runtime/session-host.ts";
 import {
 	removeGlobalProviderApiKey,
 	saveGlobalLocale,
@@ -103,7 +104,7 @@ function steeringCommandArgument(prompt: string): string | undefined {
 }
 
 export interface InteractiveModeOptions {
-	readonly session: AgentSession;
+	readonly session: InteractiveSessionHandle;
 	readonly tui: TUI;
 	readonly onExit?: () => void;
 	readonly sessions?: readonly InteractiveSessionChoice[];
@@ -122,8 +123,10 @@ export interface InteractiveSessionChoice {
 	readonly id: string;
 	readonly label: string;
 	readonly description?: string;
-	open(): AgentSession | Promise<AgentSession>;
+	open(): InteractiveSessionHandle | Promise<InteractiveSessionHandle>;
 }
+
+export type InteractiveSessionHandle = AgentSession | SessionHostUi;
 
 interface ContextSessionChoice {
 	readonly id: string;
@@ -149,7 +152,7 @@ export class InteractiveMode {
 	private readonly projection = new InteractiveProjection();
 	private readonly root: InteractiveLayout;
 	private readonly editor: Editor;
-	private session: AgentSession;
+	private session: InteractiveSessionHandle;
 	private readonly tui: TUI;
 	private readonly sessionChoices: readonly InteractiveSessionChoice[];
 	private readonly providerOnboarding?: Omit<InteractiveProviderOnboardingOptions, "tui">;
@@ -186,7 +189,7 @@ export class InteractiveMode {
 			open: async () => {
 				const session = await choice.open();
 				if (typeof session !== "object" || session === null) throw new Error(`Session choice ${choice.id} is invalid`);
-				return session as AgentSession;
+				return session as InteractiveSessionHandle;
 			},
 		}));
 		this.sessionChoices = [...(options.sessions ?? contextChoices)];
@@ -753,7 +756,10 @@ export class InteractiveMode {
 			);
 			this.preserveClipboardFiles = true;
 			this.editor.setValue("");
-			const result = await this.session.promptWithImages(input.text, input.images, this.activeAbort.signal);
+			const result =
+				retry && "retry" in this.session
+					? await this.session.retry(this.activeAbort.signal)
+					: await this.session.promptWithImages(input.text, input.images, this.activeAbort.signal);
 			if (result.stopReason === "error" || result.stopReason === "aborted") this.lastFailedPrompt = prompt;
 			else {
 				this.lastFailedPrompt = undefined;
