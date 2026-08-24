@@ -541,6 +541,21 @@ di-code-webui
 WebUI 不是沙箱：经过认证的客户端可请求当前工作区内的本地文件工具和 shell 工具。远程开放会把这些能力交给持有 token 的客户端，除非你明确
 理解网络隔离、token 分发和项目 trust 的后果，否则不要启用。
 
+仓库内的最小 HTTP/SSE 客户端示例是 [`examples/webui-client.ts`](examples/webui-client.ts)。它使用 faux Provider，依次演示
+Session 列表、transcript/tree、ProductHost 快照、附件、prompt/steer/retry/cancel、`OperationState`、流事件和断线重连：
+
+```powershell
+$env:DI_CODE_PROVIDER = "faux"
+$env:DI_CODE_WEBUI_PORT = "8787"
+$env:DI_CODE_WEBUI_TOKEN = "replace-with-a-random-token-of-at-least-32-characters"
+npm run build
+Start-Process -NoNewWindow -FilePath "di-code-webui" -WorkingDirectory (Get-Location)
+node --experimental-strip-types examples/webui-client.ts
+```
+
+示例假定 `di-code-webui` 已在 `PATH`；也可以将命令替换为 `node packages/coding-agent/dist/webui-entry.js`。示例不会保存 token、附件或 Session
+到仓库，SSE 重连使用服务器 `ready` 数据中的 `resumeToken` 和最后收到的 `sequence`。
+
 所有协议记录都包含 `version: 1`。请求 `id` 关联最终响应，prompt 期间的事件使用 `requestId` 关联原请求。当前公开方法为：
 
 | 方法 | 参数 | 结果 |

@@ -43,6 +43,9 @@ await supervisor.stop();
 附件只保存在子进程内存并由命名 prompt/steer 一次性消费。宿主应先协商 sequence 事件，并在恢复要求快照时重新读取状态，不能
 假定事件会被永久保存。
 
+若只需验证 WebUI HTTP/SSE，不必启动 supervisor，可运行仓库中的 [`examples/webui-client.ts`](../../examples/webui-client.ts)。该示例使用 faux
+Provider 和公开协议字段；`RpcSupervisor` 仍只适用于需要监管 `di-code-rpc` 子进程的 Node 宿主。
+
 Windows 下 npm 安装的可执行 shim（命令包装器）是 `di-code-rpc.cmd`。如果宿主程序使用其他运行时位置，请传入绝对路径。
 
 组合运行时时，可从根入口使用 `orchestratorHost` 和 `orchestratorHostKey` 创建 `RpcSupervisor`。host 只封装公开 RPC SDK，不会导入 coding-agent 的内部实现。

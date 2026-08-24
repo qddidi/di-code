@@ -619,6 +619,11 @@ SSE 的 `ready` 数据提供 `resumeToken`；重连以 `X-Di-Code-Resume-Token` 
 WebUI 不是沙箱。认证客户端能触发当前 workspace 内的文件和 shell 工具，远程绑定等同于向 token 持有者开放这些能力；不要把 token、Provider
 凭据或 attachment 内容记录到 URL、事件、日志或错误文本。
 
+仓库示例 [`examples/webui-client.ts`](../../examples/webui-client.ts) 只使用 HTTP/SSE 公开字段，覆盖完整的最小客户端流程。运行前先构建并以
+`DI_CODE_PROVIDER=faux`、固定 `DI_CODE_WEBUI_PORT` 和至少 32 字符的 `DI_CODE_WEBUI_TOKEN` 启动 `di-code-webui`。自定义 ANSI TUI 的已测试 fixture
+位于 [`test/fixtures/custom-tui.ts`](test/fixtures/custom-tui.ts)，只从 `@di-code/coding-agent/ui-host` 和 `@di-code/tui` 导入；它通过 composition
+替换 `interactive-host`，不复制 Session、MCP 或 Agent bootstrap。
+
 ## 安全边界与故障排查
 
 - 在可信项目根目录运行；`bash` 不是沙箱，插件也没有沙箱。
