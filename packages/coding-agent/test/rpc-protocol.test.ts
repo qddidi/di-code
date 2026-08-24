@@ -53,6 +53,10 @@ describe("RPC protocol v1", () => {
 				line: JSON.stringify({ version: 1, kind: "request", id: "x", method: "prompt", params: {} }),
 				code: "INVALID_PARAMS",
 			},
+			{
+				line: JSON.stringify({ version: 1, kind: "request", id: "x", method: "retry", params: { messageId: "m-1" } }),
+				code: "INVALID_PARAMS",
+			},
 		];
 
 		for (const testCase of cases) {

@@ -53,6 +53,10 @@ class FakeSession implements RpcSession {
 	signalAborted = false;
 	private readonly listeners = new Set<AgentSessionListener>();
 	private releasePrompt?: () => void;
+	private resolveStreaming?: () => void;
+	private readonly streamingStarted = new Promise<void>((resolve) => {
+		this.resolveStreaming = resolve;
+	});
 
 	subscribeSession(listener: AgentSessionListener): () => void {
 		this.listeners.add(listener);
@@ -62,6 +66,7 @@ class FakeSession implements RpcSession {
 	async prompt(text: string, signal?: AbortSignal): Promise<AssistantMessage> {
 		if (this.isStreaming) throw new Error("AgentSession is already processing a prompt.");
 		this.isStreaming = true;
+		this.resolveStreaming?.();
 		const completion = new Promise<void>((resolve) => {
 			this.releasePrompt = resolve;
 			if (signal?.aborted) {
@@ -91,6 +96,10 @@ class FakeSession implements RpcSession {
 		this.releasePrompt?.();
 	}
 
+	waitForStreaming(): Promise<void> {
+		return this.streamingStarted;
+	}
+
 	private async emit(event: AgentSessionEvent): Promise<void> {
 		for (const listener of this.listeners) await listener(event);
 	}
@@ -112,6 +121,7 @@ describe("RPC client/server", () => {
 		client.subscribe((record) => eventTypes.push(record.event.type));
 
 		const response = client.prompt("hello");
+		await session.waitForStreaming();
 		await expect(client.getState()).resolves.toMatchObject({ isStreaming: true, messageCount: 0 });
 		session.finishPrompt();
 

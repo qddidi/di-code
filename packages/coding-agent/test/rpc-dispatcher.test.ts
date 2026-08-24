@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentSessionEvent, AgentSessionListener } from "../src/core/session.ts";
 import { RpcDispatcher, type RpcSession } from "../src/rpc/dispatcher.ts";
 import { RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "../src/rpc/protocol.ts";
+import type { ProductHost } from "../src/runtime/product-host.ts";
 
 function request(id: string, method: RpcRequest["method"], params: Record<string, unknown> = {}): RpcRequest {
 	return { version: RPC_PROTOCOL_VERSION, kind: "request", id, method, params };
@@ -34,6 +35,10 @@ class DeferredSession implements RpcSession {
 	isStreaming = false;
 	private readonly listeners = new Set<AgentSessionListener>();
 	private finish?: () => void;
+	private resolveStarted?: () => void;
+	private readonly started = new Promise<void>((resolve) => {
+		this.resolveStarted = resolve;
+	});
 	subscribeSession(listener: AgentSessionListener): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
@@ -43,6 +48,7 @@ class DeferredSession implements RpcSession {
 		await this.emit({ type: "agent_start" });
 		await new Promise<void>((resolve) => {
 			this.finish = resolve;
+			this.resolveStarted?.();
 			signal?.addEventListener("abort", () => resolve(), { once: true });
 		});
 		this.isStreaming = false;
@@ -54,16 +60,69 @@ class DeferredSession implements RpcSession {
 	release(): void {
 		this.finish?.();
 	}
+	async waitForPrompt(): Promise<void> {
+		await this.started;
+	}
 	private async emit(event: AgentSessionEvent): Promise<void> {
 		for (const listener of this.listeners) await listener(event);
 	}
 }
 
 describe("RpcDispatcher", () => {
+	it("tracks cancellable ProductHost changes and forwards redacted audit events", async () => {
+		const session = new DeferredSession();
+		const listeners = new Set<
+			(event: { readonly type: "product_audit"; readonly action: "set_project_trust" }) => void
+		>();
+		let resolveStarted: (() => void) | undefined;
+		const didStart = new Promise<void>((resolve) => {
+			resolveStarted = resolve;
+		});
+		const product = {
+			state: () => ({ projectTrusted: false }),
+			listProviders: () => [],
+			login: async () => ({ id: "faux", name: "Faux", models: [], configured: true }),
+			logout: async () => undefined,
+			getProjectTrust: () => false,
+			setProjectTrust: async (_trusted: boolean, signal?: AbortSignal) => {
+				resolveStarted?.();
+				await new Promise<void>((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), { once: true });
+				});
+				return true;
+			},
+			listContextFiles: async () => [],
+			listMcpServers: async () => [],
+			configureMcpServer: async () => ({ id: "server", state: "disconnected", tools: 0, resources: 0, prompts: 0 }),
+			removeMcpServer: async () => undefined,
+			reconnectMcpServer: async () => ({ id: "server", state: "disconnected", tools: 0, resources: 0, prompts: 0 }),
+			subscribe: (
+				listener: (event: { readonly type: "product_audit"; readonly action: "set_project_trust" }) => void,
+			) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+			dispose: async () => undefined,
+		} as unknown as ProductHost;
+		const dispatcher = new RpcDispatcher({ session, productHost: product });
+		const records: RpcServerMessage[] = [];
+		dispatcher.subscribe((record) => records.push(record));
+		await dispatcher.dispatch(request("capabilities", "get_capabilities", { events: ["product_audit"] }));
+		const operation = dispatcher.dispatch(request("trust", "set_project_trust", { trusted: true }));
+		await didStart;
+		await dispatcher.dispatch(request("cancel-trust", "cancel", { requestId: "trust" }));
+		await expect(operation).resolves.toMatchObject({ ok: false, error: { code: "CANCELLED" } });
+		listeners.forEach((listener) => {
+			listener({ type: "product_audit", action: "set_project_trust" });
+		});
+		expect(records.some((record) => record.kind === "event" && record.event.type === "product_audit")).toBe(true);
+		await dispatcher.dispose();
+	});
 	it("keeps duplicate request IDs idempotent and exposes their detached operation", async () => {
 		const session = new DeferredSession();
 		const dispatcher = new RpcDispatcher({ session });
 		const first = dispatcher.dispatch(request("prompt-1", "prompt", { message: "hello" }));
+		await session.waitForPrompt();
 		const duplicate = dispatcher.dispatch(request("prompt-1", "prompt", { message: "different" }));
 		const operation = await dispatcher.dispatch(request("operation-1", "get_operation", { requestId: "prompt-1" }));
 		expect(operation).toMatchObject({
@@ -81,7 +140,7 @@ describe("RpcDispatcher", () => {
 		const records: RpcServerMessage[] = [];
 		dispatcher.subscribe((record) => records.push(record));
 		const prompt = dispatcher.dispatch(request("prompt-1", "prompt", { message: "hello" }));
-		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		await session.waitForPrompt();
 		await dispatcher.dispatch(request("cancel-1", "cancel", { requestId: "prompt-1" }));
 		await expect(prompt).resolves.toMatchObject({ ok: true, result: { method: "prompt" } });
 		expect(records.every((record) => record.kind !== "event" || record.event.type !== "operation_update")).toBe(true);
@@ -97,7 +156,7 @@ describe("RpcDispatcher", () => {
 			request("hello", "get_capabilities", { events: ["sequence", "operation_update", "snapshot_required"] }),
 		);
 		const prompt = dispatcher.dispatch(request("prompt-1", "prompt", { message: "hello" }));
-		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		await session.waitForPrompt();
 		session.release();
 		await prompt;
 		const replay = await dispatcher.dispatch(request("resume", "resume_events", { lastSequence: 0 }));
@@ -130,6 +189,23 @@ describe("RpcDispatcher", () => {
 			request("prompt-2", "prompt", { message: "describe", attachmentIds: [attachmentId.id] }),
 		);
 		expect(reused).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+		await dispatcher.dispose();
+	});
+
+	it("expires retained terminal operations instead of retaining detached state indefinitely", async () => {
+		const session = new DeferredSession();
+		const dispatcher = new RpcDispatcher({ session, operationTtlMs: 1 });
+		const prompt = dispatcher.dispatch(request("prompt-1", "prompt", { message: "hello" }));
+		await session.waitForPrompt();
+		session.release();
+		await prompt;
+		await new Promise<void>((resolve) => setTimeout(resolve, 10));
+		await expect(
+			dispatcher.dispatch(request("operation-1", "get_operation", { requestId: "prompt-1" })),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { code: "NOT_FOUND" },
+		});
 		await dispatcher.dispose();
 	});
 

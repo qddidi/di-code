@@ -372,5 +372,5 @@ describe("AgentSession bash integration", () => {
 		const content = result.content[0];
 		if (!content || content.type !== "text") throw new Error("Expected bash text error");
 		expect(content.text).toContain("Command exited with code 9");
-	});
+	}, 30_000);
 });

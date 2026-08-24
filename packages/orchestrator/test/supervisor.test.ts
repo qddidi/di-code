@@ -34,6 +34,10 @@ class ControlledSession implements RpcSession {
 	readonly transcript: RpcPromptMessage[] = [];
 	isStreaming = false;
 	private release?: () => void;
+	private resolvePromptStarted?: () => void;
+	private readonly promptStarted = new Promise<void>((resolve) => {
+		this.resolvePromptStarted = resolve;
+	});
 
 	subscribeSession(): () => void {
 		return () => undefined;
@@ -41,6 +45,7 @@ class ControlledSession implements RpcSession {
 
 	async prompt(_text: string, signal?: AbortSignal): Promise<RpcPromptMessage> {
 		this.isStreaming = true;
+		this.resolvePromptStarted?.();
 		await new Promise<void>((resolve) => {
 			this.release = resolve;
 			if (signal?.aborted) resolve();
@@ -54,6 +59,10 @@ class ControlledSession implements RpcSession {
 
 	finish(): void {
 		this.release?.();
+	}
+
+	waitForPrompt(): Promise<void> {
+		return this.promptStarted;
 	}
 }
 
@@ -120,6 +129,7 @@ describe("RpcSupervisor", () => {
 		await expect(supervisor.start()).resolves.toMatchObject({ sessionId: "session-supervised" });
 		expect(supervisor.state).toBe("running");
 		const prompt = supervisor.prompt("hello");
+		await session.waitForPrompt();
 		session.finish();
 		await expect(prompt).resolves.toMatchObject({ stopReason: "stop" });
 		await supervisor.stop();

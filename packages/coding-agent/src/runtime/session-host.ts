@@ -53,6 +53,10 @@ export interface PromptInput {
 	readonly requestId?: string;
 }
 
+export interface RetryInput {
+	readonly targetRequestId: string;
+}
+
 export interface SessionHostBootstrapOptions {
 	readonly cwd: string;
 	readonly agentDir: string;
@@ -82,7 +86,7 @@ export interface SessionHost {
 	) => Promise<AssistantMessage>;
 	readonly steer: (input: PromptInput | string, signal?: AbortSignal) => Promise<void>;
 	readonly steerWithImages: (text: string, images: readonly ImageContent[], signal?: AbortSignal) => Promise<void>;
-	readonly retry: (signal?: AbortSignal) => Promise<AssistantMessage>;
+	readonly retry: (input?: RetryInput | AbortSignal, signal?: AbortSignal) => Promise<AssistantMessage>;
 	readonly cancel: (requestId: string) => boolean;
 	readonly transcript: () => readonly import("@di-code/ai").Message[];
 	readonly tree: () => readonly SessionTreeNode[];
@@ -92,10 +96,20 @@ export interface SessionHost {
 	readonly setThinkingLevel: () => ThinkingLevel | undefined;
 	readonly compact: (signal?: AbortSignal) => Promise<void>;
 	readonly setCompactionEnabled: (enabled: boolean) => boolean;
+	/** Reloads Skills, context and MCP tools after an explicit product-configuration change. */
+	readonly refreshResources: (projectTrusted?: boolean, signal?: AbortSignal) => Promise<void>;
 	readonly usage: () => SessionUsage;
 	readonly ui: () => SessionHostUi;
 	readonly subscribe: (listener: SessionHostListener) => () => void;
 	readonly dispose: () => Promise<void>;
+}
+
+const RETRY_PLUGIN_ID = "di-code.retry";
+const RETRY_PLUGIN_VERSION = "1";
+const RETRY_PLUGIN_SCHEMA_VERSION = 1;
+interface FailedPrompt {
+	readonly requestId: string;
+	readonly text: string;
 }
 
 /** Internal presentation facade. It exposes snapshots and host-owned operations, never Session internals. */
@@ -326,7 +340,7 @@ async function createBootstrap(context: Context, options: SessionHostBootstrapOp
 }
 
 export async function createSessionHost(context: Context, options: SessionHostBootstrapOptions): Promise<SessionHost> {
-	const bootstrap = await createBootstrap(context, options);
+	let bootstrap = await createBootstrap(context, options);
 	try {
 		await mkdir(bootstrap.sessionDirectory, { recursive: true });
 	} catch (cause) {
@@ -343,6 +357,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		{
 			readonly manager: SessionManager;
 			readonly session: AgentSession;
+			readonly unsubscribe: () => void;
 			readonly unlock: () => Promise<void>;
 			readonly info: SessionInfo;
 		}
@@ -350,7 +365,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 	const operations = new Map<RequestId, Operation>();
 	const listeners = new Set<SessionHostListener>();
 	let activeId: SessionId | undefined;
-	let lastFailedPrompt: string | undefined;
+	const failedPrompts = new Map<SessionId, FailedPrompt | undefined>();
+	let resourceProjectTrusted = options.projectTrusted;
 	let disposed = false;
 
 	const ensureOpen = (): void => {
@@ -379,15 +395,40 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		cwd: manager.header.cwd,
 		label: sessionLabel(manager),
 	});
-	const createAgent = async (manager: SessionManager): Promise<AgentSession> => {
+	const retryState = (manager: SessionManager): FailedPrompt | undefined => {
+		for (const entry of [...manager.getBranch()].reverse()) {
+			if (
+				entry.type !== "plugin" ||
+				entry.pluginId !== RETRY_PLUGIN_ID ||
+				entry.schemaVersion !== RETRY_PLUGIN_SCHEMA_VERSION
+			)
+				continue;
+			const data = entry.data;
+			if (typeof data !== "object" || data === null || Array.isArray(data)) return undefined;
+			const value = data as Record<string, unknown>;
+			if (value.active !== true || typeof value.text !== "string" || typeof value.requestId !== "string")
+				return undefined;
+			return { requestId: value.requestId, text: value.text };
+		}
+		return undefined;
+	};
+	const persistRetryState = async (manager: SessionManager, state: FailedPrompt | undefined): Promise<void> => {
+		await manager.appendPlugin({
+			pluginId: RETRY_PLUGIN_ID,
+			pluginVersion: RETRY_PLUGIN_VERSION,
+			schemaVersion: RETRY_PLUGIN_SCHEMA_VERSION,
+			data: state ? { active: true, requestId: state.requestId, text: state.text } : { active: false },
+		});
+	};
+	const createAgent = async (manager: SessionManager, resources = bootstrap): Promise<AgentSession> => {
 		const created = await context.require(agentSessionKey).create({
 			allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,
-			provider: bootstrap.provider,
-			model: bootstrap.model,
-			systemPrompt: bootstrap.systemPrompt,
-			skills: bootstrap.skills,
+			provider: resources.provider,
+			model: resources.model,
+			systemPrompt: resources.systemPrompt,
+			skills: resources.skills,
 			sessionManager: manager,
-			externalTools: bootstrap.externalTools,
+			externalTools: resources.externalTools,
 			compaction: options.compaction,
 		});
 		if (!(created instanceof AgentSession))
@@ -446,14 +487,16 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			if (previous !== undefined) {
 				const old = sessions.get(previous);
 				if (old) {
+					old.unsubscribe();
 					await old.session.dispose();
 					await old.unlock();
 				}
 				sessions.delete(previous);
 			}
-			sessions.set(id, { manager, session, unlock, info });
+			const unsubscribe = session.subscribeSession(emit);
+			sessions.set(id, { manager, session, unsubscribe, unlock, info });
+			failedPrompts.set(id, retryState(manager));
 			activeId = id;
-			session.subscribeSession(emit);
 			emit({ type: "session_changed", session: info });
 			return info;
 		} catch (cause) {
@@ -565,7 +608,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			const value = current();
 			sessions.delete(activeId);
 			activeId = undefined;
-			value.session.dispose();
+			value.unsubscribe();
+			await value.session.dispose();
 			await value.unlock();
 			emit({ type: "session_changed" });
 		},
@@ -575,20 +619,42 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				return Promise.reject(new SessionHostError("INVALID_INPUT", "Prompt text must not be empty."));
 			assertIdle("start a prompt");
 			return withOperation("prompt", parsed.requestId, signal, async (operationSignal) => {
-				const result = await current().session.prompt(parsed.text, operationSignal);
-				if (result.stopReason === "error" || result.stopReason === "aborted") lastFailedPrompt = parsed.text;
-				else lastFailedPrompt = undefined;
-				return result;
+				const value = current();
+				try {
+					const result = await value.session.prompt(parsed.text, operationSignal);
+					const failed = result.stopReason === "error" || result.stopReason === "aborted";
+					failedPrompts.set(
+						value.info.id,
+						failed ? { requestId: parsed.requestId ?? "", text: parsed.text } : undefined,
+					);
+					await persistRetryState(value.manager, failed ? failedPrompts.get(value.info.id) : undefined);
+					return result;
+				} catch (cause) {
+					const failed = { requestId: parsed.requestId ?? "", text: parsed.text };
+					failedPrompts.set(value.info.id, failed);
+					await persistRetryState(value.manager, failed).catch(() => undefined);
+					throw cause;
+				}
 			});
 		},
 		promptWithImages: (text, images, signal) => {
 			if (!text?.trim()) return Promise.reject(new SessionHostError("INVALID_INPUT", "Prompt text must not be empty."));
 			assertIdle("start a prompt");
 			return withOperation("prompt", undefined, signal, async (operationSignal) => {
-				const result = await current().session.promptWithImages(text, images, operationSignal);
-				if (result.stopReason === "error" || result.stopReason === "aborted") lastFailedPrompt = text;
-				else lastFailedPrompt = undefined;
-				return result;
+				const value = current();
+				try {
+					const result = await value.session.promptWithImages(text, images, operationSignal);
+					const failed = result.stopReason === "error" || result.stopReason === "aborted";
+					const state = failed ? { requestId: randomUUID(), text } : undefined;
+					failedPrompts.set(value.info.id, state);
+					await persistRetryState(value.manager, state);
+					return result;
+				} catch (cause) {
+					const failed = { requestId: randomUUID(), text };
+					failedPrompts.set(value.info.id, failed);
+					await persistRetryState(value.manager, failed).catch(() => undefined);
+					throw cause;
+				}
 			});
 		},
 		steer: (input, signal) => {
@@ -603,14 +669,28 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			withOperation("steer", undefined, signal, async (operationSignal) => {
 				await current().session.steerWithImages(text, images, operationSignal);
 			}),
-		retry: (signal) => {
+		retry: (input, signal) => {
 			ensureOpen();
 			assertIdle("retry");
-			if (!lastFailedPrompt)
+			const target =
+				typeof input === "object" && input !== null && !(input instanceof AbortSignal)
+					? input.targetRequestId
+					: undefined;
+			const operationSignal = input instanceof AbortSignal ? input : signal;
+			const value = current();
+			const retry = failedPrompts.get(value.info.id);
+			if (!retry || (target !== undefined && target !== retry.requestId))
 				return Promise.reject(new SessionHostError("INVALID_INPUT", "No failed prompt is available to retry."));
-			return withOperation("retry", undefined, signal, async (operationSignal) =>
-				current().session.prompt(lastFailedPrompt as string, operationSignal),
-			);
+			return withOperation("retry", target, operationSignal, async (operationSignal) => {
+				const result = await value.session.prompt(retry.text, operationSignal);
+				if (result.stopReason === "error" || result.stopReason === "aborted") {
+					await persistRetryState(value.manager, retry);
+				} else {
+					failedPrompts.set(value.info.id, undefined);
+					await persistRetryState(value.manager, undefined);
+				}
+				return result;
+			});
 		},
 		cancel: (id) => {
 			const operation = operations.get(asRequestId(id));
@@ -652,6 +732,42 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			ensureOpen();
 			assertIdle("change compaction");
 			return current().session.setCompactionEnabled(enabled);
+		},
+		refreshResources: (projectTrusted, signal) => {
+			ensureOpen();
+			assertIdle("refresh product resources");
+			return withOperation("session", undefined, signal, async () => {
+				const next = await createBootstrap(context, {
+					...options,
+					projectTrusted: projectTrusted ?? resourceProjectTrusted,
+				});
+				if (next.workspace !== bootstrap.workspace) {
+					await next.closeMcp();
+					throw new SessionHostError("INVALID_WORKSPACE", "Product resources changed the Host workspace.");
+				}
+				const active = activeId === undefined ? undefined : current();
+				if (!active) {
+					const previous = bootstrap;
+					bootstrap = next;
+					resourceProjectTrusted = projectTrusted ?? resourceProjectTrusted;
+					await previous.closeMcp();
+					return;
+				}
+				try {
+					const session = await createAgent(active.manager, next);
+					const unsubscribe = session.subscribeSession(emit);
+					const previous = bootstrap;
+					bootstrap = next;
+					resourceProjectTrusted = projectTrusted ?? resourceProjectTrusted;
+					sessions.set(active.info.id, { ...active, session, unsubscribe });
+					active.unsubscribe();
+					await active.session.dispose();
+					await previous.closeMcp();
+				} catch (cause) {
+					await next.closeMcp();
+					throw cause;
+				}
+			});
 		},
 		usage: () => current().session.usage,
 		ui: () => {
@@ -721,10 +837,12 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			for (const operation of operations.values()) operation.controller.abort();
 			await Promise.allSettled(pending);
 			for (const value of sessions.values()) {
+				value.unsubscribe();
 				await value.session.dispose();
 				await value.unlock();
 			}
 			sessions.clear();
+			failedPrompts.clear();
 			activeId = undefined;
 			listeners.clear();
 			await bootstrap.closeMcp();

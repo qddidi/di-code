@@ -122,7 +122,10 @@ async function main(): Promise<void> {
 	const cancellable = client.rpc("prompt", { message: "This prompt may be cancelled." }, "example-cancel").catch((error) => console.log("prompt", error));
 	console.log("cancel", await client.rpc("cancel", { requestId: "example-cancel" }, "example-cancel-command"));
 	await cancellable;
-	await client.rpc("retry", {}, "example-retry").then((result) => console.log("retry", result.message)).catch((error) => console.log("retry", error));
+	await client
+		.rpc("retry", { targetRequestId: "example-cancel" }, "example-retry")
+		.then((result) => console.log("retry", result.message))
+		.catch((error) => console.log("retry", error));
 
 	stream.close();
 	const reconnected = await client.events(resumeToken);

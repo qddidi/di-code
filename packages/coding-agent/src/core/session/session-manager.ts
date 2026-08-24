@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import type { Message } from "@di-code/ai";
+import type { JsonValue, Message } from "@di-code/ai";
 import { type BuiltSessionContext, buildSessionContext } from "../context-builder.ts";
 import {
 	appendSessionEntry,
@@ -15,6 +15,7 @@ import {
 	type SessionEntry,
 	type SessionHeader,
 	type SessionMessageEntry,
+	type SessionPluginEntry,
 	type SessionSummaryEntry,
 	type SessionTreeNode,
 } from "./types.ts";
@@ -240,6 +241,44 @@ export class SessionManager {
 				summary: inputSnapshot.summary,
 				firstKeptEntryId: inputSnapshot.firstKeptEntryId,
 				tokensBefore: inputSnapshot.tokensBefore,
+			};
+			await appendSessionEntry(this.filePath, entry, expectedParentId, this.appendOptions);
+			this.sessionEntries.push(structuredClone(entry));
+			this.addToIndexes(entry);
+			this.activeLeafId = entry.id;
+			return structuredClone(entry);
+		});
+
+		this.appendQueue = operation.then(
+			() => undefined,
+			() => undefined,
+		);
+		return operation;
+	}
+
+	/** Appends host-owned metadata without exposing it as a transcript message. */
+	appendPlugin(input: {
+		readonly pluginId: string;
+		readonly pluginVersion: string;
+		readonly schemaVersion: number;
+		readonly data: JsonValue;
+	}): Promise<SessionPluginEntry> {
+		const inputSnapshot = structuredClone(input);
+		const operation = this.appendQueue.then(async () => {
+			await this.ensureFileCreated();
+			const id = this.createId();
+			assertRecordId(id);
+			const expectedParentId = this.leafId;
+			const entry: SessionPluginEntry = {
+				type: "plugin",
+				version: SESSION_FORMAT_VERSION,
+				id,
+				parentId: expectedParentId,
+				timestamp: createIsoTimestamp(this.now),
+				pluginId: inputSnapshot.pluginId,
+				pluginVersion: inputSnapshot.pluginVersion,
+				schemaVersion: inputSnapshot.schemaVersion,
+				data: inputSnapshot.data,
 			};
 			await appendSessionEntry(this.filePath, entry, expectedParentId, this.appendOptions);
 			this.sessionEntries.push(structuredClone(entry));

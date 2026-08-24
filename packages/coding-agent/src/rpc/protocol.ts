@@ -65,7 +65,7 @@ export interface RpcSessionState {
 	readonly sequence?: number;
 }
 
-/** Metadata for an attachment kept only in the live RPC server memory. */
+/** Metadata for an opaque attachment handle kept only by its live RPC actor. */
 export interface RpcAttachmentInfo {
 	readonly id: string;
 	readonly name: string;
@@ -84,10 +84,34 @@ export type RpcExtendedEventName =
 	| "operation_update"
 	| "snapshot_required"
 	| "session_changed"
-	| "tool_approval";
+	| "tool_approval"
+	| "product_audit";
 
 export interface RpcProductState {
 	readonly projectTrusted: boolean;
+}
+
+export interface RpcProviderSummary {
+	readonly id: string;
+	readonly name: string;
+	readonly models: readonly { readonly id: string; readonly name: string; readonly input: readonly string[] }[];
+	readonly configured: boolean;
+}
+
+export interface RpcContextFileInfo {
+	readonly path: string;
+	readonly scope: string;
+	readonly bytes: number;
+}
+
+export interface RpcMcpServerInfo {
+	readonly id: string;
+	readonly scope?: string;
+	readonly state: "configured" | "connected" | "failed" | "disconnected";
+	readonly tools: number;
+	readonly resources: number;
+	readonly prompts: number;
+	readonly diagnostic?: string;
 }
 
 export type OperationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "crashed";
@@ -147,13 +171,20 @@ const LEGACY_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
 	"tree_navigated",
 	"usage_update",
 ]);
-const EXTENDED_EVENT_TYPES = new Set(["snapshot_required", "operation_update", "session_changed", "tool_approval"]);
+const EXTENDED_EVENT_TYPES = new Set([
+	"snapshot_required",
+	"operation_update",
+	"session_changed",
+	"tool_approval",
+	"product_audit",
+]);
 const EXTENDED_EVENT_NAMES: ReadonlySet<RpcExtendedEventName> = new Set([
 	"sequence",
 	"operation_update",
 	"snapshot_required",
 	"session_changed",
 	"tool_approval",
+	"product_audit",
 ]);
 const ASSISTANT_STOP_REASONS = new Set(["stop", "length", "tool_use", "error", "aborted"]);
 
@@ -177,6 +208,18 @@ export interface RpcEventRecord {
 	readonly requestId: string;
 	readonly event:
 		| AgentSessionEvent
+		| {
+				readonly type: "product_audit";
+				readonly action:
+					| "login"
+					| "logout"
+					| "set_project_trust"
+					| "configure_mcp_server"
+					| "remove_mcp_server"
+					| "reconnect_mcp_server";
+				readonly target?: string;
+				readonly projectTrusted?: boolean;
+		  }
 		| {
 				readonly type: "snapshot_required" | "operation_update" | "session_changed" | "tool_approval";
 				readonly [key: string]: unknown;
@@ -281,7 +324,6 @@ export function parseRpcRequest(line: string): RpcRequest {
 		case "navigate_tree":
 		case "set_model":
 		case "logout":
-		case "remove_mcp_server":
 		case "reconnect_mcp_server":
 			stringParam(
 				params,
@@ -302,6 +344,24 @@ export function parseRpcRequest(line: string): RpcRequest {
 		case "set_runtime":
 			stringParam(params, "providerId", id);
 			stringParam(params, "modelId", id);
+			break;
+		case "retry":
+			stringParam(params, "targetRequestId", id);
+			break;
+		case "login":
+			stringParam(params, "providerId", id);
+			stringParam(params, "apiKey", id);
+			if (params.modelId !== undefined) stringParam(params, "modelId", id, true);
+			if (params.api !== undefined) stringParam(params, "api", id, true);
+			break;
+		case "configure_mcp_server":
+			stringParam(params, "serverId", id);
+			stringParam(params, "scope", id);
+			if (!objectRecord(params.config)) throw new RpcProtocolError("INVALID_PARAMS", "config must be an object.", id);
+			break;
+		case "remove_mcp_server":
+			stringParam(params, "serverId", id);
+			if (params.scope !== undefined) stringParam(params, "scope", id, true);
 			break;
 		case "set_compaction_enabled":
 		case "set_project_trust":
@@ -327,6 +387,21 @@ export function parseRpcRequest(line: string): RpcRequest {
 			stringParam(params, "data", id);
 			if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(params.contentType as string))
 				throw new RpcProtocolError("INVALID_PARAMS", "Attachment contentType is unsupported.", id);
+			break;
+		case "get_transcript":
+			if (params.pageToken !== undefined) stringParam(params, "pageToken", id, true);
+			if (
+				params.pageSize !== undefined &&
+				(!Number.isSafeInteger(params.pageSize) || (params.pageSize as number) < 1 || (params.pageSize as number) > 200)
+			)
+				throw new RpcProtocolError("INVALID_PARAMS", "pageSize must be an integer between 1 and 200.", id);
+			if (
+				params.maxBytes !== undefined &&
+				(!Number.isSafeInteger(params.maxBytes) ||
+					(params.maxBytes as number) < 1024 ||
+					(params.maxBytes as number) > 4 * 1024 * 1024)
+			)
+				throw new RpcProtocolError("INVALID_PARAMS", "maxBytes must be between 1024 and 4194304.", id);
 			break;
 		case "approve_tool":
 			stringParam(params, "approvalId", id);
@@ -418,6 +493,31 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 		case "open_session":
 			assertSessionInfo(result.session);
 			return;
+		case "list_providers":
+			if (!Array.isArray(result.providers))
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC providers result is invalid.");
+			return;
+		case "list_context_files":
+			if (!Array.isArray(result.files))
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC context files result is invalid.");
+			return;
+		case "list_mcp_servers":
+			if (!Array.isArray(result.servers)) throw new RpcProtocolError("INVALID_REQUEST", "RPC MCP result is invalid.");
+			return;
+		case "configure_mcp_server":
+		case "reconnect_mcp_server":
+			if (!objectRecord(result.server)) throw new RpcProtocolError("INVALID_REQUEST", "RPC MCP result is invalid.");
+			return;
+		case "login":
+			if (!objectRecord(result.provider)) throw new RpcProtocolError("INVALID_REQUEST", "RPC login result is invalid.");
+			return;
+		case "set_project_trust":
+			if (typeof result.trusted !== "boolean")
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC trust result is invalid.");
+			return;
+		case "logout":
+		case "remove_mcp_server":
+			return;
 	}
 }
 function assertCapabilities(result: Record<string, unknown>): void {
@@ -500,6 +600,23 @@ function assertEvent(event: Record<string, unknown>, type: string): void {
 	if (type === "tool_approval") {
 		if (typeof event.approvalId !== "string")
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC tool_approval event is invalid.");
+		return;
+	}
+	if (type === "product_audit") {
+		if (
+			typeof event.action !== "string" ||
+			![
+				"login",
+				"logout",
+				"set_project_trust",
+				"configure_mcp_server",
+				"remove_mcp_server",
+				"reconnect_mcp_server",
+			].includes(event.action) ||
+			(event.target !== undefined && typeof event.target !== "string") ||
+			(event.projectTrusted !== undefined && typeof event.projectTrusted !== "boolean")
+		)
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC product_audit event is invalid.");
 		return;
 	}
 	if (type === "tool_execution_start") {

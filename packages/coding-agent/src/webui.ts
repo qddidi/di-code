@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 import type { Context } from "@di-code/plugin-runtime";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
 import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "./rpc/protocol.ts";
+import { createManagedAttachmentStore } from "./runtime/attachment-store.ts";
+import { createProductHost, type ProductHost } from "./runtime/product-host.ts";
 import { HostManager, type SessionActor, type SessionHostBootstrapOptions } from "./runtime/session-host.ts";
 
 export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal"> {
@@ -17,21 +19,30 @@ export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "c
 	readonly origins?: readonly string[];
 	readonly maxBodyBytes?: number;
 	readonly rateLimit?: { readonly windowMs: number; readonly maxRequests: number };
+	/** Maximum simultaneous SSE subscriptions for one authenticated client. */
+	readonly maxSseConnectionsPerClient?: number;
+	/** Maximum simultaneous SSE subscriptions across the server. */
+	readonly maxSseConnections?: number;
+	/** Lifetime of a reconnect credential; defaults to ten minutes. */
+	readonly resumeTokenTtlMs?: number;
 }
 
 interface Connection {
-	readonly queue: RpcServerMessage[];
+	readonly queue: Array<RpcServerMessage | { readonly keepalive: true }>;
 	readonly waiters: Array<() => void>;
 	readonly maxQueue: number;
 	readonly closeResponse: () => void;
+	readonly release: () => void;
 	closed: boolean;
 }
 
 interface ClientState {
 	readonly id: string;
 	readonly principal: string;
-	readonly resumeToken: string;
+	resumeToken: string;
+	resumeTokenExpiresAt: number;
 	readonly dispatchers: Map<string, RpcDispatcher>;
+	readonly productHosts: Map<string, ProductHost>;
 	readonly connections: Set<Connection>;
 	readonly requestTimes: number[];
 }
@@ -75,11 +86,24 @@ export class WebUiServer {
 	private readonly clientsByResumeToken = new Map<string, ClientState>();
 	private readonly server: Server;
 	private tokenValue: string;
+	private sseConnections = 0;
 	private disposed = false;
 
 	constructor(options: WebUiServerOptions) {
 		if (options.token === undefined || options.token.length < 32)
 			throw new Error("WebUI requires a token of at least 32 characters.");
+		if (
+			options.resumeTokenTtlMs !== undefined &&
+			(!Number.isSafeInteger(options.resumeTokenTtlMs) || options.resumeTokenTtlMs <= 0)
+		)
+			throw new Error("WebUI resume token TTL must be a positive integer.");
+		if (
+			(options.maxSseConnectionsPerClient !== undefined &&
+				(!Number.isSafeInteger(options.maxSseConnectionsPerClient) || options.maxSseConnectionsPerClient <= 0)) ||
+			(options.maxSseConnections !== undefined &&
+				(!Number.isSafeInteger(options.maxSseConnections) || options.maxSseConnections <= 0))
+		)
+			throw new Error("WebUI SSE connection limits must be positive integers.");
 		this.options = options;
 		this.tokenValue = options.token;
 		this.hostManager = new HostManager(options.context);
@@ -154,11 +178,16 @@ export class WebUiServer {
 			return undefined;
 		}
 		const requestedResumeToken = req.headers["x-di-code-resume-token"];
-		const resumed =
-			typeof requestedResumeToken === "string" ? this.clientsByResumeToken.get(requestedResumeToken) : undefined;
-		if (resumed) {
-			res.setHeader("x-di-code-client-id", resumed.id);
-			return resumed;
+		if (typeof requestedResumeToken === "string") {
+			const resumed = this.clientsByResumeToken.get(requestedResumeToken);
+			if (resumed && resumed.resumeTokenExpiresAt > Date.now()) {
+				this.rotateResumeToken(resumed);
+				res.setHeader("x-di-code-client-id", resumed.id);
+				return resumed;
+			}
+			if (resumed) this.revokeResumeToken(resumed);
+			json(res, 401, { error: "Resume credential is invalid or expired." });
+			return undefined;
 		}
 		const requestedId = req.headers["x-di-code-client-id"];
 		const id =
@@ -172,7 +201,9 @@ export class WebUiServer {
 				id,
 				principal: `webui:${id}`,
 				resumeToken: randomBytes(24).toString("base64url"),
+				resumeTokenExpiresAt: Date.now() + (this.options.resumeTokenTtlMs ?? 10 * 60 * 1000),
 				dispatchers: new Map(),
+				productHosts: new Map(),
 				connections: new Set(),
 				requestTimes: [],
 			};
@@ -180,6 +211,16 @@ export class WebUiServer {
 			this.clientsByResumeToken.set(client.resumeToken, client);
 		}
 		return client;
+	}
+	private rotateResumeToken(client: ClientState): void {
+		this.clientsByResumeToken.delete(client.resumeToken);
+		client.resumeToken = randomBytes(24).toString("base64url");
+		client.resumeTokenExpiresAt = Date.now() + (this.options.resumeTokenTtlMs ?? 10 * 60 * 1000);
+		this.clientsByResumeToken.set(client.resumeToken, client);
+	}
+	private revokeResumeToken(client: ClientState): void {
+		this.clientsByResumeToken.delete(client.resumeToken);
+		client.resumeTokenExpiresAt = 0;
 	}
 	private hostAllowed(req: IncomingMessage): boolean {
 		const host = req.headers.host;
@@ -210,7 +251,7 @@ export class WebUiServer {
 			res.setHeader("access-control-allow-origin", origin);
 			res.setHeader(
 				"access-control-allow-headers",
-				"authorization, content-type, x-di-code-token, x-di-code-resume-token, last-event-id",
+				"authorization, content-type, x-di-code-token, x-di-code-client-id, x-di-code-resume-token, last-event-id",
 			);
 			res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
 			res.setHeader("vary", "Origin");
@@ -231,23 +272,38 @@ export class WebUiServer {
 		if (requested !== allowed) throw new Error("Workspace is not authorized for this WebUI token.");
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
+			const hostOptions = this.hostOptions(client.principal, allowed);
 			const actor = await this.hostManager.get({
-				...this.hostOptions(client.principal, allowed),
+				...hostOptions,
 				principal: client.principal,
 				cwd: allowed,
 			});
 			if (!actor.state().activeSession) await actor.createSession();
+			const product = createProductHost({
+				context: this.options.context,
+				cwd: allowed,
+				agentDir: hostOptions.agentDir,
+				projectTrusted: this.options.projectTrusted ?? false,
+				provider: hostOptions.provider,
+				refreshResources: (projectTrusted) => actor.refreshResources(projectTrusted),
+			});
+			const attachments = await createManagedAttachmentStore({
+				directory: resolve(hostOptions.agentDir, "attachments"),
+			});
 			dispatcher = new RpcDispatcher({
 				session: actor,
 				productState: { projectTrusted: this.options.projectTrusted ?? false },
+				productHost: product,
+				attachmentStore: attachments,
 			});
 			await dispatcher.dispatch({
 				version: RPC_PROTOCOL_VERSION,
 				kind: "request",
 				id: `webui-capabilities:${randomUUID()}`,
 				method: "get_capabilities",
-				params: { events: ["sequence", "operation_update", "snapshot_required", "session_changed"] },
+				params: { events: ["sequence", "operation_update", "snapshot_required", "session_changed", "product_audit"] },
 			});
+			client.productHosts.set(allowed, product);
 			client.dispatchers.set(allowed, dispatcher);
 		}
 		const actor = await this.hostManager.get({
@@ -292,18 +348,34 @@ export class WebUiServer {
 		json(res, 200, await dispatcher.dispatch(request));
 	}
 	private async events(req: IncomingMessage, res: ServerResponse, client: ClientState, url: URL): Promise<void> {
+		if (typeof req.headers["x-di-code-resume-token"] === "string") this.closeConnections(client);
+		const perClientLimit = this.options.maxSseConnectionsPerClient ?? 8;
+		const globalLimit = this.options.maxSseConnections ?? 64;
+		if (client.connections.size >= perClientLimit || this.sseConnections >= globalLimit) {
+			json(res, 429, { error: "SSE connection limit exceeded." });
+			return;
+		}
 		const { dispatcher } = await this.actor(client, url);
+		let released = false;
 		const connection: Connection = {
 			queue: [],
 			waiters: [],
 			maxQueue: 128,
 			closed: false,
 			closeResponse: () => res.end(),
+			release: () => {
+				if (released) return;
+				released = true;
+				connection.closed = true;
+				connection.waiters.splice(0).forEach((wake) => void wake());
+				client.connections.delete(connection);
+				this.sseConnections = Math.max(0, this.sseConnections - 1);
+			},
 		};
 		client.connections.add(connection);
+		this.sseConnections += 1;
 		req.once("close", () => {
-			connection.closed = true;
-			connection.waiters.splice(0).forEach((wake) => void wake());
+			connection.release();
 		});
 		const unsubscribe = dispatcher.subscribe((message) => {
 			if (connection.closed) return;
@@ -313,6 +385,12 @@ export class WebUiServer {
 			} else connection.queue.push(message);
 			connection.waiters.splice(0).forEach((wake) => void wake());
 		});
+		const keepalive = setInterval(() => {
+			if (connection.closed) return;
+			if (connection.queue.length >= connection.maxQueue) connection.queue.shift();
+			connection.queue.push({ keepalive: true });
+			connection.waiters.splice(0).forEach((wake) => void wake());
+		}, 15_000);
 		res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
 		res.write(`event: ready\ndata: ${JSON.stringify({ resumeToken: client.resumeToken })}\n\n`);
 		const last = Number(req.headers["last-event-id"] ?? "0");
@@ -328,22 +406,32 @@ export class WebUiServer {
 			while (!connection.closed) {
 				const next = connection.queue.shift();
 				if (!next) await new Promise<void>((resolvePromise) => connection.waiters.push(resolvePromise));
-				else if (!res.write(`data: ${JSON.stringify(next)}\n\n`))
-					await new Promise<void>((resolvePromise) => res.once("drain", resolvePromise));
+				else {
+					const payload =
+						"keepalive" in next
+							? ": keepalive\n\n"
+							: `${next.kind === "event" && next.sequence !== undefined ? `id: ${next.sequence}\n` : ""}data: ${JSON.stringify(next)}\n\n`;
+					if (!res.write(payload)) await new Promise<void>((resolvePromise) => res.once("drain", resolvePromise));
+				}
 			}
 		} finally {
+			clearInterval(keepalive);
 			unsubscribe();
-			client.connections.delete(connection);
+			connection.release();
+		}
+	}
+	private closeConnections(client: ClientState): void {
+		for (const connection of client.connections) {
+			connection.release();
+			connection.closeResponse();
 		}
 	}
 	private closeClient(client: ClientState): void {
-		for (const connection of client.connections) {
-			connection.closed = true;
-			connection.waiters.splice(0).forEach((wake) => void wake());
-			connection.closeResponse();
-		}
+		this.closeConnections(client);
 		for (const dispatcher of client.dispatchers.values()) void dispatcher.dispose();
+		for (const product of client.productHosts.values()) void product.dispose();
 		client.dispatchers.clear();
+		client.productHosts.clear();
 		this.clientsByResumeToken.delete(client.resumeToken);
 	}
 }

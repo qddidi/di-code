@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
-import type { AssistantMessage } from "@di-code/ai";
+import type { AssistantMessage, Model, ThinkingLevel } from "@di-code/ai";
 import { JsonlLineDecoder, serializeJsonLine } from "./jsonl.ts";
 import {
 	type OperationState,
@@ -8,10 +8,13 @@ import {
 	RPC_PROTOCOL_VERSION,
 	type RpcAttachmentInfo,
 	type RpcCapabilities,
+	type RpcContextFileInfo,
 	type RpcErrorCode,
 	type RpcEventRecord,
+	type RpcMcpServerInfo,
 	type RpcMethod,
 	type RpcProductState,
+	type RpcProviderSummary,
 	type RpcRequest,
 	type RpcSessionState,
 	type RpcSuccessResult,
@@ -34,6 +37,12 @@ export interface RpcSessionInfo {
 	readonly id: string;
 	readonly label: string;
 	readonly modifiedAt?: number;
+}
+
+export interface RpcRuntimeSnapshot {
+	readonly providerId: string;
+	readonly modelId: string;
+	readonly thinkingLevel?: ThinkingLevel;
 }
 
 interface PendingRequest {
@@ -165,6 +174,135 @@ export class RpcClient {
 	async getProjectTrust(): Promise<boolean> {
 		const result = await this.send("get_project_trust", {});
 		return result.trusted as boolean;
+	}
+
+	async getTranscript(
+		params: { readonly pageToken?: string; readonly pageSize?: number; readonly maxBytes?: number } = {},
+	): Promise<RpcSuccessResult> {
+		return this.send("get_transcript", params);
+	}
+
+	async getTree(): Promise<RpcSuccessResult> {
+		return this.send("get_tree", {});
+	}
+
+	async navigateTree(entryId: string): Promise<RpcSuccessResult> {
+		return this.send("navigate_tree", { entryId });
+	}
+
+	async getModels(): Promise<readonly Model[]> {
+		const result = await this.send("get_models", {});
+		return result.models as readonly Model[];
+	}
+
+	async setModel(modelId: string): Promise<Model> {
+		const result = await this.send("set_model", { modelId });
+		return result.model as Model;
+	}
+
+	async getRuntime(): Promise<RpcRuntimeSnapshot> {
+		const result = await this.send("get_runtime", {});
+		return {
+			providerId: result.providerId as string,
+			modelId: result.modelId as string,
+			...(result.thinkingLevel === undefined ? {} : { thinkingLevel: result.thinkingLevel as ThinkingLevel }),
+		};
+	}
+
+	async setRuntime(providerId: string, modelId: string): Promise<Model> {
+		const result = await this.send("set_runtime", { providerId, modelId });
+		return result.model as Model;
+	}
+
+	async setThinkingLevel(): Promise<ThinkingLevel | undefined> {
+		const result = await this.send("set_thinking_level", {});
+		return result.level as ThinkingLevel | undefined;
+	}
+
+	async compact(): Promise<void> {
+		await this.send("compact", {});
+	}
+
+	async setCompactionEnabled(enabled: boolean): Promise<boolean> {
+		const result = await this.send("set_compaction_enabled", { enabled });
+		return result.enabled as boolean;
+	}
+
+	async getUsage(): Promise<RpcSuccessResult> {
+		return this.send("get_usage", {});
+	}
+
+	async listSkills(): Promise<RpcSuccessResult> {
+		return this.send("list_skills", {});
+	}
+
+	async getResources(): Promise<RpcSuccessResult> {
+		return this.send("get_resources", {});
+	}
+
+	async steer(message: string, options: RpcPromptOptions = {}): Promise<void> {
+		const result = await this.send("steer", {
+			message,
+			...(options.attachmentIds === undefined ? {} : { attachmentIds: [...options.attachmentIds] }),
+		});
+		if (result.method !== "steer") throw new Error("RPC steer returned an incompatible result.");
+	}
+
+	async retry(targetRequestId: string): Promise<AssistantMessage> {
+		const result = await this.send("retry", { targetRequestId });
+		if (result.method !== "retry") throw new Error("RPC retry returned an incompatible result.");
+		return result.message as AssistantMessage;
+	}
+
+	async listProviders(): Promise<readonly RpcProviderSummary[]> {
+		const result = await this.send("list_providers", {});
+		return result.providers as readonly RpcProviderSummary[];
+	}
+
+	async login(
+		providerId: string,
+		apiKey: string,
+		options: { readonly modelId?: string; readonly api?: string } = {},
+	): Promise<RpcProviderSummary> {
+		const result = await this.send("login", { providerId, apiKey, ...options });
+		return result.provider as RpcProviderSummary;
+	}
+
+	async logout(providerId: string): Promise<void> {
+		await this.send("logout", { providerId });
+	}
+
+	async setProjectTrust(trusted: boolean): Promise<boolean> {
+		const result = await this.send("set_project_trust", { trusted });
+		return result.trusted as boolean;
+	}
+
+	async listContextFiles(): Promise<readonly RpcContextFileInfo[]> {
+		const result = await this.send("list_context_files", {});
+		return result.files as readonly RpcContextFileInfo[];
+	}
+
+	async listMcpServers(): Promise<readonly RpcMcpServerInfo[]> {
+		const result = await this.send("list_mcp_servers", {});
+		return result.servers as readonly RpcMcpServerInfo[];
+	}
+
+	async configureMcpServer(
+		serverId: string,
+		scope: "user" | "project" | "local",
+		config: Record<string, unknown>,
+	): Promise<RpcMcpServerInfo> {
+		const result = await this.send("configure_mcp_server", { serverId, scope, config });
+		return result.server as RpcMcpServerInfo;
+	}
+
+	async removeMcpServer(serverId: string, scope: "user" | "project" | "local" = "project"): Promise<void> {
+		await this.send("remove_mcp_server", { serverId, scope });
+	}
+
+	async reconnectMcpServer(serverId: string): Promise<RpcMcpServerInfo> {
+		const result = await this.send("reconnect_mcp_server", { serverId });
+		return result.server as RpcMcpServerInfo;
 	}
 
 	async createAttachment(

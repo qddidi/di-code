@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider } from "@di-code/ai";
@@ -36,10 +36,11 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function createServer(): Promise<{
+async function createServer(overrides: Partial<ConstructorParameters<typeof WebUiServer>[0]> = {}): Promise<{
 	readonly server: WebUiServer;
 	readonly baseUrl: string;
 	readonly token: string;
+	readonly agentDir: string;
 }> {
 	const root = await mkdtemp(join(tmpdir(), "di-code-webui-root-"));
 	const agentDir = await mkdtemp(join(tmpdir(), "di-code-webui-agent-"));
@@ -83,6 +84,7 @@ async function createServer(): Promise<{
 		token: "test-webui-token-which-is-at-least-32-characters",
 		projectTrusted: true,
 		rateLimit: { windowMs: 1_000, maxRequests: 100 },
+		...overrides,
 	});
 	const address = await server.listen();
 	cleanups.push(async () => {
@@ -96,6 +98,7 @@ async function createServer(): Promise<{
 		server,
 		baseUrl: `http://${address.host}:${address.port}`,
 		token: "test-webui-token-which-is-at-least-32-characters",
+		agentDir,
 	};
 }
 
@@ -126,6 +129,27 @@ describe("WebUiServer", () => {
 		});
 		const firstClient = first.headers.get("x-di-code-client-id");
 		expect(firstClient).toBeTruthy();
+		const providers = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, firstClient ?? undefined),
+			body: JSON.stringify({ version: 1, kind: "request", id: "providers", method: "list_providers", params: {} }),
+		});
+		expect(await providers.json()).toMatchObject({
+			ok: true,
+			result: { method: "list_providers", providers: [{ id: "faux" }] },
+		});
+		const trust = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, firstClient ?? undefined),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "trust",
+				method: "set_project_trust",
+				params: { trusted: false },
+			}),
+		});
+		expect(await trust.json()).toMatchObject({ ok: true, result: { method: "set_project_trust", trusted: false } });
 		const second = await fetch(`${baseUrl}/rpc`, {
 			method: "POST",
 			headers: headers(token, "second-client-identifier"),
@@ -178,6 +202,115 @@ describe("WebUiServer", () => {
 		});
 		expect(resumed.headers.get("x-di-code-client-id")).toBe("attachment-client-id");
 		await resumed.body?.cancel();
+	});
+
+	it("keeps detached request state idempotent and removes actor attachments on use and shutdown", async () => {
+		const { baseUrl, token, server, agentDir } = await createServer();
+		const clientId = "lifecycle-client-id";
+		const events = await fetch(`${baseUrl}/events`, { headers: headers(token, clientId) });
+		const reader = events.body?.getReader();
+		await reader?.read();
+		const attachment = await fetch(`${baseUrl}/attachments`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ name: "image.png", contentType: "image/png", data: "aGVsbG8=" }),
+		});
+		const attachmentValue = (await attachment.json()) as {
+			readonly result: { readonly attachment: { readonly id: string } };
+		};
+		const promptRequest = {
+			version: 1,
+			kind: "request",
+			id: "same-request",
+			method: "prompt",
+			params: { message: "describe", attachmentIds: [attachmentValue.result.attachment.id] },
+		};
+		const first = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify(promptRequest),
+		});
+		const duplicate = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ ...promptRequest, params: { message: "different" } }),
+		});
+		expect(await duplicate.json()).toEqual(await first.json());
+		let streamEvents = "";
+		for (
+			let index = 0;
+			index < 4 && (!streamEvents.includes('"type":"agent_start"') || !streamEvents.includes('"type":"agent_end"'));
+			index++
+		) {
+			const chunk = await reader?.read();
+			if (!chunk || chunk.done) break;
+			streamEvents += new TextDecoder().decode(chunk.value);
+		}
+		expect(streamEvents).toContain('"type":"agent_start"');
+		expect(streamEvents).toContain('"type":"agent_end"');
+		await reader?.cancel();
+		const operation = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "operation-state",
+				method: "get_operation",
+				params: { requestId: "same-request" },
+			}),
+		});
+		expect(operation.status).toBe(200);
+		const newSession = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ version: 1, kind: "request", id: "new-session", method: "new_session", params: {} }),
+		});
+		expect(await newSession.json()).toMatchObject({ ok: true, result: { method: "new_session" } });
+		const state = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ version: 1, kind: "request", id: "new-state", method: "get_state", params: {} }),
+		});
+		expect(await state.json()).toMatchObject({ ok: true, result: { state: { messageCount: 0 } } });
+		const storedFiles = await readdir(join(agentDir, "webui"), { recursive: true });
+		expect(storedFiles.some((file) => file.endsWith(".attachment"))).toBe(false);
+		await server.close();
+		expect((await readdir(agentDir, { recursive: true })).some((file) => file.endsWith(".attachment"))).toBe(false);
+	});
+
+	it("expires and rotates resume credentials and enforces per-client SSE limits", async () => {
+		const { baseUrl, token } = await createServer({ resumeTokenTtlMs: 20, maxSseConnectionsPerClient: 1 });
+		const first = await fetch(`${baseUrl}/events`, { headers: headers(token, "resume-client-id") });
+		const reader = first.body?.getReader();
+		const initial = new TextDecoder().decode((await reader?.read())?.value);
+		const resumeToken = JSON.parse(initial.match(/data: (.+)/)?.[1] ?? "{}").resumeToken as string;
+		await expect(fetch(`${baseUrl}/events`, { headers: headers(token, "resume-client-id") })).resolves.toMatchObject({
+			status: 429,
+		});
+		await reader?.cancel();
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		const expired = headers(token);
+		expired.set("x-di-code-resume-token", resumeToken);
+		await expect(fetch(`${baseUrl}/events`, { headers: expired })).resolves.toMatchObject({ status: 401 });
+
+		const second = await fetch(`${baseUrl}/events`, { headers: headers(token, "rotation-client-id") });
+		const secondReader = second.body?.getReader();
+		const secondInitial = new TextDecoder().decode((await secondReader?.read())?.value);
+		const secondToken = JSON.parse(secondInitial.match(/data: (.+)/)?.[1] ?? "{}").resumeToken as string;
+		await secondReader?.cancel();
+		const resumedHeaders = headers(token);
+		resumedHeaders.set("x-di-code-resume-token", secondToken);
+		const resumed = await fetch(`${baseUrl}/events`, { headers: resumedHeaders });
+		expect(resumed.status).toBe(200);
+		const resumedReader = resumed.body?.getReader();
+		const rotatedInitial = new TextDecoder().decode((await resumedReader?.read())?.value);
+		const rotatedToken = JSON.parse(rotatedInitial.match(/data: (.+)/)?.[1] ?? "{}").resumeToken as string;
+		expect(rotatedToken).not.toBe(secondToken);
+		const oldToken = headers(token);
+		oldToken.set("x-di-code-resume-token", secondToken);
+		await expect(fetch(`${baseUrl}/events`, { headers: oldToken })).resolves.toMatchObject({ status: 401 });
+		await resumedReader?.cancel();
 	});
 });
 

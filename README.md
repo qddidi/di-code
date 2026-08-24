@@ -532,10 +532,11 @@ di-code-webui
 
 入口只授权启动目录对应的真实工作区，拒绝浏览器提供的其他路径。`POST /rpc` 接收已有 RPC v1 request；`GET /events` 用 SSE 返回流事件；
 `POST /attachments` 接收 `{ name, contentType, data }` JSON，其中 `data` 是 base64。附件只接受 PNG、JPEG、WebP、GIF，单个最大 5 MiB，
-每个浏览器 client 最多保留 32 个或 64 MiB，总计 10 分钟后过期，并以 opaque `attachmentId` 引用，不暴露服务器路径。
+每个浏览器 client 最多保留 32 个或 64 MiB，总计 10 分钟后过期；WebUI 将附件保存到该 client 独立的受管临时目录，
+并以 opaque `attachmentId` 引用，不暴露服务器路径。
 
-首次响应返回 `X-Di-Code-Client-Id`。SSE `ready` 事件带 `resumeToken`；重连在 header 发送该 token 和 `Last-Event-ID`，服务器重放有界事件或发送
-`snapshot_required`。HTTP/SSE 断开不会取消 prompt、steer、retry 或 compact；用 `get_operation` 查询终态，只有 `cancel` 会显式取消。
+首次响应返回 `X-Di-Code-Client-Id`。SSE `ready` 事件带 10 分钟有效的 `resumeToken`；每次成功恢复都会轮换它，旧 token 立即失效。带 sequence 的事件同时使用 SSE `id`，空闲连接每 15 秒发送 comment keepalive；重连在 header 发送该 token 和 `Last-Event-ID`，服务器重放有界事件或发送
+`snapshot_required`。默认最多 8 个 SSE 连接/浏览器 client、64 个/服务进程；达到限制会返回 `429`。HTTP/SSE 断开不会取消 prompt、steer、retry 或 compact；用 `get_operation` 查询终态，只有 `cancel` 会显式取消。
 
 远程绑定必须同时设置 `DI_CODE_WEBUI_ALLOW_REMOTE=1` 和显式 token。仍应配置允许的 Origin；默认只接受同源 `http` Origin，拒绝错误的 Host。
 WebUI 不是沙箱：经过认证的客户端可请求当前工作区内的本地文件工具和 shell 工具。远程开放会把这些能力交给持有 token 的客户端，除非你明确
@@ -564,7 +565,7 @@ node --experimental-strip-types examples/webui-client.ts
 | `prompt` | `{ "message": "..." }` | 最终 `AssistantMessage`；中间事件另行输出。 |
 | `cancel` | `{ "requestId": "..." }` | 是否找到并中止对应 prompt。 |
 
-`RpcServer` 保留为 JSONL process adapter：它负责逐行 framing、stdout 串行化、stdin shutdown 和脱敏 stderr 诊断。传输无关的 `RpcDispatcher` 负责严格 schema 校验、方法分发、request ID 操作表、事件 sequence 和环形重放缓冲。扩展客户端必须先用 `get_capabilities` 声明支持的事件；未协商连接继续只收到旧 Agent event。协商后可使用持久化 Session、transcript/tree、steer/retry、模型、压缩、usage、资源快照和 `get_operation`，通过 `resume_events` 恢复事件或处理 `snapshot_required`。v1 只增加方法和可选字段，不能经由 RPC 执行任意 slash command 或 plugin command。
+`RpcServer` 保留为 JSONL process adapter：它负责逐行 framing、stdout 串行化、stdin shutdown 和脱敏 stderr 诊断。传输无关的 `RpcDispatcher` 负责严格 schema 校验、方法分发、request ID 操作表、事件 sequence 和环形重放缓冲。扩展客户端必须先用 `get_capabilities` 声明支持的事件；未协商连接继续只收到旧 Agent event。协商后可使用持久化 Session、transcript/tree、steer/retry、模型、压缩、usage、资源快照和 `get_operation`，通过 `resume_events` 恢复事件或处理 `snapshot_required`。ProductHost 的 login/logout、trust 和 MCP 配置同样是可取消 operation；协商 `product_audit` 后会收到不含密钥的完成审计事件。v1 只增加方法和可选字段，不能经由 RPC 执行任意 slash command 或 plugin command。
 
 SDK 从公开子路径导入：
 

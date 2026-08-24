@@ -164,4 +164,42 @@ describe("SessionHost", () => {
 			await rm(agentDir, { recursive: true, force: true });
 		}
 	});
+
+	it("persists the failed prompt target so retry survives Host reopen", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-retry-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-retry-agent-"));
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "failure", errorMessage: "temporary failure" },
+				{ type: "success", content: [{ type: "text", text: "retried" }] },
+			],
+		});
+		let runtime = await setup(root, agentDir, faux);
+		let sessionId: string | undefined;
+		try {
+			const created = await runtime.host.createSession();
+			sessionId = created.id;
+			await expect(runtime.host.prompt({ text: "try again", requestId: "failed-request" })).resolves.toMatchObject({
+				stopReason: "error",
+			});
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+		}
+		if (!sessionId) throw new Error("Expected persisted Session ID");
+		runtime = await setup(root, agentDir, faux);
+		try {
+			await runtime.host.openSession(sessionId);
+			await expect(runtime.host.retry({ targetRequestId: "failed-request" })).resolves.toMatchObject({
+				stopReason: "stop",
+			});
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
 });

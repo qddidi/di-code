@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AssistantMessage, ImageContent, Message } from "@di-code/ai";
 import type { AgentSessionEvent, AgentSessionListener } from "../core/session.ts";
+import type { ProductHost } from "../runtime/product-host.ts";
 import type { SessionHost, SessionHostEvent } from "../runtime/session-host.ts";
 import {
 	type OperationState,
@@ -38,10 +39,33 @@ export interface RpcDispatcherOptions {
 	readonly eventBufferSize?: number;
 	/** Immutable composition snapshot; changing trust requires a new product host. */
 	readonly productState?: RpcProductState;
+	readonly productHost?: ProductHost;
 	readonly onError?: (error: Error) => void;
 	readonly attachmentTtlMs?: number;
 	readonly attachmentMaxCount?: number;
 	readonly attachmentMaxBytes?: number;
+	readonly attachmentStore?: RpcAttachmentStore;
+	/** Completed operations remain queryable for this bounded retention window. */
+	readonly operationTtlMs?: number;
+	/** Active operations are never evicted; this only limits retained terminal records. */
+	readonly operationMaxCount?: number;
+}
+
+/**
+ * Actor-scoped attachment storage. The dispatcher owns validation and opaque IDs; implementations own bytes and
+ * must remove consumed, expired, and disposed attachments without exposing their backing paths.
+ */
+export interface RpcAttachmentStore {
+	create(input: {
+		readonly id: string;
+		readonly name: string;
+		readonly contentType: RpcAttachmentInfo["contentType"];
+		readonly data: string;
+		readonly bytes: number;
+	}): Promise<RpcAttachmentInfo>;
+	take(ids: readonly string[]): Promise<readonly ImageContent[]>;
+	discard(ids: readonly string[]): Promise<void>;
+	dispose(): Promise<void>;
 }
 
 interface StoredOperation {
@@ -53,12 +77,73 @@ interface StoredOperation {
 	promise?: Promise<RpcResponse>;
 	message?: AssistantMessage;
 	error?: { readonly code: RpcErrorCode; readonly message: string };
+	completedAt?: number;
 }
 
-interface StoredAttachment {
-	readonly info: RpcAttachmentInfo;
-	readonly image: ImageContent;
-	readonly createdAt: number;
+class MemoryAttachmentStore implements RpcAttachmentStore {
+	private readonly attachments = new Map<
+		string,
+		{ readonly info: RpcAttachmentInfo; readonly image: ImageContent; readonly createdAt: number }
+	>();
+	private readonly ttlMs: number;
+	private readonly maxCount: number;
+	private readonly maxBytes: number;
+
+	constructor(options: { readonly ttlMs: number; readonly maxCount: number; readonly maxBytes: number }) {
+		this.ttlMs = options.ttlMs;
+		this.maxCount = options.maxCount;
+		this.maxBytes = options.maxBytes;
+	}
+
+	async create(input: {
+		readonly id: string;
+		readonly name: string;
+		readonly contentType: RpcAttachmentInfo["contentType"];
+		readonly data: string;
+		readonly bytes: number;
+	}): Promise<RpcAttachmentInfo> {
+		this.prune();
+		const currentBytes = [...this.attachments.values()].reduce((total, item) => total + item.info.bytes, 0);
+		if (this.attachments.size >= this.maxCount || currentBytes + input.bytes > this.maxBytes)
+			throw new RpcProtocolError("BUSY", "Attachment storage is full; consume or retry later.");
+		const info: RpcAttachmentInfo = {
+			id: input.id,
+			name: input.name,
+			contentType: input.contentType,
+			bytes: input.bytes,
+		};
+		this.attachments.set(input.id, {
+			info,
+			image: { type: "image", data: input.data, mimeType: input.contentType },
+			createdAt: Date.now(),
+		});
+		return info;
+	}
+
+	async take(ids: readonly string[]): Promise<readonly ImageContent[]> {
+		this.prune();
+		const result: ImageContent[] = [];
+		for (const id of ids) {
+			const attachment = this.attachments.get(id);
+			if (!attachment) throw new RpcProtocolError("NOT_FOUND", "RPC attachment was not found.");
+			this.attachments.delete(id);
+			result.push(structuredClone(attachment.image));
+		}
+		return result;
+	}
+
+	async discard(ids: readonly string[]): Promise<void> {
+		for (const id of ids) this.attachments.delete(id);
+	}
+
+	async dispose(): Promise<void> {
+		this.attachments.clear();
+	}
+
+	private prune(): void {
+		const cutoff = Date.now() - this.ttlMs;
+		for (const [id, attachment] of this.attachments) if (attachment.createdAt <= cutoff) this.attachments.delete(id);
+	}
 }
 
 function errorFrom(cause: unknown): Error {
@@ -92,16 +177,20 @@ export class RpcDispatcher {
 	private readonly methods?: RpcMethodCatalog;
 	private readonly onError: (error: Error) => void;
 	private readonly maxEvents: number;
-	private readonly productState: RpcProductState;
+	private productState: RpcProductState;
+	private readonly productHost?: ProductHost;
 	private readonly attachmentTtlMs: number;
 	private readonly attachmentMaxCount: number;
 	private readonly attachmentMaxBytes: number;
+	private readonly operationTtlMs: number;
+	private readonly operationMaxCount: number;
 	private readonly listeners = new Set<(message: RpcServerMessage) => void>();
 	private readonly operations = new Map<string, StoredOperation>();
 	private readonly events: RpcEventRecord[] = [];
-	private readonly attachments = new Map<string, StoredAttachment>();
+	private readonly attachments: RpcAttachmentStore;
 	private readonly negotiatedEvents = new Set<string>();
 	private readonly unsubscribe: () => void;
+	private readonly unsubscribeProduct?: () => void;
 	private disposed = false;
 	private sequence = 0;
 
@@ -111,12 +200,35 @@ export class RpcDispatcher {
 		this.onError = options.onError ?? (() => undefined);
 		this.maxEvents = options.eventBufferSize ?? 256;
 		this.productState = options.productState ?? { projectTrusted: false };
+		this.productHost = options.productHost;
 		this.attachmentTtlMs = options.attachmentTtlMs ?? 10 * 60 * 1000;
 		this.attachmentMaxCount = options.attachmentMaxCount ?? 32;
 		this.attachmentMaxBytes = options.attachmentMaxBytes ?? 64 * 1024 * 1024;
+		this.operationTtlMs = options.operationTtlMs ?? 10 * 60 * 1000;
+		this.operationMaxCount = options.operationMaxCount ?? 256;
+		this.attachments =
+			options.attachmentStore ??
+			new MemoryAttachmentStore({
+				ttlMs: this.attachmentTtlMs,
+				maxCount: this.attachmentMaxCount,
+				maxBytes: this.attachmentMaxBytes,
+			});
 		this.unsubscribe = sessionHost(options.session)
 			? options.session.subscribe((event) => this.onSessionEvent(event))
 			: options.session.subscribeSession((event) => this.onSessionEvent(event));
+		if (this.productHost) {
+			this.unsubscribeProduct = this.productHost.subscribe((event) => {
+				if (!this.negotiatedEvents.has("product_audit")) return;
+				this.emit({
+					version: RPC_PROTOCOL_VERSION,
+					kind: "event",
+					requestId: "product",
+					sessionId: this.activeSessionId(),
+					sequence: ++this.sequence,
+					event,
+				});
+			});
+		}
 	}
 
 	subscribe(listener: (message: RpcServerMessage) => void): () => void {
@@ -125,6 +237,7 @@ export class RpcDispatcher {
 	}
 
 	async dispatch(request: RpcRequest): Promise<RpcResponse> {
+		this.pruneOperations();
 		if (this.disposed) return this.failure(request.id, "DISPOSED", "RPC dispatcher has been disposed.");
 		if (this.methods && !this.methods.has(request.method))
 			return this.failure(request.id, "METHOD_NOT_FOUND", "RPC method is not registered for this server.");
@@ -154,9 +267,11 @@ export class RpcDispatcher {
 		if (this.disposed) return;
 		this.disposed = true;
 		this.unsubscribe();
+		this.unsubscribeProduct?.();
 		for (const operation of this.operations.values())
 			if (operation.status === "queued" || operation.status === "running") operation.controller.abort();
 		await Promise.allSettled([...this.operations.values()].map((operation) => operation.promise));
+		await this.attachments.dispose();
 		this.listeners.clear();
 	}
 
@@ -180,7 +295,7 @@ export class RpcDispatcher {
 				case "open_session":
 					return this.openSession(request);
 				case "get_transcript":
-					return this.success(request.id, { method: "get_transcript", transcript: this.host().transcript() });
+					return this.transcript(request);
 				case "get_tree":
 					return this.success(request.id, { method: "get_tree", tree: this.host().tree() });
 				case "get_models":
@@ -217,17 +332,41 @@ export class RpcDispatcher {
 							.availableSkills.map(({ name, description, scope }) => ({ name, description, scope })),
 					});
 				case "get_product_state":
-					return this.success(request.id, { method: "get_product_state", state: this.productState });
+					return this.success(request.id, {
+						method: "get_product_state",
+						state: this.productHost ? this.productHost.state() : this.productState,
+					});
 				case "get_project_trust":
-					return this.success(request.id, { method: "get_project_trust", trusted: this.productState.projectTrusted });
+					return this.success(request.id, {
+						method: "get_project_trust",
+						trusted: this.productHost?.getProjectTrust() ?? this.productState.projectTrusted,
+					});
 				case "create_attachment":
-					return this.createAttachment(request);
+					return await this.createAttachment(request);
 				case "list_providers":
-					return this.success(request.id, { method: "list_providers", providers: [] });
+					return this.success(request.id, {
+						method: "list_providers",
+						providers: this.productHost?.listProviders() ?? [],
+					});
 				case "list_context_files":
-					return this.success(request.id, { method: "list_context_files", files: [] });
 				case "list_mcp_servers":
-					return this.success(request.id, { method: "list_mcp_servers", servers: [] });
+				case "login":
+				case "logout":
+				case "set_project_trust":
+				case "configure_mcp_server":
+				case "remove_mcp_server":
+				case "reconnect_mcp_server":
+					return this.failure(
+						request.id,
+						"METHOD_NOT_FOUND",
+						"Product configuration requests require operation dispatch.",
+					);
+				case "approve_tool":
+					return this.success(request.id, {
+						method: "approve_tool",
+						approvalId: request.params.approvalId,
+						approved: request.params.approved,
+					});
 				default:
 					return this.failure(request.id, "METHOD_NOT_FOUND", "RPC method is unavailable for this Host.");
 			}
@@ -249,7 +388,7 @@ export class RpcDispatcher {
 					break;
 				}
 				case "steer": {
-					const images = this.takeAttachments(request.params);
+					const images = await this.takeAttachments(request.params);
 					if (images.length === 0) {
 						await this.host().steer(
 							{ text: request.params.message as string, requestId: request.id },
@@ -262,7 +401,10 @@ export class RpcDispatcher {
 					break;
 				}
 				case "retry": {
-					const message = await this.host().retry(operation.controller.signal);
+					const message = await this.host().retry(
+						{ targetRequestId: request.params.targetRequestId as string },
+						operation.controller.signal,
+					);
 					operation.message = message;
 					result = { method: "retry", message };
 					break;
@@ -289,23 +431,139 @@ export class RpcDispatcher {
 				case "set_thinking_level":
 					result = { method: "set_thinking_level", level: this.host().setThinkingLevel() };
 					break;
+				case "list_context_files":
+					result = {
+						method: "list_context_files",
+						files: await this.requireProduct().listContextFiles(operation.controller.signal),
+					};
+					break;
+				case "list_mcp_servers":
+					result = {
+						method: "list_mcp_servers",
+						servers: await this.requireProduct().listMcpServers(operation.controller.signal),
+					};
+					break;
+				case "login":
+					this.assertProductIdle();
+					result = {
+						method: "login",
+						provider: await this.requireProduct().login(
+							{
+								providerId: request.params.providerId as string,
+								apiKey: request.params.apiKey as string,
+								modelId: request.params.modelId as string | undefined,
+								api: request.params.api as string | undefined,
+							},
+							operation.controller.signal,
+						),
+					};
+					break;
+				case "logout":
+					this.assertProductIdle();
+					await this.requireProduct().logout(request.params.providerId as string, operation.controller.signal);
+					result = { method: "logout" };
+					break;
+				case "set_project_trust": {
+					this.assertProductIdle();
+					const trusted = await this.requireProduct().setProjectTrust(
+						request.params.trusted as boolean,
+						operation.controller.signal,
+					);
+					this.productState = { projectTrusted: trusted };
+					result = { method: "set_project_trust", trusted };
+					break;
+				}
+				case "configure_mcp_server":
+					this.assertProductIdle();
+					result = {
+						method: "configure_mcp_server",
+						server: await this.requireProduct().configureMcpServer(
+							{
+								serverId: request.params.serverId as string,
+								scope: request.params.scope as "user" | "project" | "local",
+								config: request.params.config as Record<string, unknown>,
+							},
+							operation.controller.signal,
+						),
+					};
+					break;
+				case "remove_mcp_server":
+					this.assertProductIdle();
+					await this.requireProduct().removeMcpServer(
+						request.params.serverId as string,
+						(request.params.scope as "user" | "project" | "local" | undefined) ?? "project",
+						operation.controller.signal,
+					);
+					result = { method: "remove_mcp_server" };
+					break;
+				case "reconnect_mcp_server":
+					this.assertProductIdle();
+					result = {
+						method: "reconnect_mcp_server",
+						server: await this.requireProduct().reconnectMcpServer(
+							request.params.serverId as string,
+							operation.controller.signal,
+						),
+					};
+					break;
 				default:
 					return this.failure(request.id, "METHOD_NOT_FOUND", "RPC method is unavailable for this Host.");
 			}
 			operation.status = "completed";
+			operation.completedAt = Date.now();
 			this.emitOperation(operation);
+			this.pruneOperations();
 			return this.success(request.id, result);
 		} catch (cause) {
 			const code = operation.controller.signal.aborted ? "CANCELLED" : errorCode(cause);
 			operation.status = code === "CANCELLED" ? "cancelled" : "failed";
+			operation.completedAt = Date.now();
 			operation.error = {
 				code,
 				message: code === "CANCELLED" ? "The RPC operation was cancelled." : "The RPC operation failed.",
 			};
 			this.emitOperation(operation);
+			this.pruneOperations();
 			if (code === "INTERNAL_ERROR") this.onError(errorFrom(cause));
 			return this.failure(request.id, operation.error.code, operation.error.message);
+		} finally {
+			await this.discardAttachments(request.params);
 		}
+	}
+	private transcript(request: RpcRequest): RpcResponse {
+		const all = this.host().transcript();
+		const start = request.params.pageToken === undefined ? 0 : Number.parseInt(request.params.pageToken as string, 10);
+		if (!Number.isSafeInteger(start) || start < 0 || start > all.length)
+			return this.failure(request.id, "INVALID_PARAMS", "Invalid transcript page token.");
+		const pageSize = (request.params.pageSize as number | undefined) ?? 100;
+		const maxBytes = (request.params.maxBytes as number | undefined) ?? 1_000_000;
+		const transcript = [] as (typeof all)[number][];
+		let bytes = 2;
+		for (let index = start; index < all.length && transcript.length < pageSize; index++) {
+			const value = all[index];
+			if (value === undefined) break;
+			const size = Buffer.byteLength(JSON.stringify(value), "utf8");
+			if (size > maxBytes && transcript.length === 0)
+				return this.failure(request.id, "INVALID_PARAMS", "Transcript entry exceeds maxBytes.");
+			if (bytes + size > maxBytes) break;
+			transcript.push(value);
+			bytes += size;
+		}
+		const next = start + transcript.length < all.length ? String(start + transcript.length) : undefined;
+		return this.success(request.id, { method: "get_transcript", transcript, ...(next ? { nextPageToken: next } : {}) });
+	}
+	private requireProduct(): ProductHost {
+		if (!this.productHost) throw new RpcProtocolError("METHOD_NOT_FOUND", "ProductHost is unavailable.");
+		return this.productHost;
+	}
+	private assertProductIdle(): void {
+		if (sessionHost(this.session) && this.session.state().busy)
+			throw new RpcProtocolError("BUSY", "Product configuration cannot change while the Session is busy.");
+	}
+	private async discardAttachments(params: Record<string, unknown>): Promise<void> {
+		const ids = params.attachmentIds;
+		if (!Array.isArray(ids)) return;
+		await this.attachments.discard(ids.filter((id): id is string => typeof id === "string"));
 	}
 
 	private async prompt(
@@ -313,7 +571,7 @@ export class RpcDispatcher {
 		params: Record<string, unknown>,
 		operation: StoredOperation,
 	): Promise<AssistantMessage> {
-		const images = this.takeAttachments(params);
+		const images = await this.takeAttachments(params);
 		if (sessionHost(this.session)) {
 			if (images.length > 0) return await this.session.promptWithImages(message, images, operation.controller.signal);
 			return await this.session.prompt({ text: message, requestId: operation.requestId }, operation.controller.signal);
@@ -321,41 +579,27 @@ export class RpcDispatcher {
 		if (images.length > 0) throw new RpcProtocolError("METHOD_NOT_FOUND", "RPC attachments require a SessionHost.");
 		return await this.session.prompt(message, operation.controller.signal);
 	}
-	private createAttachment(request: RpcRequest): RpcResponse {
-		this.pruneAttachments();
+	private async createAttachment(request: RpcRequest): Promise<RpcResponse> {
 		const data = request.params.data as string;
 		if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data))
 			return this.failure(request.id, "INVALID_PARAMS", "Attachment data must be canonical base64.");
 		const bytes = Buffer.byteLength(data, "base64");
 		if (bytes === 0 || bytes > 5 * 1024 * 1024)
 			return this.failure(request.id, "INVALID_PARAMS", "Attachment data exceeds the permitted size.");
-		const currentBytes = [...this.attachments.values()].reduce((total, item) => total + item.info.bytes, 0);
-		if (this.attachments.size >= this.attachmentMaxCount || currentBytes + bytes > this.attachmentMaxBytes)
-			return this.failure(request.id, "BUSY", "Attachment storage is full; consume or retry later.");
-		const id = randomUUID();
 		const contentType = request.params.contentType as RpcAttachmentInfo["contentType"];
-		const info: RpcAttachmentInfo = { id, name: request.params.name as string, contentType, bytes };
-		this.attachments.set(id, { info, image: { type: "image", data, mimeType: contentType }, createdAt: Date.now() });
+		const info = await this.attachments.create({
+			id: randomUUID(),
+			name: request.params.name as string,
+			contentType,
+			data,
+			bytes,
+		});
 		return this.success(request.id, { method: "create_attachment", attachment: info });
 	}
-	private pruneAttachments(): void {
-		const cutoff = Date.now() - this.attachmentTtlMs;
-		for (const [id, attachment] of this.attachments) {
-			if (attachment.createdAt <= cutoff) this.attachments.delete(id);
-		}
-	}
-	private takeAttachments(params: Record<string, unknown>): readonly ImageContent[] {
-		this.pruneAttachments();
+	private async takeAttachments(params: Record<string, unknown>): Promise<readonly ImageContent[]> {
 		const ids = params.attachmentIds as readonly string[] | undefined;
 		if (!ids || ids.length === 0) return [];
-		const result: ImageContent[] = [];
-		for (const id of ids) {
-			const attachment = this.attachments.get(id);
-			if (!attachment) throw new RpcProtocolError("NOT_FOUND", "RPC attachment was not found.");
-			this.attachments.delete(id);
-			result.push(structuredClone(attachment.image));
-		}
-		return result;
+		return await this.attachments.take(ids);
 	}
 	private host(): SessionHost {
 		if (!sessionHost(this.session))
@@ -395,6 +639,14 @@ export class RpcDispatcher {
 			"set_model",
 			"set_runtime",
 			"set_thinking_level",
+			"list_context_files",
+			"list_mcp_servers",
+			"login",
+			"logout",
+			"set_project_trust",
+			"configure_mcp_server",
+			"remove_mcp_server",
+			"reconnect_mcp_server",
 		].includes(method);
 	}
 	private success(id: string, result: RpcSuccessResult): RpcResponse {
@@ -409,7 +661,14 @@ export class RpcDispatcher {
 			for (const event of events)
 				if (
 					typeof event === "string" &&
-					["sequence", "operation_update", "snapshot_required", "session_changed", "tool_approval"].includes(event)
+					[
+						"sequence",
+						"operation_update",
+						"snapshot_required",
+						"session_changed",
+						"tool_approval",
+						"product_audit",
+					].includes(event)
 				)
 					this.negotiatedEvents.add(event);
 		return this.success(request.id, {
@@ -448,6 +707,7 @@ export class RpcDispatcher {
 		return this.success(request.id, { method: "cancel", cancelled });
 	}
 	private getOperation(request: RpcRequest): RpcResponse {
+		this.pruneOperations();
 		const operation = this.operations.get(request.params.requestId as string);
 		return operation
 			? this.success(request.id, { method: "get_operation", operation: this.operationState(operation) })
@@ -484,6 +744,18 @@ export class RpcDispatcher {
 			...(operation.message ? { message: operation.message } : {}),
 			...(operation.error ? { error: operation.error } : {}),
 		};
+	}
+	private pruneOperations(): void {
+		const cutoff = Date.now() - this.operationTtlMs;
+		for (const [id, operation] of this.operations)
+			if (operation.completedAt !== undefined && operation.completedAt <= cutoff) this.operations.delete(id);
+		const retained = [...this.operations.values()]
+			.filter((operation) => operation.completedAt !== undefined)
+			.sort((left, right) => (left.completedAt ?? 0) - (right.completedAt ?? 0));
+		while (retained.length > this.operationMaxCount) {
+			const operation = retained.shift();
+			if (operation) this.operations.delete(operation.requestId);
+		}
 	}
 	private emitOperation(operation: StoredOperation): void {
 		if (!this.negotiatedEvents.has("operation_update")) return;
@@ -527,6 +799,7 @@ export class RpcDispatcher {
 }
 
 const RPC_METHODS_FOR_CAPABILITIES = [
+	"get_state",
 	"get_capabilities",
 	"resume_events",
 	"list_sessions",
@@ -550,4 +823,17 @@ const RPC_METHODS_FOR_CAPABILITIES = [
 	"get_usage",
 	"list_skills",
 	"get_resources",
+	"get_product_state",
+	"list_providers",
+	"login",
+	"logout",
+	"get_project_trust",
+	"set_project_trust",
+	"list_context_files",
+	"list_mcp_servers",
+	"configure_mcp_server",
+	"remove_mcp_server",
+	"reconnect_mcp_server",
+	"create_attachment",
+	"approve_tool",
 ] as const;

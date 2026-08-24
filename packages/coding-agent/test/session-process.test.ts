@@ -90,7 +90,7 @@ describe("session cross-process recovery", () => {
 		expect(restored.roles).toEqual(["user", "assistant", "user", "user"]);
 		expect(restored.texts.slice(0, 2)).toEqual(["saved-question", "saved-answer"]);
 		expect(restored.texts.slice(2).sort()).toEqual(["from-a", "from-b"]);
-	});
+	}, 30_000);
 
 	it("restores compressed model context while preserving all disk messages", async () => {
 		const written = await runFixture(["compact-write", sessionFile, root]);

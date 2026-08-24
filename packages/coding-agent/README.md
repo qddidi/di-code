@@ -314,7 +314,7 @@ di-code --continue "继续上一次工作"
 
 产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。interactive 的 JSONL 持久化通过 `SessionStoreRegistry` 的 `jsonl` entry 创建或打开，不能绕过 registry 直接在宿主启动分支中组装 Session。直接构造 `AgentSession` 必须传入不可变 `tools` 快照；SDK 集成应使用 Composition factory 或自行从其注册表创建该快照。
 
-产品层内部 `SessionHost`/`SessionActor` 会集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表；每个 actor 按 principal 与真实 workspace 隔离。它使用 opaque Session ID 解析受管 JSONL 文件，并在重复打开时返回稳定的所有权冲突。Host 的 `dispose()` 与 `AgentSession.dispose()` 都是幂等的，会先结束或取消活跃操作，再释放 listener、子 Context、锁和 MCP 连接。内建 interactive TUI 通过私有 `UiHost` facade 使用这些能力；该 facade 不是 WebUI、RPC 或第三方公开契约。
+产品层内部 `SessionHost`/`SessionActor` 会集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表；每个 actor 按 principal 与真实 workspace 隔离。它使用 opaque Session ID 解析受管 JSONL 文件，并在重复打开时返回稳定的所有权冲突。失败或取消的 prompt 会以 host 私有 plugin record 绑定 request ID 和文本；因此 RPC `retry(targetRequestId)` 在关闭再打开同一 Session 后仍会选择同一个失败 turn，而不会猜测“最后一条消息”。Host 的 `dispose()` 与 `AgentSession.dispose()` 都是幂等的，会先结束或取消活跃操作，再释放 listener、子 Context、锁和 MCP 连接。内建 interactive TUI 通过私有 `UiHost` facade 使用这些能力；该 facade 不是 WebUI、RPC 或第三方公开契约。
 
 会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在本地历史中的密钥或敏感材料。
 
@@ -586,13 +586,16 @@ Node.js 宿主从公开入口导入 SDK：
 import { RpcClient, RPC_PROTOCOL_VERSION } from "@di-code/coding-agent/rpc";
 ```
 
-`RpcClient` 提供类型化的 `getState()`、`prompt()`、`cancel()`、`negotiate()`、`resumeEvents()`、`getOperation()`、Session
-列表/创建/打开、`getProductState()`、`getProjectTrust()` 和 `createAttachment()` facade；`call()` 只保留给已协商的低层方法。
+`RpcClient` 和 `RpcSupervisor` 提供类型化的状态、prompt/steer/retry/cancel、Session 列表/切换、transcript/tree、模型、压缩、
+operation、附件，以及 Provider、项目 trust、context file 和 MCP 配置 facade；`call()` 只保留给已协商的低层方法。`login()` 的
+API key 只在请求中传递，返回值、事件、Session 和诊断均不包含它。MCP 或 trust 配置成功后，Host 会在空闲状态刷新当前 Session 的
+Skills、context 和 MCP 工具快照；生成或压缩期间会以 `BUSY` 拒绝这类变更。
 附件先经 `createAttachment(name, contentType, base64Data)` 上传，再将返回 ID 传给 `prompt(message, { attachmentIds })`。只接受
-PNG、JPEG、WebP、GIF，每次请求最多 4 个、每个最多 5 MiB；数据仅保存在 RPC 子进程内存，并在首次 prompt/steer 使用时消费。
+PNG、JPEG、WebP、GIF，每次请求最多 4 个、每个最多 5 MiB；WebUI 将数据保存到每个 client/actor 独立的受管附件目录，
+并在首次 prompt/steer 使用、超时或 Host dispose 时删除；JSONL RPC 没有附件目录时使用同样限制的进程内存存储。
 SDK 不自动重放任何请求，即使子进程退出或事件恢复失败也不例外；调用方必须使用新的 request ID 明确发起重试。
 
-事件订阅使用 `subscribe()`。调用 `negotiate(["sequence", "operation_update", "snapshot_required"])` 后，保存收到记录的
+事件订阅使用 `subscribe()`。调用 `negotiate(["sequence", "operation_update", "snapshot_required", "product_audit"])` 后，保存收到记录的
 `sequence`，并在重连后通过 `resumeEvents(lastSequence)` 恢复。返回 `snapshotRequired: true` 时，重新读取 state、transcript、tree
 和 usage，而不要推测遗漏的事件。所有 response、event、error code 和 version 都在 SDK JSONL 边界验证；未知事件或不符合 v1
 形状的记录会关闭 client 并拒绝 pending request。
@@ -611,10 +614,14 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 Host、Origin、token、工作区和超限请求；默认只授权启动时的真实 workspace。每个 client 的持久化 Session 与附件 storage 分离，不能通过 opaque
 Session 或 attachment ID 访问其他 client 的数据。`WebUiServer.rotateToken()` 和 `revokeToken()` 会关闭现有 SSE 订阅并使旧 token 立即失效。
 
-SSE 的 `ready` 数据提供 `resumeToken`；重连以 `X-Di-Code-Resume-Token` 和 `Last-Event-ID` headers 恢复事件。重放窗口不足时会收到
+SSE 的 `ready` 数据提供 10 分钟有效的 `resumeToken`；每次成功恢复都会轮换 token，旧值立即失效。每个带 sequence 的事件也使用 SSE `id` 字段。空闲连接每 15 秒发送一次 SSE comment keepalive；默认最多 8 个 SSE 连接/浏览器 client、64 个/服务进程，超限返回 `429`。重连以
+`X-Di-Code-Resume-Token` 和 `Last-Event-ID` headers 恢复事件。重放窗口不足时会收到
 `snapshot_required`，调用方必须重新读取 state、transcript、tree 和 usage。连接关闭不会取消 detached operation；使用 `get_operation` 查询，只有
-`cancel` 会取消。附件通过 JSON base64 上传，限制为 PNG/JPEG/WebP/GIF、每个 5 MiB、每 client 32 个或 64 MiB、TTL 10 分钟，首次 prompt/steer
-使用后删除。
+`cancel` 会取消。终态 operation 默认保留 10 分钟且最多 256 条，过期或超出上限后 `get_operation` 返回 `NOT_FOUND`。附件通过 JSON base64
+上传，限制为 PNG/JPEG/WebP/GIF、每个 5 MiB、每 client 32 个或 64 MiB、TTL 10 分钟，保存在 actor 受管目录中并在首次 prompt/steer
+使用、过期或 Host dispose 后删除。
+
+ProductHost 的 login/logout、项目 trust 和 MCP 配置均作为可取消的 detached operation 执行；Session 正在生成或压缩时会返回 `BUSY`。协商 `product_audit` 后，成功变更会发送仅含动作、Provider/MCP 标识或 trust 状态的审计事件，绝不包含 API key 或配置 secret。
 
 WebUI 不是沙箱。认证客户端能触发当前 workspace 内的文件和 shell 工具，远程绑定等同于向 token 持有者开放这些能力；不要把 token、Provider
 凭据或 attachment 内容记录到 URL、事件、日志或错误文本。

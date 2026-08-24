@@ -4,6 +4,7 @@ import { modeRegistryKey, rpcMethodRegistryKey, runtimeSelectionKey, workspaceCa
 import type { PluginDefinition } from "@di-code/plugin-runtime";
 import { RpcServer } from "./rpc/server.ts";
 import { rpcServerKey } from "./rpc/server-service.ts";
+import { createProductHost } from "./runtime/product-host.ts";
 import { createSessionHost } from "./runtime/session-host.ts";
 
 export { type RpcServerService, rpcServerKey } from "./rpc/server-service.ts";
@@ -20,11 +21,20 @@ export const apply: PluginDefinition["apply"] = async (context, _config, fiber) 
 		provider: selection.provider,
 		model: selection.model,
 	});
+	const product = createProductHost({
+		context,
+		cwd: context.require(workspaceCapabilityKey).allowedRoot,
+		agentDir: join(homedir(), ".di-code"),
+		projectTrusted: context.capabilities.trustedProject,
+		provider: selection.provider,
+		refreshResources: (projectTrusted) => session.refreshResources(projectTrusted),
+	});
 	if (!session.state().activeSession) await session.createSession();
 	const server = new RpcServer({
 		session,
 		methods: context.require(rpcMethodRegistryKey),
 		productState: { projectTrusted: context.capabilities.trustedProject },
+		productHost: product,
 		input: process.stdin,
 		output: process.stdout,
 		onError: (error) => process.stderr.write(`${error.message}\n`),
@@ -33,6 +43,7 @@ export const apply: PluginDefinition["apply"] = async (context, _config, fiber) 
 	context.set(rpcServerKey, { shutdown: () => server.shutdown(), finished: () => server.finished() });
 	fiber.addDisposer(async () => {
 		await server.shutdown();
+		await product.dispose();
 		await session.dispose();
 	});
 };

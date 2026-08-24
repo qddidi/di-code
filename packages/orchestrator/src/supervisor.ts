@@ -5,10 +5,13 @@ import {
 	type RpcAttachmentInfo,
 	type RpcCapabilities,
 	RpcClient,
+	type RpcContextFileInfo,
 	type RpcEventRecord,
 	type RpcExtendedEventName,
+	type RpcMcpServerInfo,
 	type RpcProductState,
 	type RpcPromptOptions,
+	type RpcProviderSummary,
 	type RpcSessionInfo,
 	type RpcSessionState,
 } from "@di-code/coding-agent/rpc";
@@ -187,6 +190,110 @@ export class RpcSupervisor {
 
 	getProjectTrust(): Promise<boolean> {
 		return this.requireRunningClient().getProjectTrust();
+	}
+
+	getTranscript(params: Parameters<RpcClient["getTranscript"]>[0] = {}): ReturnType<RpcClient["getTranscript"]> {
+		return this.requireRunningClient().getTranscript(params);
+	}
+
+	getTree(): ReturnType<RpcClient["getTree"]> {
+		return this.requireRunningClient().getTree();
+	}
+
+	getModels(): ReturnType<RpcClient["getModels"]> {
+		return this.requireRunningClient().getModels();
+	}
+
+	setModel(modelId: string): ReturnType<RpcClient["setModel"]> {
+		return this.requireRunningClient().setModel(modelId);
+	}
+
+	getRuntime(): ReturnType<RpcClient["getRuntime"]> {
+		return this.requireRunningClient().getRuntime();
+	}
+
+	setRuntime(providerId: string, modelId: string): ReturnType<RpcClient["setRuntime"]> {
+		return this.requireRunningClient().setRuntime(providerId, modelId);
+	}
+
+	setThinkingLevel(): ReturnType<RpcClient["setThinkingLevel"]> {
+		return this.requireRunningClient().setThinkingLevel();
+	}
+
+	compact(): ReturnType<RpcClient["compact"]> {
+		return this.requireRunningClient().compact();
+	}
+
+	setCompactionEnabled(enabled: boolean): ReturnType<RpcClient["setCompactionEnabled"]> {
+		return this.requireRunningClient().setCompactionEnabled(enabled);
+	}
+
+	getUsage(): ReturnType<RpcClient["getUsage"]> {
+		return this.requireRunningClient().getUsage();
+	}
+
+	listSkills(): ReturnType<RpcClient["listSkills"]> {
+		return this.requireRunningClient().listSkills();
+	}
+
+	getResources(): ReturnType<RpcClient["getResources"]> {
+		return this.requireRunningClient().getResources();
+	}
+
+	navigateTree(entryId: string): ReturnType<RpcClient["navigateTree"]> {
+		return this.requireRunningClient().navigateTree(entryId);
+	}
+
+	steer(message: string, options: RpcPromptOptions = {}): ReturnType<RpcClient["steer"]> {
+		return this.requireRunningClient().steer(message, options);
+	}
+
+	retry(targetRequestId: string): ReturnType<RpcClient["retry"]> {
+		return this.requireRunningClient().retry(targetRequestId);
+	}
+
+	listProviders(): Promise<readonly RpcProviderSummary[]> {
+		return this.requireRunningClient().listProviders();
+	}
+
+	login(
+		providerId: string,
+		apiKey: string,
+		options: Parameters<RpcClient["login"]>[2] = {},
+	): ReturnType<RpcClient["login"]> {
+		return this.requireRunningClient().login(providerId, apiKey, options);
+	}
+
+	logout(providerId: string): Promise<void> {
+		return this.requireRunningClient().logout(providerId);
+	}
+
+	setProjectTrust(trusted: boolean): Promise<boolean> {
+		return this.requireRunningClient().setProjectTrust(trusted);
+	}
+
+	listContextFiles(): Promise<readonly RpcContextFileInfo[]> {
+		return this.requireRunningClient().listContextFiles();
+	}
+
+	listMcpServers(): Promise<readonly RpcMcpServerInfo[]> {
+		return this.requireRunningClient().listMcpServers();
+	}
+
+	configureMcpServer(
+		serverId: string,
+		scope: "user" | "project" | "local",
+		config: Record<string, unknown>,
+	): ReturnType<RpcClient["configureMcpServer"]> {
+		return this.requireRunningClient().configureMcpServer(serverId, scope, config);
+	}
+
+	removeMcpServer(serverId: string, scope: "user" | "project" | "local" = "project"): Promise<void> {
+		return this.requireRunningClient().removeMcpServer(serverId, scope);
+	}
+
+	reconnectMcpServer(serverId: string): ReturnType<RpcClient["reconnectMcpServer"]> {
+		return this.requireRunningClient().reconnectMcpServer(serverId);
 	}
 
 	createAttachment(
