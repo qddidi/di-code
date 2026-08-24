@@ -94,6 +94,7 @@ export function installAgentSessionFactory(context: Context): Disposer {
 			...options,
 			...(prepareMessages ? { compaction: { ...(options.compaction ?? {}), prepareMessages } } : {}),
 			tools: sessionContext.require(sessionDependenciesKey).tools,
+			onDispose: () => sessionContext.dispose(),
 		});
 	});
 	return async () => {

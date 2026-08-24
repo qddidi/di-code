@@ -307,6 +307,8 @@ di-code --continue "继续上一次工作"
 
 产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。interactive 的 JSONL 持久化通过 `SessionStoreRegistry` 的 `jsonl` entry 创建或打开，不能绕过 registry 直接在宿主启动分支中组装 Session。直接构造 `AgentSession` 必须传入不可变 `tools` 快照；SDK 集成应使用 Composition factory 或自行从其注册表创建该快照。
 
+产品层内部 `SessionHost`/`SessionActor` 会集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表；每个 actor 按 principal 与真实 workspace 隔离。它使用 opaque Session ID 解析受管 JSONL 文件，并在重复打开时返回稳定的所有权冲突。Host 的 `dispose()` 与 `AgentSession.dispose()` 都是幂等的，会先结束或取消活跃操作，再释放 listener、子 Context、锁和 MCP 连接；该内部入口尚未接入 TUI、RPC 或 WebUI 公开契约。
+
 会话可能包含你的 prompt、模型回答、工具结果和图片内容。不要在 prompt 或图片中提交不应保留在本地历史中的密钥或敏感材料。
 
 ### 图片

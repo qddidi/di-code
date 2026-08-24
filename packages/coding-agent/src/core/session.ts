@@ -65,6 +65,8 @@ export interface AgentSessionOptions {
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
+	/** Called once when the owning product host releases this session scope. */
+	readonly onDispose?: () => void | Promise<void>;
 }
 
 export type AgentSessionEvent =
@@ -129,9 +131,13 @@ export class AgentSession {
 	private promptActive = false;
 	private readonly steeringMessages: Array<{ displayText: string; deliveredText: string }> = [];
 	private readonly sessionListeners = new Set<AgentSessionListener>();
+	private readonly agentUnsubscribers: Array<() => void> = [];
+	private readonly onDispose?: AgentSessionOptions["onDispose"];
+	private disposed = false;
 
 	constructor(options: AgentSessionOptions) {
 		this.allowedRootValue = options.allowedRoot;
+		this.onDispose = options.onDispose;
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
 		this.skills = structuredClone(
@@ -195,32 +201,51 @@ export class AgentSession {
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,
 		});
-		this.agent.subscribe(async (event) => {
-			if (event.type !== "message_end" || this.sessionManager === undefined || this.persistenceError !== undefined) {
-				return;
-			}
-			try {
-				await this.sessionManager.appendMessage(event.message);
-			} catch (cause) {
-				this.persistenceError = cause;
-				throw cause;
-			}
-		});
-		this.agent.subscribe(async (event) => {
-			if (event.type !== "message_end" || event.message.role !== "assistant") return;
-			this.addUsage(event.message.usage);
-			await this.emitSession({ type: "usage_update", usage: this.usage });
-		});
-		this.agent.subscribe(async (event, _signal) => {
-			if (event.type === "message_end" && event.message.role === "user") {
-				const queued = this.steeringMessages[0];
-				if (queued && textFromUserMessage(event.message) === queued.deliveredText) {
-					this.steeringMessages.shift();
-					await this.emitQueueUpdate();
+		this.agentUnsubscribers.push(
+			this.agent.subscribe(async (event) => {
+				if (event.type !== "message_end" || this.sessionManager === undefined || this.persistenceError !== undefined) {
+					return;
 				}
-			}
-			await this.emitSession(event);
-		});
+				try {
+					await this.sessionManager.appendMessage(event.message);
+				} catch (cause) {
+					this.persistenceError = cause;
+					throw cause;
+				}
+			}),
+		);
+		this.agentUnsubscribers.push(
+			this.agent.subscribe(async (event) => {
+				if (event.type !== "message_end" || event.message.role !== "assistant") return;
+				this.addUsage(event.message.usage);
+				await this.emitSession({ type: "usage_update", usage: this.usage });
+			}),
+		);
+		this.agentUnsubscribers.push(
+			this.agent.subscribe(async (event, _signal) => {
+				if (event.type === "message_end" && event.message.role === "user") {
+					const queued = this.steeringMessages[0];
+					if (queued && textFromUserMessage(event.message) === queued.deliveredText) {
+						this.steeringMessages.shift();
+						await this.emitQueueUpdate();
+					}
+				}
+				await this.emitSession(event);
+			}),
+		);
+	}
+
+	/** Releases listeners and the isolated product scope. Repeated calls are harmless. */
+	async dispose(): Promise<void> {
+		if (this.disposed) return;
+		this.disposed = true;
+		for (const unsubscribe of this.agentUnsubscribers.splice(0)) unsubscribe();
+		this.sessionListeners.clear();
+		await this.onDispose?.();
+	}
+
+	private assertNotDisposed(): void {
+		if (this.disposed) throw new Error("AgentSession has been disposed.");
 	}
 
 	get transcript(): readonly Message[] {
@@ -264,6 +289,7 @@ export class AgentSession {
 	}
 
 	setModel(modelId: string): Model {
+		this.assertNotDisposed();
 		if (this.promptActive) throw new Error("Cannot change model while AgentSession is processing a prompt.");
 		const next = this.provider.models.find((model) => model.id === modelId);
 		if (!next) throw new Error(`Unknown model "${modelId}" for provider "${this.provider.id}".`);
@@ -283,6 +309,7 @@ export class AgentSession {
 	}
 
 	setRuntime(provider: Provider, model: Model): Model {
+		this.assertNotDisposed();
 		if (this.promptActive) throw new Error("Cannot change runtime while AgentSession is processing a prompt.");
 		const configuredModel = provider.models.find((candidate) => candidate.id === model.id);
 		if (!configuredModel || configuredModel.provider !== provider.id || model.provider !== provider.id) {
@@ -302,6 +329,7 @@ export class AgentSession {
 	}
 
 	cycleThinkingLevel(): ThinkingLevel | undefined {
+		this.assertNotDisposed();
 		if (this.promptActive) throw new Error("Cannot change thinking level while AgentSession is processing a prompt.");
 		const efforts = this.model.reasoningEfforts;
 		if (!efforts || efforts.length === 0) return undefined;
@@ -316,6 +344,7 @@ export class AgentSession {
 	}
 
 	setCompactionEnabled(enabled: boolean): boolean {
+		this.assertNotDisposed();
 		if (this.promptActive) throw new Error("Cannot change compaction while AgentSession is processing a prompt.");
 		this.compactionEnabledValue = enabled && this.sessionManager !== undefined;
 		return this.compactionEnabledValue;
@@ -359,6 +388,7 @@ export class AgentSession {
 
 	/** Queues provider-neutral text and image content for the active Agent run. */
 	async steerWithImages(text: string, images: readonly ImageContent[], signal?: AbortSignal): Promise<void> {
+		this.assertNotDisposed();
 		if (this.persistenceError !== undefined) throw this.persistenceError;
 		if (!this.promptActive) throw new Error("AgentSession is not processing a prompt.");
 		if (images.length > 0 && !this.model.input.includes("image")) {
@@ -377,6 +407,7 @@ export class AgentSession {
 		images: readonly ImageContent[],
 		signal?: AbortSignal,
 	): Promise<AssistantMessage> {
+		this.assertNotDisposed();
 		if (this.persistenceError !== undefined) {
 			throw this.persistenceError;
 		}
@@ -399,6 +430,7 @@ export class AgentSession {
 	}
 
 	async compact(signal?: AbortSignal): Promise<void> {
+		this.assertNotDisposed();
 		if (this.promptActive) throw new Error("AgentSession is already processing a prompt.");
 		if (!this.sessionManager) throw new Error("Cannot compact without a persisted session.");
 		this.promptActive = true;
@@ -411,6 +443,7 @@ export class AgentSession {
 
 	/** Changes the active persisted branch and replaces the next-request model context. */
 	async navigateTree(entryId: string): Promise<TreeNavigationResult> {
+		this.assertNotDisposed();
 		if (this.promptActive)
 			throw new Error("Cannot navigate the session tree while AgentSession is processing a prompt.");
 		if (!this.sessionManager) throw new Error("Cannot navigate an in-memory session.");

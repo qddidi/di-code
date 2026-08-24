@@ -1,0 +1,167 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createFauxProvider } from "@di-code/ai";
+import {
+	agentSession,
+	compactionBasic,
+	compactionToolResult,
+	contextBudget,
+	networkCapability,
+	processCapability,
+	providerRegistry,
+	resourceLoader,
+	sessionMigrations,
+	sessionStoreJsonl,
+	skills,
+	systemPrompt,
+	toolApproval,
+	toolOutput,
+	toolPolicy,
+	toolRegistry,
+	usageMeter,
+	workspace,
+	workspaceCapabilityKey,
+} from "@di-code/builtins";
+import { createRootContext } from "@di-code/plugin-runtime";
+import { describe, expect, it } from "vitest";
+import * as interactiveResources from "../src/interactive-resources-entry.ts";
+import { mcpClient, mcpConfig, mcpTools, mcpTransport } from "../src/mcp/entries.ts";
+import { installAgentSessionFactory } from "../src/runtime/session-factory.ts";
+import { createSessionHost, HostManager, SessionHostError } from "../src/runtime/session-host.ts";
+import * as productSessionStoreJsonl from "../src/session-store-jsonl-entry.ts";
+
+async function setup(
+	root: string,
+	agentDir: string,
+	faux: ReturnType<typeof createFauxProvider>,
+	compaction?: import("../src/core/session.ts").AgentSessionCompactionOptions,
+) {
+	const context = createRootContext({ id: "session-host-test", mode: "test", trustedProject: true });
+	for (const definition of [providerRegistry, toolRegistry]) await context.plugin(definition, undefined);
+	await context.plugin(workspace, { allowedRoot: root });
+	for (const definition of [
+		processCapability,
+		networkCapability,
+		toolApproval,
+		toolPolicy,
+		toolOutput,
+		contextBudget,
+		compactionBasic,
+		compactionToolResult,
+		systemPrompt,
+		resourceLoader,
+		skills,
+		usageMeter,
+		agentSession,
+		sessionStoreJsonl,
+		sessionMigrations,
+	])
+		await context.plugin(definition, undefined);
+	await context.plugin(productSessionStoreJsonl, undefined);
+	await context.plugin(interactiveResources, undefined);
+	await context.plugin(mcpConfig, undefined);
+	await context.plugin(mcpTransport, undefined);
+	await context.plugin(mcpClient, undefined);
+	await context.plugin(mcpTools, undefined);
+	const removeFactory = installAgentSessionFactory(context);
+	const host = await createSessionHost(context, {
+		cwd: root,
+		agentDir,
+		provider: faux.provider,
+		model: faux.model,
+		compaction,
+	});
+	return { context, host, removeFactory };
+}
+
+describe("SessionHost", () => {
+	it("creates, persists, closes, and reopens an opaque session", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-root-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-agent-"));
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "saved one" }] },
+				{ type: "success", content: [{ type: "text", text: "saved two" }] },
+				{ type: "success", content: [{ type: "text", text: "persistent summary" }] },
+			],
+		});
+		const runtime = await setup(root, agentDir, faux, { keepRecentTokens: 1 });
+		try {
+			expect(runtime.context.require(workspaceCapabilityKey).allowedRoot).toBe(root);
+			const created = await runtime.host.createSession();
+			await expect(runtime.host.prompt("remember this")).resolves.toMatchObject({ stopReason: "stop" });
+			await expect(runtime.host.prompt("remember that too")).resolves.toMatchObject({ stopReason: "stop" });
+			await runtime.host.compact();
+			const usage = runtime.host.usage();
+			expect(runtime.host.tree().some((node) => JSON.stringify(node).includes("persistent summary"))).toBe(true);
+			expect((await runtime.host.listSessions()).map((item) => item.id)).toContain(created.id);
+			await runtime.host.closeSession();
+			await expect(runtime.host.closeSession()).resolves.toBeUndefined();
+			await expect(runtime.host.openSession(created.id)).resolves.toMatchObject({ id: created.id });
+			expect(runtime.host.transcript().map((message) => message.role)).toEqual([
+				"user",
+				"assistant",
+				"user",
+				"assistant",
+			]);
+			expect(runtime.host.usage()).toMatchObject({ requestCount: 2, totalTokens: usage.totalTokens });
+			expect(runtime.host.tree().some((node) => JSON.stringify(node).includes("persistent summary"))).toBe(true);
+		} finally {
+			await runtime.host.dispose();
+			await expect(runtime.host.dispose()).resolves.toBeUndefined();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps actors isolated and rejects session changes while an operation is active", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-actors-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-actors-agent-"));
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "seeded" }] },
+				{ type: "success", content: [{ type: "text", text: "x".repeat(5000) }] },
+			],
+		});
+		const first = await setup(root, agentDir, faux);
+		const manager = new HostManager(first.context);
+		try {
+			await first.host.dispose();
+			const a = await manager.get({
+				principal: "one",
+				cwd: root,
+				agentDir,
+				provider: faux.provider,
+				model: faux.model,
+			});
+			const b = await manager.get({
+				principal: "two",
+				cwd: root,
+				agentDir,
+				provider: faux.provider,
+				model: faux.model,
+			});
+			expect(a).not.toBe(b);
+			await a.createSession();
+			await a.prompt("seed persisted session");
+			const sessionId = a.state().activeSession?.id;
+			if (!sessionId) throw new Error("Expected active Session ID");
+			await expect(b.openSession(sessionId)).rejects.toMatchObject({ code: "SESSION_IN_USE" });
+			const pending = a.prompt({ text: "busy", requestId: "busy-request" });
+			expect(() => a.setModel(faux.model.id)).toThrowError(SessionHostError);
+			expect(a.cancel("busy-request")).toBe(true);
+			await pending;
+			expect(b.state().activeSession).toBeUndefined();
+		} finally {
+			await manager.dispose();
+			await first.removeFactory();
+			await first.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+});
