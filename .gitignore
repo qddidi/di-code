@@ -15,7 +15,7 @@ npm-debug.log*
 .env.*
 !.env.example
 .di-code/*
-
+docs-vibecoding/*
 
 # Editors and operating systems
 .vscode/
