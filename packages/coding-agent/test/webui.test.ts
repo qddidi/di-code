@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider } from "@di-code/ai";
@@ -109,6 +109,39 @@ function headers(token: string, clientId?: string): Headers {
 }
 
 describe("WebUiServer", () => {
+	it("serves a same-origin SPA with isolated API, boot data, and health checks", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-webui-static-"));
+		await writeFile(join(root, "index.html"), "<main>di-code web</main>", "utf8");
+		await mkdir(join(root, "assets"));
+		await writeFile(join(root, "assets", "app-123.js"), "export {}", "utf8");
+		const developmentOrigin = "http://127.0.0.1:4111";
+		const { baseUrl, token } = await createServer({ staticRoot: root, developmentOrigin });
+		cleanups.push(() => rm(root, { recursive: true, force: true }));
+		const page = await fetch(`${baseUrl}/workspace/session`);
+		expect(page.status).toBe(200);
+		expect(await page.text()).toContain("di-code web");
+		expect(page.headers.get("cache-control")).toBe("no-cache");
+		const asset = await fetch(`${baseUrl}/assets/app-123.js`);
+		expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+		const cookie = page.headers.get("set-cookie");
+		expect(cookie).toContain("HttpOnly");
+		const boot = await fetch(`${baseUrl}/api/boot`, { headers: { cookie: cookie?.split(";")[0] ?? "" } });
+		expect(boot.status).toBe(200);
+		expect(await boot.json()).toMatchObject({ protocolVersion: 1, capabilities: { methods: expect.any(Array) } });
+		await expect(fetch(`${baseUrl}/api/rpc`, { method: "POST", body: "{}" })).resolves.toMatchObject({ status: 401 });
+		const developmentSession = await fetch(`${baseUrl}/api/session`, { headers: { origin: developmentOrigin } });
+		expect(developmentSession.status).toBe(204);
+		expect(developmentSession.headers.get("set-cookie")).toContain("HttpOnly");
+		await expect(fetch(`${baseUrl}/healthz`)).resolves.toMatchObject({ status: 200 });
+		await expect(fetch(`${baseUrl}/%2e%2e%2fsettings.json`)).resolves.toMatchObject({ status: 403 });
+		const legacy = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({ version: 1, kind: "request", id: "legacy", method: "get_state", params: {} }),
+		});
+		expect(legacy.status).toBe(200);
+	});
+
 	it("routes HTTP RPC through isolated SessionHost actors without exposing local paths", async () => {
 		const { baseUrl, token, agentDir } = await createServer();
 		const first = await fetch(`${baseUrl}/rpc`, {

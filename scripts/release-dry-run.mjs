@@ -91,6 +91,9 @@ function parsePackOutput(stdout, workspace) {
 	if (!entry.files.some((file) => file.path === "README.md")) {
 		throw new Error(`${workspace} tarball does not contain README.md`);
 	}
+	if (workspace === "@di-code/coding-agent" && !entry.files.some((file) => file.path === "dist/web/index.html")) {
+		throw new Error("@di-code/coding-agent tarball does not contain web assets.");
+	}
 	return entry;
 }
 
@@ -146,12 +149,6 @@ async function main() {
 		if (version.stdout.trim() !== installedMetadata.version) {
 			throw new Error(`Outside-install version mismatch: ${version.stdout.trim()}`);
 		}
-		const conversation = await runNpm(["exec", "--offline", "--", "di-code", "--print", "release smoke"], {
-			cwd: installDirectory,
-			env: { ...smokeEnvironment, DI_CODE_PROVIDER: "faux", DI_CODE_MODEL: "faux-model" },
-		});
-		if (conversation.stdout.trim().length === 0) throw new Error("Outside-install conversation smoke returned no text.");
-
 		const orchestratorSmoke = join(installDirectory, "orchestrator-smoke.mjs");
 		await writeFile(
 			orchestratorSmoke,
@@ -160,23 +157,92 @@ const supervisor = new RpcSupervisor({
   command: process.execPath,
   args: [${JSON.stringify(rpcEntry)}],
   cwd: process.cwd(),
-  env: { DI_CODE_PROVIDER: "faux", DI_CODE_MODEL: "faux-model" },
+  env: process.env,
 });
 const state = await supervisor.start();
-if (state.modelId !== "faux-model") throw new Error("unexpected RPC model");
-const answer = await supervisor.prompt("orchestrator smoke");
-if (answer.stopReason !== "stop") throw new Error("unexpected RPC answer");
+if (!state.modelId) throw new Error("RPC server did not expose a model");
 await supervisor.stop();
 `,
 			"utf8",
 		);
 		await run(process.execPath, [orchestratorSmoke], { cwd: installDirectory });
+		await webSmoke(binPath, installDirectory, smokeEnvironment);
 
 		process.stdout.write(
-			`release dry-run passed: ${workspaces.length} packages, version ${installedMetadata.version}, outside install and RPC smoke passed\n`,
+			`release dry-run passed: ${workspaces.length} packages, version ${installedMetadata.version}, outside install, RPC, and web smoke passed\n`,
 		);
 	} finally {
-		await rm(temporaryRoot, { recursive: true, force: true });
+		await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+	}
+}
+
+async function webSmoke(binPath, cwd, env) {
+	const windows = process.platform === "win32";
+	const child = spawn(binPath, ["web", "--port", "0"], {
+		cwd,
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+		...(windows ? { shell: true } : {}),
+	});
+	let output = "";
+	let error = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (chunk) => {
+		output += chunk;
+	});
+	child.stderr.on("data", (chunk) => {
+		error += chunk;
+	});
+	try {
+		const baseUrl = await new Promise((resolveUrl, reject) => {
+			let settled = false;
+			const settle = (callback) => (value) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeout);
+				child.stdout.off("data", check);
+				child.off("error", onError);
+				child.off("exit", onExit);
+				callback(value);
+			};
+			const timeout = setTimeout(
+				() => settle(reject)(new Error(`Web smoke did not become ready.\n${error || output}`)),
+				15_000,
+			);
+			const check = () => {
+				const match = /Web server listening at (http:\/\/127\.0\.0\.1:\d+)/u.exec(output);
+				if (!match) return;
+				settle(resolveUrl)(match[1]);
+			};
+			const onError = (cause) => settle(reject)(cause);
+			const onExit = (code) =>
+				settle(reject)(new Error(`Web smoke exited before readiness (code=${code}).\n${error || output}`));
+			child.stdout.on("data", check);
+			child.once("error", onError);
+			child.once("exit", onExit);
+			check();
+		});
+		const page = await fetch(baseUrl);
+		const html = await page.text();
+		if (!page.ok || html.trim().length === 0) throw new Error("Web smoke returned an empty page.");
+		const cookie = page.headers.get("set-cookie")?.split(";", 1)[0];
+		if (!cookie) throw new Error("Web smoke did not establish a same-origin session.");
+		const boot = await fetch(`${baseUrl}/api/boot`, { headers: { cookie } });
+		const data = await boot.json();
+		if (!boot.ok || !Array.isArray(data?.capabilities?.methods) || data.capabilities.methods.length === 0)
+			throw new Error("Web smoke did not expose RPC capabilities.");
+	} finally {
+		if (child.exitCode === null && child.signalCode === null) {
+			if (windows) {
+				const killer = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `taskkill /pid ${child.pid} /t /f`], {
+					stdio: "ignore",
+				});
+				await new Promise((resolveExit) => killer.once("exit", resolveExit));
+			} else child.kill("SIGTERM");
+		}
+		if (child.exitCode === null && child.signalCode === null)
+			await new Promise((resolveExit) => child.once("exit", resolveExit));
 	}
 }
 

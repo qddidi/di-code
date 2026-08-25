@@ -7,6 +7,7 @@ export type CompositionProfile = OutputMode;
 export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
+	| { kind: "web"; port: number }
 	| { kind: "observe"; action: "trace" | "dump-composition" }
 	| {
 			kind: "plugin";
@@ -50,6 +51,7 @@ export class CliUsageError extends Error {
 }
 
 export function parseCliArgs(args: readonly string[]): CliCommand {
+	if (args[0] === "web") return parseWebArgs(args.slice(1));
 	if (args.length === 1 && args[0] === "--trace-plugins") return { kind: "observe", action: "trace" };
 	if (args.length === 1 && args[0] === "--dump-composition") return { kind: "observe", action: "dump-composition" };
 	if (args[0] === "plugin") {
@@ -308,6 +310,15 @@ function parseMcpArgs(args: readonly string[]): Extract<CliCommand, { kind: "mcp
 	return { kind: "mcp", action, transport, serverId: positional[0], url: positional[1], ...(scope ? { scope } : {}) };
 }
 
+function parseWebArgs(args: readonly string[]): Extract<CliCommand, { kind: "web" }> {
+	if (args.length === 0) return { kind: "web", port: 0 };
+	if (args.length !== 2 || args[0] !== "--port") throw new CliUsageError("Web command accepts only --port <0-65535>.");
+	const port = Number(args[1]);
+	if (!Number.isSafeInteger(port) || port < 0 || port > 65_535)
+		throw new CliUsageError("Option --port expects a TCP port from 0 to 65535.");
+	return { kind: "web", port };
+}
+
 export function helpText(locale: Locale): string {
 	const t = (key: string) => translate(locale, key);
 	return `${t("usage")}
@@ -331,6 +342,7 @@ ${t("options")}
   --trace-plugins    Emit Loader phase, owner Fiber, capability, and failure diagnostics
   --dump-composition Emit the resolved composition without configuration values
   mcp add|list|get|remove ${t("mcp")}
+  web [--port <port>] Start the local web application (default: an available port)
   -h, --help         ${t("help")}
   -v, --version      ${t("version")}
 `;
@@ -389,5 +401,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
 			return 0;
 		case "run":
 			return dependencies.run(command);
+		case "web":
+			throw new Error("Web command must be handled by the executable entry point.");
 	}
 }

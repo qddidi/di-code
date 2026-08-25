@@ -1,0 +1,16 @@
+{
+	"name": "@di-code/web",
+	"version": "0.1.7",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "vite build",
+		"dev": "node --experimental-strip-types scripts/dev.ts"
+	},
+	"devDependencies": {
+		"@vitejs/plugin-react": "5.2.0",
+		"react": "19.2.8",
+		"react-dom": "19.2.8",
+		"vite": "8.0.0"
+	}
+}

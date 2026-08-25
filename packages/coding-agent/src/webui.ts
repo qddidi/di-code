@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { resolve } from "node:path";
+import { extname, relative, resolve, sep } from "node:path";
 import type { Context } from "@di-code/plugin-runtime";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
 import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "./rpc/protocol.ts";
@@ -26,6 +26,10 @@ export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "c
 	readonly maxSseConnections?: number;
 	/** Lifetime of a reconnect credential; defaults to ten minutes. */
 	readonly resumeTokenTtlMs?: number;
+	/** Optional SPA asset directory. API routes remain isolated under `/api`. */
+	readonly staticRoot?: string;
+	/** Additional same-origin development origin accepted by the API. */
+	readonly developmentOrigin?: string;
 }
 
 interface Connection {
@@ -60,6 +64,27 @@ function tokenFrom(req: IncomingMessage): string | undefined {
 	const header = req.headers["x-di-code-token"];
 	return typeof header === "string" ? header : undefined;
 }
+
+function cookieToken(req: IncomingMessage): string | undefined {
+	const cookies = req.headers.cookie;
+	if (!cookies) return undefined;
+	for (const part of cookies.split(";")) {
+		const [name, value] = part.trim().split("=", 2);
+		if (name === "di_code_web") return value;
+	}
+	return undefined;
+}
+
+const MIME_TYPES: Readonly<Record<string, string>> = {
+	".css": "text/css; charset=utf-8",
+	".html": "text/html; charset=utf-8",
+	".ico": "image/x-icon",
+	".js": "text/javascript; charset=utf-8",
+	".json": "application/json; charset=utf-8",
+	".map": "application/json; charset=utf-8",
+	".svg": "image/svg+xml",
+	".woff2": "font/woff2",
+};
 
 async function body(req: IncomingMessage, maxBytes: number): Promise<string> {
 	const chunks: Buffer[] = [];
@@ -153,15 +178,29 @@ export class WebUiServer {
 			if (this.disposed) return json(res, 503, { error: "WebUI is shutting down." });
 			if (!this.hostAllowed(req)) return json(res, 403, { error: "Host is not allowed." });
 			if (!this.originAllowed(req)) return json(res, 403, { error: "Origin is not allowed." });
+			const url = new URL(req.url ?? "/", "http://127.0.0.1");
+			if (req.method === "GET" && url.pathname === "/healthz") return json(res, 200, { status: "ok" });
+			if (this.options.staticRoot && !isApiRoute(url.pathname)) {
+				if (await this.staticAsset(req, res, url)) return;
+			}
 			this.setCors(req, res);
 			if (req.method === "OPTIONS") {
 				res.writeHead(204).end();
 				return;
 			}
-			const client = this.authenticate(req, res);
+			if (req.method === "GET" && url.pathname === "/api/session" && this.isDevelopmentSessionRequest(req)) {
+				this.setWebCookie(res);
+				res.writeHead(204).end();
+				return;
+			}
+			const client = this.authenticate(req, res, url.pathname.startsWith("/api/"));
 			if (!client) return;
 			if (!this.rateAllowed(client)) return json(res, 429, { error: "Rate limit exceeded." });
-			const url = new URL(req.url ?? "/", "http://127.0.0.1");
+			if (req.method === "GET" && url.pathname === "/api/boot") return await this.boot(res, client, url);
+			if (req.method === "POST" && url.pathname === "/api/rpc") return await this.rpc(req, res, client, url);
+			if (req.method === "GET" && url.pathname === "/api/events") return await this.events(req, res, client, url);
+			if (req.method === "POST" && url.pathname === "/api/attachments")
+				return await this.attachments(req, res, client, url);
 			if (req.method === "POST" && url.pathname === "/rpc") return await this.rpc(req, res, client, url);
 			if (req.method === "GET" && url.pathname === "/events") return await this.events(req, res, client, url);
 			if (req.method === "POST" && url.pathname === "/attachments")
@@ -172,8 +211,8 @@ export class WebUiServer {
 		}
 	}
 
-	private authenticate(req: IncomingMessage, res: ServerResponse): ClientState | undefined {
-		const token = tokenFrom(req);
+	private authenticate(req: IncomingMessage, res: ServerResponse, allowCookie: boolean): ClientState | undefined {
+		const token = tokenFrom(req) ?? (allowCookie ? cookieToken(req) : undefined);
 		if (!token || !constantEquals(token, this.tokenValue)) {
 			json(res, 401, { error: "Unauthorized." });
 			return undefined;
@@ -237,7 +276,8 @@ export class WebUiServer {
 		const origin = req.headers.origin;
 		if (origin === undefined) return true;
 		const allowed = this.options.origins;
-		if (allowed) return allowed.includes(origin);
+		if (allowed) return allowed.includes(origin) || origin === this.options.developmentOrigin;
+		if (origin === this.options.developmentOrigin) return true;
 		if (origin === `http://${req.headers.host}`) return true;
 		try {
 			const parsed = new URL(origin);
@@ -266,6 +306,101 @@ export class WebUiServer {
 		if (client.requestTimes.length >= config.maxRequests) return false;
 		client.requestTimes.push(now);
 		return true;
+	}
+	private async staticAsset(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+		if (req.method !== "GET" && req.method !== "HEAD") return false;
+		const configuredRoot = this.options.staticRoot;
+		if (!configuredRoot) return false;
+		const staticRoot = await realpath(configuredRoot);
+		let pathname: string;
+		try {
+			pathname = decodeURIComponent(url.pathname);
+		} catch {
+			json(res, 400, { error: "Invalid URL path." });
+			return true;
+		}
+		if (pathname.includes("\0")) {
+			json(res, 400, { error: "Invalid URL path." });
+			return true;
+		}
+		const requested = resolve(staticRoot, `.${pathname}`);
+		const pathIsInsideRoot = relative(staticRoot, requested);
+		if (pathIsInsideRoot.startsWith("..") || pathIsInsideRoot.startsWith(`..${sep}`)) {
+			json(res, 403, { error: "Static path is not allowed." });
+			return true;
+		}
+		const candidate = await this.fileOrFallback(
+			requested === staticRoot ? resolve(staticRoot, "index.html") : requested,
+			resolve(staticRoot, "index.html"),
+		);
+		if (!candidate) return false;
+		const realCandidate = await realpath(candidate);
+		const candidatePath = relative(staticRoot, realCandidate);
+		if (candidatePath.startsWith("..") || candidatePath.startsWith(`..${sep}`)) {
+			json(res, 403, { error: "Static path is not allowed." });
+			return true;
+		}
+		this.setWebCookie(res);
+		const asset = await readFile(realCandidate);
+		const cacheControl = realCandidate.endsWith("index.html")
+			? "no-cache"
+			: realCandidate.includes(`${sep}assets${sep}`)
+				? "public, max-age=31536000, immutable"
+				: "public, max-age=3600";
+		res.writeHead(200, {
+			"content-type": MIME_TYPES[extname(realCandidate)] ?? "application/octet-stream",
+			"cache-control": cacheControl,
+		});
+		if (req.method === "GET") res.end(asset);
+		else res.end();
+		return true;
+	}
+	private async fileOrFallback(path: string, fallback: string): Promise<string | undefined> {
+		try {
+			if ((await stat(path)).isFile()) return path;
+		} catch {}
+		try {
+			if ((await stat(fallback)).isFile()) return fallback;
+		} catch {}
+		return undefined;
+	}
+	private setWebCookie(res: ServerResponse): void {
+		res.setHeader("set-cookie", `di_code_web=${this.tokenValue}; HttpOnly; SameSite=Strict; Path=/`);
+	}
+	private isDevelopmentSessionRequest(req: IncomingMessage): boolean {
+		return this.options.developmentOrigin !== undefined && req.headers.origin === this.options.developmentOrigin;
+	}
+	private async boot(res: ServerResponse, client: ClientState, url: URL): Promise<void> {
+		const { actor, dispatcher } = await this.actor(client, url);
+		const [capabilities, state, runtime] = await Promise.all([
+			dispatcher.dispatch({
+				version: RPC_PROTOCOL_VERSION,
+				kind: "request",
+				id: `boot-capabilities:${randomUUID()}`,
+				method: "get_capabilities",
+				params: { events: [] },
+			}),
+			dispatcher.dispatch({
+				version: RPC_PROTOCOL_VERSION,
+				kind: "request",
+				id: `boot-state:${randomUUID()}`,
+				method: "get_state",
+				params: {},
+			}),
+			dispatcher.dispatch({
+				version: RPC_PROTOCOL_VERSION,
+				kind: "request",
+				id: `boot-runtime:${randomUUID()}`,
+				method: "get_runtime",
+				params: {},
+			}),
+		]);
+		json(res, 200, {
+			protocolVersion: RPC_PROTOCOL_VERSION,
+			capabilities: capabilities.ok ? capabilities.result : undefined,
+			state: state.ok ? state.result.state : actor.state(),
+			runtime: runtime.ok ? runtime.result : undefined,
+		});
 	}
 	private async actor(client: ClientState, url: URL): Promise<{ actor: SessionActor; dispatcher: RpcDispatcher }> {
 		const requested = await realpath(resolve(url.searchParams.get("workspace") ?? this.options.allowedRoot));
@@ -453,4 +588,14 @@ function constantEquals(left: string, right: string): boolean {
 	const leftBytes = Buffer.from(left);
 	const rightBytes = Buffer.from(right);
 	return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function isApiRoute(pathname: string): boolean {
+	return (
+		pathname === "/rpc" ||
+		pathname === "/events" ||
+		pathname === "/attachments" ||
+		pathname === "/healthz" ||
+		pathname.startsWith("/api/")
+	);
 }

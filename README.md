@@ -53,7 +53,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - 可组合的 namespace plugin 运行时：Provider、Agent、工具、Session、CLI/TUI、RPC、MCP 与 Skills 都通过 Composition entry 装配；默认体验只是内建 composition。
 - 受项目 trust 保护的 MCP `stdio` / Streamable HTTP Server tools，可接入现有 Agent 工具循环，并提供 `di-code mcp add/list/get/remove` 配置命令。
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
-- 本地优先的 `di-code-webui` HTTP/SSE 入口，复用 RPC Dispatcher、SessionHost 和既有 Agent loop。
+- 本地优先的 `di-code web` 同源 Web 应用，以及供嵌入式客户端使用的 `di-code-webui` HTTP/SSE 入口；两者都复用 RPC Dispatcher、SessionHost 和既有 Agent loop。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
 ## 架构
@@ -518,6 +518,18 @@ node --env-file-if-exists=.env packages/coding-agent/dist/entry.js --help
 $request = '{"version":1,"kind":"request","id":"state-1","method":"get_state","params":{}}'
 $request | node packages/coding-agent/dist/rpc-entry.js
 ```
+
+### 本地 Web 应用
+
+构建后的 `di-code web [--port <0-65535>]` 会启动一个只绑定 `127.0.0.1` 的 Node 进程。它同时提供 React SPA、`/api/boot`、`/api/rpc`、`/api/events`、`/api/attachments` 和无认证的 `GET /healthz`；`--port` 省略或为 `0` 时选择可用端口。页面首次加载会建立仅同源可用的 HttpOnly cookie，浏览器不需要、也不会获得 `DI_CODE_WEBUI_TOKEN`。
+
+```powershell
+di-code web
+di-code web --port 4312
+npm run web:dev
+```
+
+`npm run web:dev` 会以当前用户已有的 settings 启动 Web backend，再启动 Vite 并代理 API；退出时会清理两个子进程。生产静态资源随 `@di-code/coding-agent` tarball 的 `dist/web` 一起发布。静态文件只允许位于该目录内，带 hash 的 `assets/` 使用 immutable cache，其他 SPA 路径回退到 `index.html`，`/api` 与旧 HTTP/SSE 路由不会被 SPA fallback 接管。Web 应用只授权启动目录对应的真实 workspace，不支持远程 bind，也不创建第二套 Agent loop。
 
 ### WebUI HTTP/SSE
 

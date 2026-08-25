@@ -16,6 +16,13 @@ describe("parseCliArgs", () => {
 		expect(parseCliArgs(["-v"])).toEqual({ kind: "version" });
 	});
 
+	it("parses the local web command and validates its port", () => {
+		expect(parseCliArgs(["web"])).toEqual({ kind: "web", port: 0 });
+		expect(parseCliArgs(["web", "--port", "4312"])).toEqual({ kind: "web", port: 4312 });
+		expect(() => parseCliArgs(["web", "--port", "65536"])).toThrow("Option --port expects a TCP port");
+		expect(() => parseCliArgs(["web", "prompt"])).toThrow("Web command accepts only --port");
+	});
+
 	it("parses MCP management commands without shell-joining stdio arguments", () => {
 		expect(parseCliArgs(["mcp", "add", "playwright", "--", "npx.cmd", "-y", "@playwright/mcp@latest"])).toEqual({
 			kind: "mcp",
@@ -215,6 +222,7 @@ describe("runCli", () => {
 		expect(stdout.mock.calls[0]?.[0]).toContain("--continue, -c");
 		expect(stdout.mock.calls[0]?.[0]).toContain("--image <path>");
 		expect(stdout.mock.calls[0]?.[0]).toContain("--composition <path>");
+		expect(stdout.mock.calls[0]?.[0]).toContain("web [--port <port>]");
 		expect(stdout.mock.calls[1]?.[0]).toBe("0.0.0\n");
 		expect(stderr).not.toHaveBeenCalled();
 	});

@@ -2,7 +2,7 @@
 
 `@di-code/coding-agent` 是 [di-code](https://github.com/qddidi/di-code) 的可安装终端 AI 编码代理。安装后提供：
 
-- `di-code`：面向人的交互式、单次输出和 JSON 事件 CLI；
+- `di-code`：面向人的交互式、单次输出、JSON 事件和本地 Web CLI（`di-code web`）；
 - `di-code-rpc`：供 Node.js 宿主程序管理的 JSONL RPC 子进程入口；
 - `di-code-webui`：本地 HTTP/SSE WebUI 传输入口；
 - 内置的 `read`、`write`、`edit`、`glob`、`grep`、`bash` 工具、JSONL 会话、图片输入、上下文压缩；
@@ -605,6 +605,12 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 需要监督子进程生命周期时，使用 `@di-code/orchestrator`，不要依赖 coding-agent 的内部文件路径。
 
 ### WebUI HTTP/SSE
+
+`di-code web [--port <0-65535>]` 是面向浏览器的同源入口，默认使用随机可用端口并且始终只绑定 `127.0.0.1`。同一个 Node 进程拥有静态 SPA、`GET /healthz`、`GET /api/boot` 和现有 HTTP/SSE RPC adapter 的 `/api` 路由；页面只读取 boot/capabilities，实际 prompt、Session 和工具调用仍由 `RpcDispatcher`/`SessionHost` 执行。静态资源来自已安装包的 `dist/web`，API 路由与 SPA fallback 隔离，路径穿越和 symlink 逃逸会被拒绝。首次静态页面响应建立 HttpOnly、SameSite cookie，浏览器不需要知道 transport token。
+
+`npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
+
+`di-code-webui` 是给自定义或嵌入式 HTTP 客户端保留的 token header transport：
 
 `di-code-webui` 使用 `webui` composition 创建 `HostManager` 和每个浏览器 client 的 `SessionActor`，再由 `RpcDispatcher` 执行所有 RPC v1
 方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。Web 与 TUI 通过同一个用户级 `~/.di-code` 根读取 Provider、模型、语言、thinking 默认值和持久化 Session；client/actor 目录只保存附件等传输临时状态，不能承载 settings 或 Session。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
