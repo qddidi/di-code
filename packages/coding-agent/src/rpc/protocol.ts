@@ -345,6 +345,16 @@ export function parseRpcRequest(line: string): RpcRequest {
 			stringParam(params, "providerId", id);
 			stringParam(params, "modelId", id);
 			break;
+		case "set_thinking_level":
+			if (
+				params.level !== undefined &&
+				params.level !== "low" &&
+				params.level !== "medium" &&
+				params.level !== "high" &&
+				params.level !== "max"
+			)
+				throw new RpcProtocolError("INVALID_PARAMS", "set_thinking_level.level must be a valid thinking level.", id);
+			break;
 		case "retry":
 			stringParam(params, "targetRequestId", id);
 			break;

@@ -7,7 +7,12 @@ import type { Context } from "@di-code/plugin-runtime";
 import { addMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "../mcp/config.ts";
 import { mcpClientServiceKey, mcpConfigServiceKey } from "../mcp/entries.ts";
 import type { RpcContextFileInfo, RpcMcpServerInfo, RpcProviderSummary } from "../rpc/protocol.ts";
-import { removeGlobalProviderApiKey, saveGlobalProviderApiKey } from "../startup.ts";
+import {
+	removeGlobalProviderApiKey,
+	resolveStartupRuntime,
+	type StartupConfiguration,
+	saveGlobalProviderApiKey,
+} from "../startup.ts";
 import { interactiveResourceServiceKey } from "./interactive-resource-service.ts";
 
 export interface ProductHostOptions {
@@ -17,6 +22,10 @@ export interface ProductHostOptions {
 	readonly projectTrusted: boolean;
 	/** Current runtime is included even when a test or embeddable host supplied it outside the registry. */
 	readonly provider?: Provider;
+	/** Startup settings used to report whether each Provider is actually configured. */
+	readonly startupConfiguration?: StartupConfiguration;
+	/** Re-resolves settings and swaps an idle Session runtime after login/logout changes. */
+	readonly reloadRuntime?: () => Promise<void>;
 	/** Refreshes the owning SessionHost after a trust or MCP configuration change. */
 	readonly refreshResources?: (projectTrusted?: boolean, signal?: AbortSignal) => Promise<void>;
 }
@@ -109,8 +118,26 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		id: provider.id,
 		name: provider.name,
 		models: provider.models.map((model) => ({ id: model.id, name: model.name, input: [...model.input] })),
-		configured: true,
+		configured: isProviderConfigured(provider.id),
 	});
+	const isProviderConfigured = (providerId: string): boolean => {
+		if (providerId === "faux" || options.provider?.id === providerId) return true;
+		try {
+			const configuration = options.startupConfiguration;
+			const configured = configuration?.providers.find((item) => item.id === providerId);
+			if (configuration && configured) {
+				resolveStartupRuntime(configuration.environment, [configured], {
+					providerId,
+					modelId: configured.models?.[0]?.id,
+				});
+				return true;
+			}
+			resolveStartupRuntime(configuration?.environment ?? process.env, [], { providerId });
+			return true;
+		} catch {
+			return false;
+		}
+	};
 	const connect = async (signal?: AbortSignal): Promise<void> => {
 		throwIfAborted(signal);
 		const configurations = await options.context.require(mcpConfigServiceKey).load({
@@ -174,6 +201,8 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			const api = (input.api ?? API_BY_PROVIDER[input.providerId]) as Exclude<ModelApi, "faux"> | undefined;
 			if (!api) throw new Error("Provider login API is unavailable.");
 			await saveGlobalProviderApiKey(options.agentDir, input.providerId, api, input.apiKey, selection.model.id);
+			throwIfAborted(signal);
+			await options.reloadRuntime?.();
 			throwIfAborted(signal);
 			emitAudit({ action: "login", target: input.providerId });
 			return providerSummary(selection.provider);

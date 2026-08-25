@@ -533,7 +533,8 @@ di-code-webui
 入口只授权启动目录对应的真实工作区，拒绝浏览器提供的其他路径。`POST /rpc` 接收已有 RPC v1 request；`GET /events` 用 SSE 返回流事件；
 `POST /attachments` 接收 `{ name, contentType, data }` JSON，其中 `data` 是 base64。附件只接受 PNG、JPEG、WebP、GIF，单个最大 5 MiB，
 每个浏览器 client 最多保留 32 个或 64 MiB，总计 10 分钟后过期；WebUI 将附件保存到该 client 独立的受管临时目录，
-并以 opaque `attachmentId` 引用，不暴露服务器路径。
+并以 opaque `attachmentId` 引用，不暴露服务器路径。Provider、模型、语言、thinking 默认值和持久化 Session 与 TUI
+共同使用用户级 `~/.di-code`；浏览器 client 临时目录不承载产品 settings 或 Session。
 
 首次响应返回 `X-Di-Code-Client-Id`。SSE `ready` 事件带 10 分钟有效的 `resumeToken`；每次成功恢复都会轮换它，旧 token 立即失效。带 sequence 的事件同时使用 SSE `id`，空闲连接每 15 秒发送 comment keepalive；重连在 header 发送该 token 和 `Last-Event-ID`，服务器重放有界事件或发送
 `snapshot_required`。默认最多 8 个 SSE 连接/浏览器 client、64 个/服务进程；达到限制会返回 `429`。HTTP/SSE 断开不会取消 prompt、steer、retry 或 compact；用 `get_operation` 查询终态，只有 `cancel` 会显式取消。

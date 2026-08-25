@@ -2,7 +2,7 @@ import type { AssistantMessage } from "@di-code/ai";
 import { describe, expect, it } from "vitest";
 import type { AgentSessionEvent, AgentSessionListener } from "../src/core/session.ts";
 import { RpcDispatcher, type RpcSession } from "../src/rpc/dispatcher.ts";
-import { RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "../src/rpc/protocol.ts";
+import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "../src/rpc/protocol.ts";
 import type { ProductHost } from "../src/runtime/product-host.ts";
 
 function request(id: string, method: RpcRequest["method"], params: Record<string, unknown> = {}): RpcRequest {
@@ -220,5 +220,19 @@ describe("RpcDispatcher", () => {
 			result: { method: "get_project_trust", trusted: true },
 		});
 		await dispatcher.dispose();
+	});
+
+	it("rejects invalid explicit thinking levels before dispatch", async () => {
+		expect(() =>
+			parseRpcRequest(
+				JSON.stringify({
+					version: 1,
+					kind: "request",
+					id: "thinking",
+					method: "set_thinking_level",
+					params: { level: "unsupported" },
+				}),
+			),
+		).toThrow("set_thinking_level.level must be a valid thinking level.");
 	});
 });

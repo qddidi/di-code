@@ -291,6 +291,25 @@ describe("Pi-style startup configuration", () => {
 		});
 	});
 
+	it("lets Web and TUI read each other's global defaults from the same agent directory", async () => {
+		await writeGlobalSettings({
+			providers: { zhipu: { api: "openai-chat-completions", apiKey: "$ZAI_API_KEY" } },
+		});
+
+		// The TUI writer updates the product-level root. A Web startup resolver sees it unchanged.
+		await saveGlobalModelSelection(globalDir, "zhipu", "glm-5.2");
+		await saveGlobalThinkingLevel(globalDir, "zhipu", "glm-5.2", "high");
+		const webRead = await loadStartupConfiguration(root, { ZAI_API_KEY: "test-key" }, globalDir);
+		expect(webRead.defaults).toEqual({ providerId: "zhipu", modelId: "glm-5.2" });
+		expect(webRead.thinkingLevels).toEqual({ zhipu: { "glm-5.2": "high" } });
+
+		// Web uses the same writer and root, so a fresh TUI resolver observes the replacement default.
+		await saveGlobalModelSelection(globalDir, "zhipu", "glm-5.3");
+		const tuiRead = await loadStartupConfiguration(root, { ZAI_API_KEY: "test-key" }, globalDir);
+		expect(tuiRead.defaults).toEqual({ providerId: "zhipu", modelId: "glm-5.3" });
+		expect(tuiRead.thinkingLevels).toEqual({ zhipu: { "glm-5.2": "high" } });
+	});
+
 	it("restores a thinking preference only when the selected model still supports it", () => {
 		const runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "zhipu", ZAI_API_KEY: "test-key" }, []);
 

@@ -576,7 +576,7 @@ worker 由 composition 的 `session-factory` 创建 session，并由同一 compo
 
 `RpcServer` 是 JSONL 传输适配器；协议解析、参数校验、方法分发、操作表和事件恢复由无 stdin/stdout 依赖的 `RpcDispatcher` 完成。嵌入其他传输时只能复用 dispatcher，不得让网络写入等待 Agent 事件处理。
 
-新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
+新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法。`set_thinking_level` 传入 `level: "low" | "medium" | "high" | "max"` 时按值设置；省略 `level` 保持原有循环行为。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
 
 v1 只新增方法与可选字段。产品配置、附件、工具审批和插件命名空间仍要求对应的显式 Host capability、schema、权限和 owner disposer；没有这些能力的 composition 会以 `METHOD_NOT_FOUND` 拒绝，绝不映射到 `commandRegistry` 或任意插件命令。
 
@@ -607,7 +607,7 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 ### WebUI HTTP/SSE
 
 `di-code-webui` 使用 `webui` composition 创建 `HostManager` 和每个浏览器 client 的 `SessionActor`，再由 `RpcDispatcher` 执行所有 RPC v1
-方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
+方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。Web 与 TUI 通过同一个用户级 `~/.di-code` 根读取 Provider、模型、语言、thinking 默认值和持久化 Session；client/actor 目录只保存附件等传输临时状态，不能承载 settings 或 Session。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
 `127.0.0.1` 和随机可用端口，可用 `DI_CODE_WEBUI_PORT` 指定端口。`DI_CODE_WEBUI_HOST` 只有与 `DI_CODE_WEBUI_ALLOW_REMOTE=1` 同时设置时才可绑定非回环地址。
 
 `POST /rpc`、`GET /events` 和 `POST /attachments` 都要求 `Authorization: Bearer <token>` 或 `X-Di-Code-Token` header。服务拒绝不匹配的

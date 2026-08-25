@@ -214,8 +214,8 @@ export class RpcClient {
 		return result.model as Model;
 	}
 
-	async setThinkingLevel(): Promise<ThinkingLevel | undefined> {
-		const result = await this.send("set_thinking_level", {});
+	async setThinkingLevel(level?: ThinkingLevel): Promise<ThinkingLevel | undefined> {
+		const result = await this.send("set_thinking_level", level === undefined ? {} : { level });
 		return result.level as ThinkingLevel | undefined;
 	}
 

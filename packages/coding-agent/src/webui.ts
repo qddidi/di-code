@@ -8,6 +8,7 @@ import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerM
 import { createManagedAttachmentStore } from "./runtime/attachment-store.ts";
 import { createProductHost, type ProductHost } from "./runtime/product-host.ts";
 import { HostManager, type SessionActor, type SessionHostBootstrapOptions } from "./runtime/session-host.ts";
+import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 
 export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal"> {
 	readonly context: Context;
@@ -273,6 +274,7 @@ export class WebUiServer {
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
 			const hostOptions = this.hostOptions(client.principal, allowed);
+			const startupConfiguration = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
 			const actor = await this.hostManager.get({
 				...hostOptions,
 				principal: client.principal,
@@ -285,10 +287,16 @@ export class WebUiServer {
 				agentDir: hostOptions.agentDir,
 				projectTrusted: this.options.projectTrusted ?? false,
 				provider: hostOptions.provider,
+				startupConfiguration,
+				reloadRuntime: async () => {
+					const refreshed = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
+					const runtime = resolveStartupRuntime(refreshed.environment, refreshed.providers, refreshed.defaults);
+					actor.setRuntimeValue(runtime.provider, runtime.model);
+				},
 				refreshResources: (projectTrusted) => actor.refreshResources(projectTrusted),
 			});
 			const attachments = await createManagedAttachmentStore({
-				directory: resolve(hostOptions.agentDir, "attachments"),
+				directory: resolve(this.clientTempRoot(client), "attachments"),
 			});
 			dispatcher = new RpcDispatcher({
 				session: actor,
@@ -313,11 +321,12 @@ export class WebUiServer {
 		});
 		return { actor, dispatcher };
 	}
-	private hostOptions(principal: string, cwd: string): SessionHostBootstrapOptions {
-		const id = createHash("sha256").update(principal).digest("hex");
+	private hostOptions(_principal: string, cwd: string): SessionHostBootstrapOptions {
 		return {
 			cwd,
-			agentDir: resolve(this.options.agentDir, "webui", "actors", id),
+			// SessionHost uses the same durable root as TUI. Browser identity only
+			// scopes transport state and must never become a settings root.
+			agentDir: resolve(this.options.agentDir),
 			projectTrusted: this.options.projectTrusted,
 			noSkills: this.options.noSkills,
 			noContextFiles: this.options.noContextFiles,
@@ -327,6 +336,10 @@ export class WebUiServer {
 			signal: this.options.signal,
 			compaction: this.options.compaction,
 		};
+	}
+	private clientTempRoot(client: ClientState): string {
+		const id = createHash("sha256").update(client.principal).digest("hex");
+		return resolve(this.options.agentDir, "webui", "actors", id);
 	}
 	private async rpc(req: IncomingMessage, res: ServerResponse, client: ClientState, url: URL): Promise<void> {
 		const request = requestFromValue(JSON.parse(await body(req, this.options.maxBodyBytes ?? 2 * 1024 * 1024)));

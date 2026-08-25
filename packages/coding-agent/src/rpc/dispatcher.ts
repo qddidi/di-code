@@ -429,7 +429,13 @@ export class RpcDispatcher {
 					};
 					break;
 				case "set_thinking_level":
-					result = { method: "set_thinking_level", level: this.host().setThinkingLevel() };
+					result = {
+						method: "set_thinking_level",
+						level:
+							request.params.level === undefined
+								? this.host().cycleThinkingLevel()
+								: this.host().setThinkingLevel(request.params.level as import("@di-code/ai").ThinkingLevel),
+					};
 					break;
 				case "list_context_files":
 					result = {

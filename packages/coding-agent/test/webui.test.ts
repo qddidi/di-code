@@ -110,7 +110,7 @@ function headers(token: string, clientId?: string): Headers {
 
 describe("WebUiServer", () => {
 	it("routes HTTP RPC through isolated SessionHost actors without exposing local paths", async () => {
-		const { baseUrl, token } = await createServer();
+		const { baseUrl, token, agentDir } = await createServer();
 		const first = await fetch(`${baseUrl}/rpc`, {
 			method: "POST",
 			headers: headers(token),
@@ -127,6 +127,11 @@ describe("WebUiServer", () => {
 			ok: true,
 			result: { method: "prompt", message: { content: [{ text: "web answer" }] } },
 		});
+		expect(
+			(await readdir(join(agentDir, "sessions"), { recursive: true })).some((file) => file.endsWith(".jsonl")),
+		).toBe(true);
+		const clientTempFiles = await readdir(join(agentDir, "webui", "actors"), { recursive: true });
+		expect(clientTempFiles.some((file) => file === "settings.json" || file.startsWith("sessions"))).toBe(false);
 		const firstClient = first.headers.get("x-di-code-client-id");
 		expect(firstClient).toBeTruthy();
 		const providers = await fetch(`${baseUrl}/rpc`, {

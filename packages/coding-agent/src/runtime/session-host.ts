@@ -93,7 +93,10 @@ export interface SessionHost {
 	readonly navigateTree: (entryId: string) => Promise<TreeNavigationResult>;
 	readonly setModel: (modelId: string) => Model;
 	readonly setRuntime: (providerId: string, modelId: string) => Model;
-	readonly setThinkingLevel: () => ThinkingLevel | undefined;
+	/** Applies an already-resolved runtime without requiring it in the registry. */
+	readonly setRuntimeValue: (provider: Provider, model: Model) => Model;
+	readonly setThinkingLevel: (level: ThinkingLevel) => ThinkingLevel;
+	readonly cycleThinkingLevel: () => ThinkingLevel | undefined;
 	readonly compact: (signal?: AbortSignal) => Promise<void>;
 	readonly setCompactionEnabled: (enabled: boolean) => boolean;
 	/** Reloads Skills, context and MCP tools after an explicit product-configuration change. */
@@ -132,7 +135,7 @@ export interface SessionHostUi {
 	readonly subscribeSession: (listener: (event: AgentSessionEvent) => void | Promise<void>) => () => void;
 	readonly setModel: SessionHost["setModel"];
 	readonly setRuntime: (provider: Provider, model: Model) => Model;
-	readonly cycleThinkingLevel: SessionHost["setThinkingLevel"];
+	readonly cycleThinkingLevel: SessionHost["cycleThinkingLevel"];
 	readonly setCompactionEnabled: SessionHost["setCompactionEnabled"];
 	readonly navigateTree: SessionHost["navigateTree"];
 	readonly compact: SessionHost["compact"];
@@ -714,9 +717,19 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			ensureOpen();
 			assertIdle("change runtime");
 			const selection = context.require(providerRegistryKey).select(providerId, modelId);
-			return current().session.setRuntime(selection.provider, selection.model);
+			return api.setRuntimeValue(selection.provider, selection.model);
 		},
-		setThinkingLevel: () => {
+		setRuntimeValue: (provider, model) => {
+			ensureOpen();
+			assertIdle("change runtime");
+			return current().session.setRuntime(provider, model);
+		},
+		setThinkingLevel: (level) => {
+			ensureOpen();
+			assertIdle("change thinking level");
+			return current().session.setThinkingLevel(level);
+		},
+		cycleThinkingLevel: () => {
 			ensureOpen();
 			assertIdle("change thinking level");
 			return current().session.cycleThinkingLevel();
@@ -818,7 +831,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 					}),
 				setModel: api.setModel,
 				setRuntime: (provider, model) => api.setRuntime(provider.id, model.id),
-				cycleThinkingLevel: api.setThinkingLevel,
+				cycleThinkingLevel: api.cycleThinkingLevel,
 				setCompactionEnabled: api.setCompactionEnabled,
 				navigateTree: api.navigateTree,
 				compact: api.compact,

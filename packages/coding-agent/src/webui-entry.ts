@@ -2,7 +2,7 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { runtimeSelectionKey, workspaceCapabilityKey } from "@di-code/builtins";
+import { workspaceCapabilityKey } from "@di-code/builtins";
 import { createCompositionLoader } from "@di-code/plugin-loader";
 import { createRootContext } from "@di-code/plugin-runtime";
 import {
@@ -12,6 +12,7 @@ import {
 } from "./compositions.ts";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { disposeRpcComposition } from "./rpc/lifecycle.ts";
+import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 import { WebUiServer } from "./webui.ts";
 
 const allowedRoot = resolve(process.cwd());
@@ -46,13 +47,14 @@ try {
 		projectTrusted,
 	});
 	await loader.load();
-	const selection = context.require(runtimeSelectionKey).selected();
+	const configuration = await loadStartupConfiguration(allowedRoot, process.env, agentDir);
+	const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
 	server = new WebUiServer({
 		context,
 		allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,
 		agentDir,
-		provider: selection.provider,
-		model: selection.model,
+		provider: runtime.provider,
+		model: runtime.model,
 		projectTrusted,
 		host,
 		port,

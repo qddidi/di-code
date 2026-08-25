@@ -256,7 +256,7 @@ function createUiSession(host: SessionHost, isDisposed: () => boolean): UiSessio
 		},
 		cycleThinkingLevel: () => {
 			assertLive();
-			return host.setThinkingLevel();
+			return host.cycleThinkingLevel();
 		},
 		compact: (signal) => {
 			assertLive();

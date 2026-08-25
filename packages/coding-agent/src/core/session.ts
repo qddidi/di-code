@@ -339,6 +339,17 @@ export class AgentSession {
 		return this.thinkingLevelValue;
 	}
 
+	setThinkingLevel(level: ThinkingLevel): ThinkingLevel {
+		this.assertNotDisposed();
+		if (this.promptActive) throw new Error("Cannot change thinking level while AgentSession is processing a prompt.");
+		if (!this.model.reasoningEfforts?.includes(level)) {
+			throw new Error(`Thinking level "${level}" is not supported by model "${this.model.id}".`);
+		}
+		this.thinkingLevelValue = level;
+		this.agent.setThinkingLevel(level);
+		return level;
+	}
+
 	get compactionEnabled(): boolean {
 		return this.compactionEnabledValue;
 	}
