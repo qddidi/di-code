@@ -531,6 +531,8 @@ npm run web:dev
 
 `npm run web:dev` 会以当前用户已有的 settings 启动 Web backend，再启动 Vite 并代理 API；退出时会清理两个子进程。生产静态资源随 `@di-code/coding-agent` tarball 的 `dist/web` 一起发布。静态文件只允许位于该目录内，带 hash 的 `assets/` 使用 immutable cache，其他 SPA 路径回退到 `index.html`，`/api` 与旧 HTTP/SSE 路由不会被 SPA fallback 接管。Web 应用只授权启动目录对应的真实 workspace，不支持远程 bind，也不创建第二套 Agent loop。
 
+Web 首页提供 DSH 风格的双栏 App Shell：桌面侧栏展示真实 workspace/session 快照，主区提供空状态和 composer 外壳；窄屏将侧栏收为导航抽屉。Settings overlay 当前只读显示 `/api/boot` 解析出的 Provider/model，并支持本地 Light/Dark/System 外观切换；不会写入 Provider 配置或 settings 文件。
+
 ### WebUI HTTP/SSE
 
 构建后，`di-code-webui` 提供受 token 认证的本地 HTTP/SSE 传输层。它默认仅绑定 `127.0.0.1`，并且必须设置至少 32 个字符的

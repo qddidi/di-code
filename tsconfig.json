@@ -12,6 +12,6 @@
 			"@di-code/plugin-sdk": ["packages/plugin-sdk/src/index.ts"]
 		}
 	},
-	"include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"],
+	"include": ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx", "packages/*/test/**/*.ts"],
 	"exclude": ["**/node_modules/**", "**/dist/**"]
 }

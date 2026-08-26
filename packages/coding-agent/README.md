@@ -610,6 +610,8 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 
 `npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
 
+Web SPA 的首页壳层读取 `/api/boot`、`list_sessions` 等现有 RPC 快照，提供双栏导航、空状态、composer 外壳、响应式侧栏和只读 Settings overlay；外观切换仅作用于浏览器本地页面，不修改 Provider/settings。
+
 `di-code-webui` 是给自定义或嵌入式 HTTP 客户端保留的 token header transport：
 
 `di-code-webui` 使用 `webui` composition 创建 `HostManager` 和每个浏览器 client 的 `SessionActor`，再由 `RpcDispatcher` 执行所有 RPC v1

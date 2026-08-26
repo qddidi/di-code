@@ -1,0 +1,5 @@
+import { ArrowUp, Paperclip, Plus, SlidersHorizontal } from "lucide-react";
+
+export function Composer({ disabled = false }: { readonly disabled?: boolean }): React.JSX.Element {
+	return <div className="composer-wrap"><div className="composer"><textarea aria-label="Message di-code" placeholder="Message di-code" rows={1} disabled={disabled} /><div className="composer-toolbar"><button className="composer-tool" type="button" aria-label="Add attachment" title="Add attachment"><Paperclip size={17} /></button><button className="composer-tool" type="button" aria-label="Add context" title="Add context"><Plus size={17} /></button><span className="composer-spacer" /><button className="model-select" type="button"><SlidersHorizontal size={15} />Model</button><button className="send-button" type="button" aria-label="Send message" title="Send message" disabled={disabled}><ArrowUp size={18} /></button></div></div><p className="composer-note">di-code can make mistakes. Review generated code before use.</p></div>;
+}

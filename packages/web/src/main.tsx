@@ -1,57 +1,27 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Composer } from "./components/Composer.tsx";
+import { EmptyState } from "./components/EmptyState.tsx";
+import { SettingsOverlay } from "./components/SettingsOverlay.tsx";
+import { Sidebar } from "./components/Sidebar.tsx";
+import { WorkspaceBar } from "./components/WorkspaceBar.tsx";
+import { useBoot } from "./use-boot.ts";
 import "./styles.css";
 
-interface BootData {
-	readonly protocolVersion: number;
-	readonly capabilities: { readonly methods: readonly string[]; readonly events: readonly string[] };
-	readonly state: { readonly modelId: string; readonly messageCount: number };
-	readonly runtime: { readonly providerId: string; readonly modelId: string };
-}
-
 function App(): React.JSX.Element {
-	const [boot, setBoot] = useState<BootData>();
-	const [error, setError] = useState<string>();
-
-	useEffect(() => {
-		const boot = (): Promise<Response> => fetch("/api/boot", { credentials: "same-origin" });
-		void boot()
-			.then(async (response) => {
-				if (response.status !== 401) return response;
-				const session = await fetch("/api/session", { credentials: "same-origin" });
-				if (!session.ok) return response;
-				return await boot();
-			})
-			.then(async (response) => {
-				if (!response.ok) throw new Error(`Server returned ${response.status}.`);
-				return (await response.json()) as BootData;
-			})
-			.then(setBoot)
-			.catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Unable to connect."));
-	}, []);
-
-	return (
-		<main className="shell">
-			<header>
-				<div className="brand">di-code</div>
-				<span className={boot ? "status ready" : error ? "status error" : "status"}>
-					{boot ? "Connected" : error ? "Unavailable" : "Connecting"}
-				</span>
-			</header>
-			<section aria-live="polite" className="content">
-				<h1>Workspace session</h1>
-				{error ? <p className="error-message">{error}</p> : null}
-				{boot ? (
-					<dl className="details">
-						<div><dt>Provider</dt><dd>{boot.runtime.providerId}</dd></div>
-						<div><dt>Model</dt><dd>{boot.runtime.modelId}</dd></div>
-						<div><dt>Capabilities</dt><dd>{boot.capabilities.methods.length} RPC methods</dd></div>
-						<div><dt>Session messages</dt><dd>{boot.state.messageCount}</dd></div>
-					</dl>
-				) : <p className="loading">Loading workspace capabilities...</p>}
-			</section>
-		</main>
-	);
+	const { data, error, loading, sessions } = useBoot();
+	const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 800);
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
+	if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
+	return <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+		<Sidebar collapsed={sidebarCollapsed} sessions={sessions} onToggle={() => setSidebarCollapsed((value) => !value)} onNewSession={() => undefined} onSettings={() => setSettingsOpen(true)} />
+		<div className="main-column"><WorkspaceBar onToggleSidebar={() => setSidebarCollapsed((value) => !value)} onSettings={() => setSettingsOpen(true)} /><main className="main-content">
+			{error ? <div className="connection-banner" role="alert">{error}</div> : null}
+			{loading ? <div className="loading-state" aria-busy="true">Loading workspace...</div> : <><EmptyState /><Composer disabled={data === undefined} /></>}
+		</main></div>
+		<SettingsOverlay open={settingsOpen} onClose={() => setSettingsOpen(false)} provider={data?.runtime.providerId} model={data?.runtime.modelId} theme={theme} onThemeChange={setTheme} />
+	</div>;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
