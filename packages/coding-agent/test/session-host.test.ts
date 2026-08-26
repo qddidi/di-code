@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider } from "@di-code/ai";
@@ -15,9 +15,11 @@ import {
 	sessionStoreJsonl,
 	skills,
 	systemPrompt,
+	type ToolApprovalCapability,
 	toolApproval,
 	toolOutput,
 	toolPolicy,
+	toolRead,
 	toolRegistry,
 	usageMeter,
 	workspace,
@@ -36,6 +38,7 @@ async function setup(
 	agentDir: string,
 	faux: ReturnType<typeof createFauxProvider>,
 	compaction?: import("../src/core/session.ts").AgentSessionCompactionOptions,
+	approvalCapability?: ToolApprovalCapability,
 ) {
 	const context = createRootContext({ id: "session-host-test", mode: "test", trustedProject: true });
 	for (const definition of [providerRegistry, toolRegistry]) await context.plugin(definition, undefined);
@@ -46,6 +49,7 @@ async function setup(
 		toolApproval,
 		toolPolicy,
 		toolOutput,
+		toolRead,
 		contextBudget,
 		compactionBasic,
 		compactionToolResult,
@@ -71,11 +75,68 @@ async function setup(
 		provider: faux.provider,
 		model: faux.model,
 		compaction,
+		toolApproval: approvalCapability,
 	});
 	return { context, host, removeFactory };
 }
 
 describe("SessionHost", () => {
+	it("keeps Web-style tool approvals scoped to the host that created the session", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-root-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-agent-"));
+		await Promise.all([
+			writeFile(join(root, "first.txt"), "first", "utf8"),
+			writeFile(join(root, "second.txt"), "second", "utf8"),
+		]);
+		const faux = createFauxProvider({
+			responses: [
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "first-read", name: "read", arguments: { path: "first.txt" } }],
+				},
+				{ type: "success", content: [{ type: "text", text: "first complete" }] },
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "second-read", name: "read", arguments: { path: "second.txt" } }],
+				},
+				{ type: "success", content: [{ type: "text", text: "second complete" }] },
+			],
+		});
+		const firstApprovals: string[] = [];
+		const secondApprovals: string[] = [];
+		const runtime = await setup(root, agentDir, faux, undefined, {
+			request: async (toolName) => {
+				firstApprovals.push(toolName);
+			},
+		});
+		const second = await createSessionHost(runtime.context, {
+			cwd: root,
+			agentDir,
+			provider: faux.provider,
+			model: faux.model,
+			toolApproval: {
+				request: async (toolName) => {
+					secondApprovals.push(toolName);
+				},
+			},
+		});
+		try {
+			await runtime.host.createSession();
+			await second.createSession();
+			await runtime.host.prompt("read first");
+			await second.prompt("read second");
+			expect(firstApprovals).toEqual(["read"]);
+			expect(secondApprovals).toEqual(["read"]);
+		} finally {
+			await second.dispose();
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("creates, persists, closes, and reopens an opaque session", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-host-root-"));
 		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-agent-"));
@@ -192,6 +253,34 @@ describe("SessionHost", () => {
 		try {
 			await runtime.host.openSession(sessionId);
 			await expect(runtime.host.retry({ targetRequestId: "failed-request" })).resolves.toMatchObject({
+				stopReason: "stop",
+			});
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retries a cancelled prompt by its original request ID", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-cancel-retry-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-cancel-retry-agent-"));
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "x".repeat(10_000) }] },
+				{ type: "success", content: [{ type: "text", text: "retried after cancellation" }] },
+			],
+		});
+		const runtime = await setup(root, agentDir, faux);
+		try {
+			await runtime.host.createSession();
+			const pending = runtime.host.prompt({ text: "cancel then retry", requestId: "cancelled-request" });
+			expect(runtime.host.cancel("cancelled-request")).toBe(true);
+			await expect(pending).resolves.toMatchObject({ stopReason: "aborted" });
+			await expect(runtime.host.retry({ targetRequestId: "cancelled-request" })).resolves.toMatchObject({
 				stopReason: "stop",
 			});
 		} finally {

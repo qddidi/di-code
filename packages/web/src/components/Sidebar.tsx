@@ -7,10 +7,12 @@ interface SidebarProps {
 	readonly collapsed: boolean;
 	readonly onToggle: () => void;
 	readonly onNewSession: () => void;
+	readonly activeSessionId?: string;
+	readonly onOpenSession: (id: string) => void;
 	readonly onSettings: () => void;
 }
 
-export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings }: SidebarProps): React.JSX.Element {
+export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession }: SidebarProps): React.JSX.Element {
 	return (
 		<aside className={`sidebar${collapsed ? " is-collapsed" : ""}`} aria-label="Workspace navigation">
 			<div className="sidebar-topline">
@@ -25,7 +27,7 @@ export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSetting
 					<label className="session-search"><Search size={16} /><input aria-label="Search sessions" placeholder="Search sessions" /></label>
 					<div className="session-heading"><span>Sessions</span><span className="session-count">{sessions.length}</span></div>
 					<div className="session-tree" role="list" aria-label="Sessions">
-						{sessions.length === 0 ? <p className="tree-placeholder">Your sessions will appear here.</p> : sessions.map((session) => <button className="session-item" key={session.id} type="button"><MessageSquarePlus size={15} /><span>{session.label || "Untitled session"}</span></button>)}
+					{sessions.length === 0 ? <p className="tree-placeholder">Your sessions will appear here.</p> : sessions.map((session) => <button className={`session-item${session.id === activeSessionId ? " is-active" : ""}`} key={session.id} type="button" aria-current={session.id === activeSessionId ? "page" : undefined} onClick={() => onOpenSession(session.id)}><MessageSquarePlus size={15} /><span>{session.label || "Untitled session"}</span></button>)}
 					</div>
 					<div className="sidebar-footer"><button className="footer-button" type="button" onClick={onSettings}><Settings size={17} />Settings</button><button className="footer-button" type="button"><Folder size={17} />Workspace files</button></div>
 				</>

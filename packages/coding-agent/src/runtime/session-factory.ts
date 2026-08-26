@@ -3,6 +3,7 @@ import {
 	compactionRegistryKey,
 	networkCapabilityKey,
 	processCapabilityKey,
+	type ToolApprovalCapability,
 	toolApprovalKey,
 	toolOutputKey,
 	toolPolicyKey,
@@ -18,6 +19,8 @@ export interface CompositionSessionOptions extends Omit<AgentSessionOptions, "to
 	readonly skills?: readonly SkillResource[];
 	/** MCP tools already adapted by the product integration layer. */
 	readonly externalTools?: readonly AgentSessionTool[];
+	/** Per-session approval boundary; defaults to the composition capability. */
+	readonly toolApproval?: ToolApprovalCapability;
 }
 
 interface SessionDependencies {
@@ -63,7 +66,7 @@ export function installAgentSessionFactory(context: Context): Disposer {
 				process: context.require(processCapabilityKey),
 				network: context.require(networkCapabilityKey),
 				policy: context.require(toolPolicyKey),
-				approval: context.require(toolApprovalKey),
+				approval: options.toolApproval ?? context.require(toolApprovalKey),
 				output: context.require(toolOutputKey),
 				skills: skillCatalog,
 			}),

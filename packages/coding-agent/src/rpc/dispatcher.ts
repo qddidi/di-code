@@ -176,6 +176,7 @@ export class RpcDispatcher {
 	private readonly session: RpcSession | SessionHost;
 	private readonly methods?: RpcMethodCatalog;
 	private readonly onError: (error: Error) => void;
+	private readonly approvals = new Map<string, { readonly resolve: (approved: boolean) => void }>();
 	private readonly maxEvents: number;
 	private productState: RpcProductState;
 	private readonly productHost?: ProductHost;
@@ -369,6 +370,14 @@ export class RpcDispatcher {
 						"Product configuration requests require operation dispatch.",
 					);
 				case "approve_tool":
+					{
+						const approvalId = request.params.approvalId as string;
+						const pending = this.approvals.get(approvalId);
+						if (pending) {
+							this.approvals.delete(approvalId);
+							pending.resolve(request.params.approved === true);
+						}
+					}
 					return this.success(request.id, {
 						method: "approve_tool",
 						approvalId: request.params.approvalId,
@@ -380,6 +389,41 @@ export class RpcDispatcher {
 		} catch (cause) {
 			return this.failure(request.id, errorCode(cause), "RPC request failed.");
 		}
+	}
+
+	/** Waits for the browser to approve a specific tool invocation. */
+	async requestToolApproval(toolName: string, parameters: unknown, signal?: AbortSignal): Promise<boolean> {
+		if (!this.negotiatedEvents.has("tool_approval")) return true;
+		const approvalId = randomUUID();
+		const requestId =
+			[...this.operations.values()].find((operation) => operation.status === "running")?.requestId ?? approvalId;
+		return await new Promise<boolean>((resolve, reject) => {
+			const abort = () => {
+				this.approvals.delete(approvalId);
+				reject(new Error("Tool approval cancelled."));
+			};
+			if (signal?.aborted) return abort();
+			signal?.addEventListener("abort", abort, { once: true });
+			this.approvals.set(approvalId, {
+				resolve: (approved) => {
+					signal?.removeEventListener("abort", abort);
+					resolve(approved);
+				},
+			});
+			this.emit({
+				version: RPC_PROTOCOL_VERSION,
+				kind: "event",
+				requestId,
+				sessionId: this.activeSessionId(),
+				sequence: ++this.sequence,
+				event: {
+					type: "tool_approval",
+					approvalId,
+					toolName,
+					arguments: typeof parameters === "object" && parameters !== null ? parameters : {},
+				},
+			});
+		});
 	}
 
 	private async runOperation(operation: StoredOperation, request: RpcRequest): Promise<RpcResponse> {

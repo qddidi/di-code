@@ -69,6 +69,24 @@ class DeferredSession implements RpcSession {
 }
 
 describe("RpcDispatcher", () => {
+	it("correlates a tool approval event with the approving RPC request", async () => {
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
+		const records: RpcServerMessage[] = [];
+		dispatcher.subscribe((record) => records.push(record));
+		await dispatcher.dispatch(request("capabilities", "get_capabilities", { events: ["tool_approval"] }));
+		const pending = dispatcher.requestToolApproval("write", { path: ".di-code/check.txt" });
+		const event = records.find((record) => record.kind === "event" && record.event.type === "tool_approval");
+		expect(event).toMatchObject({
+			kind: "event",
+			event: { toolName: "write", arguments: { path: ".di-code/check.txt" } },
+		});
+		if (!event || event.kind !== "event") throw new Error("Expected a tool approval event.");
+		const approvalId = (event.event as unknown as { readonly approvalId: string }).approvalId;
+		await dispatcher.dispatch(request("approve", "approve_tool", { approvalId, approved: true }));
+		await expect(pending).resolves.toBe(true);
+		await dispatcher.dispose();
+	});
+
 	it("tracks cancellable ProductHost changes and forwards redacted audit events", async () => {
 		const session = new DeferredSession();
 		const listeners = new Set<

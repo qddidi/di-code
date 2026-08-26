@@ -8,6 +8,7 @@ import {
 	providerRegistryKey,
 	runtimeSelectionKey,
 	sessionStoreRegistryKey,
+	type ToolApprovalCapability,
 	workspaceCapabilityKey,
 } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
@@ -68,6 +69,8 @@ export interface SessionHostBootstrapOptions {
 	readonly model?: Model;
 	readonly signal?: AbortSignal;
 	readonly compaction?: AgentSessionCompactionOptions;
+	/** Per-host approval boundary captured by each created AgentSession. */
+	readonly toolApproval?: ToolApprovalCapability;
 	/** Optional managed JSONL file to open before the host is returned. */
 	readonly initialSessionPath?: string;
 }
@@ -433,6 +436,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			sessionManager: manager,
 			externalTools: resources.externalTools,
 			compaction: options.compaction,
+			toolApproval: options.toolApproval,
 		});
 		if (!(created instanceof AgentSession))
 			throw new SessionHostError("INTERNAL", "SessionFactory returned an incompatible session.");

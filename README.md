@@ -532,7 +532,9 @@ npm run web:dev
 
 `npm run web:dev` 会以当前用户已有的 settings 启动 Web backend，再启动 Vite 并代理 API；退出时会清理两个子进程。生产静态资源随 `@di-code/coding-agent` tarball 的 `dist/web` 一起发布。静态文件只允许位于该目录内，带 hash 的 `assets/` 使用 immutable cache，其他 SPA 路径回退到 `index.html`，`/api` 与旧 HTTP/SSE 路由不会被 SPA fallback 接管。Web 应用只授权启动目录对应的真实 workspace，不支持远程 bind，也不创建第二套 Agent loop。
 
-Web 首页提供 DSH 风格的双栏 App Shell：桌面侧栏展示真实 workspace/session 快照，主区提供空状态和 composer 外壳；窄屏将侧栏收为导航抽屉。Settings overlay 当前只读显示 `/api/boot` 解析出的 Provider/model，并支持本地 Light/Dark/System 外观切换；不会写入 Provider 配置或 settings 文件。
+Web 首页提供 DSH 风格的双栏 App Shell：桌面侧栏可创建和打开受管 Session，主区从 `get_transcript`、runtime 和 usage 快照恢复对话，并通过 SSE 增量显示文本和 thinking。composer 支持输入法组合、拖放/粘贴或选择最多四张图片、运行中的 steer、cancel 和失败 turn retry；浏览器只保存 attachment handle 与本地预览，绝不显示服务端文件路径或 transport token。连接按 sequence 去重，断开后使用 `resumeToken` 和 `Last-Event-ID` 恢复；收到 `snapshot_required` 或刷新页面时完整重拉 snapshot，不会重放 prompt。窄屏将侧栏收为导航抽屉。Settings overlay 读取 `/api/boot` 解析出的 Provider/model，并支持本地 Light/Dark/System 外观切换；不会写入 Provider 配置或 settings 文件。
+
+对话区提供 `Chat`/`Trajectory` tabs。Trajectory 由真实 RPC 事件投影工具卡，覆盖 `read`、`write`、`edit`、`bash`、`glob`、`grep` 的 loading、success、error、cancelled、timeout 和 truncated 状态；edit 的 diff/patch、上下文文件和 compaction 事件可独立折叠查看。空闲时的 `Compact context` 操作调用当前 Session 的受限 `compact` RPC，生成或压缩期间会禁用它。工具参数和输出使用纯文本/code block 渲染，长输出限制在可滚动折叠区域。`ask` 权限模式下 Web actor 会通过 `tool_approval` 事件暂停工具，客户端必须以同一 `approvalId` 调用 `approve_tool`。
 
 ### WebUI HTTP/SSE
 

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, relative, resolve, sep } from "node:path";
+import type { ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
 import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "./rpc/protocol.ts";
@@ -10,7 +11,7 @@ import { createProductHost, type ProductHost } from "./runtime/product-host.ts";
 import { HostManager, type SessionActor, type SessionHostBootstrapOptions } from "./runtime/session-host.ts";
 import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 
-export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal"> {
+export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal" | "toolApproval"> {
 	readonly context: Context;
 	readonly allowedRoot: string;
 	readonly host?: string;
@@ -410,10 +411,26 @@ export class WebUiServer {
 		if (!dispatcher) {
 			const hostOptions = this.hostOptions(client.principal, allowed);
 			const startupConfiguration = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
+			const permissionMode = startupConfiguration.permissionMode ?? "ask";
+			let requestApproval:
+				| ((toolName: string, parameters: unknown, signal?: AbortSignal) => Promise<boolean>)
+				| undefined;
+			const toolApproval: ToolApprovalCapability | undefined =
+				permissionMode === "ask"
+					? {
+							request: async (toolName, parameters, signal) => {
+								if (!requestApproval) throw new Error("Tool approval is unavailable.");
+								if (!(await requestApproval(toolName, parameters, signal))) throw new Error("Tool approval denied.");
+							},
+						}
+					: permissionMode === "deny"
+						? { request: async () => Promise.reject(new Error("Tool approval denied.")) }
+						: undefined;
 			const actor = await this.hostManager.get({
 				...hostOptions,
 				principal: client.principal,
 				cwd: allowed,
+				...(toolApproval ? { toolApproval } : {}),
 			});
 			if (!actor.state().activeSession) await actor.createSession();
 			const product = createProductHost({
@@ -450,12 +467,24 @@ export class WebUiServer {
 				productHost: product,
 				attachmentStore: attachments,
 			});
-			await dispatcher.dispatch({
+			const actorDispatcher = dispatcher;
+			requestApproval = (toolName, parameters, signal) =>
+				actorDispatcher.requestToolApproval(toolName, parameters, signal);
+			await actorDispatcher.dispatch({
 				version: RPC_PROTOCOL_VERSION,
 				kind: "request",
 				id: `webui-capabilities:${randomUUID()}`,
 				method: "get_capabilities",
-				params: { events: ["sequence", "operation_update", "snapshot_required", "session_changed", "product_audit"] },
+				params: {
+					events: [
+						"sequence",
+						"operation_update",
+						"snapshot_required",
+						"session_changed",
+						"tool_approval",
+						"product_audit",
+					],
+				},
 			});
 			client.productHosts.set(allowed, product);
 			client.dispatchers.set(allowed, dispatcher);

@@ -611,7 +611,9 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 
 `npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
 
-Web SPA 的首页读取 `/api/boot`、`list_sessions` 和脱敏 `get_settings` 快照，提供双栏导航、空状态、composer 外壳、响应式侧栏，以及拆分为 General/Models 的 Settings overlay。配置中心只接受窄参数 RPC：Provider 登录/登出、自定义 Provider、默认 Provider/model、locale 和权限模式；环境变量托管字段只读显示，API key 不会出现在快照、事件或错误中。外观切换仅作用于浏览器本地页面。
+Web SPA 的首页读取 `/api/boot`、`list_sessions` 和脱敏 `get_settings` 快照，提供双栏导航、受管 Session 创建/打开、响应式侧栏，以及拆分为 General/Models 的 Settings overlay。对话 store 以 `get_state`、完整 transcript 和 usage snapshot 为权威，消费有序 SSE 来投影 streaming text、thinking、operation 与 usage；重连使用 resume token，收到 `snapshot_required` 或刷新后完整重拉，绝不静默重放 prompt。composer 支持输入法组合、拖放/粘贴/文件选择图片、最多四个 opaque attachment handle、运行时 steer、cancel 和失败 retry。浏览器内仅有预览 object URL；服务端路径、transport token、Provider key 不会出现在页面、事件或错误中。配置中心只接受窄参数 RPC：Provider 登录/登出、自定义 Provider、默认 Provider/model、locale 和权限模式；环境变量托管字段只读显示，API key 不会出现在快照、事件或错误中。外观切换仅作用于浏览器本地页面。
+
+对话区的 `Chat`/`Trajectory` tabs 直接消费 `tool_execution_start/end`、`compaction_*`、`usage_update` 和 `tool_approval` 事件。空闲时的 `Compact context` 控制项调用现有 `compact` RPC，生成或压缩期间会禁用。工具卡为 `read`、`write`、`edit`、`bash`、`glob`、`grep` 保留独立状态和折叠输出，edit 结果的 `details.diff/patch` 以纯文本代码块显示；长输出不会注入 HTML。`ask` 模式的审批使用服务端生成的 `approvalId`，浏览器通过 `approve_tool` 回传决定，不能绕过 Agent 的工具校验。
 
 `di-code-webui` 是给自定义或嵌入式 HTTP 客户端保留的 token header transport：
 
