@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ import {
 	readPackagePluginManifest,
 	resolvePackagePluginExport,
 	topologicallySortEntries,
+	verifyWebBundle,
 } from "../src/index.ts";
 import * as fixture from "./fixtures/namespace-plugin.ts";
 
@@ -24,6 +26,7 @@ describe("namespace plugin loader contract", () => {
 		const rootPath = fileURLToPath(root);
 		const manifest = await readPackagePluginManifest(rootPath);
 		expect(manifest.id).toBe("composition-plugin");
+		expect(manifest.web?.contributions[0]?.componentKey).toBe("builtin.workspace-status");
 		expect(await resolvePackagePluginExport(rootPath, manifest.entry)).toMatch(/plugin\.ts$/);
 	});
 	it("loads a published namespace package only through its declared export", async () => {
@@ -35,6 +38,34 @@ describe("namespace plugin loader contract", () => {
 	it("rejects missing package exports before import", async () => {
 		const rootPath = fileURLToPath(new URL("./fixtures/missing-export/", import.meta.url));
 		await expect(readPackagePluginManifest(rootPath)).rejects.toThrow(/not declared/iu);
+	});
+	it("verifies managed Web bundle source, hash, and CSP", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-web-bundle-"));
+		const bytes = Buffer.from("export const safe = true;", "utf8");
+		await writeFile(join(root, "bundle.js"), bytes);
+		const hash = createHash("sha256").update(bytes).digest("hex");
+		const manifest = {
+			apiVersion: 1 as const,
+			id: "web-bundle",
+			name: "web-bundle",
+			version: "1.0.0",
+			entry: "./plugin.js",
+			permissions: { filesystem: "none" as const, network: [], process: [] },
+			capabilities: { ui: true },
+			web: {
+				protocolVersion: 1 as const,
+				bundle: { source: "managed" as const, path: "bundle.js", sha256: hash, csp: "default-src 'self'" },
+				contributions: [],
+			},
+		};
+		await expect(verifyWebBundle(root, manifest)).resolves.toBeUndefined();
+		await expect(
+			verifyWebBundle(root, {
+				...manifest,
+				web: { ...manifest.web, bundle: { ...manifest.web.bundle, sha256: "b".repeat(64) } },
+			}),
+		).rejects.toThrow(/sha256/iu);
+		await rm(root, { recursive: true, force: true });
 	});
 	it("loads a real namespace export fixture without a default", () => {
 		const definition = getPluginDefinition(fixture);

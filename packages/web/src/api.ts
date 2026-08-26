@@ -7,6 +7,7 @@ import type {
 	SessionsResult,
 	SettingsSnapshot,
 	SkillSummary,
+	WebManifest,
 } from "./types.ts";
 
 const CLIENT_ID_KEY = "di-code-web-client-id";
@@ -120,6 +121,10 @@ export async function loadMcpServers(): Promise<readonly McpServerSummary[]> {
 export async function loadPlugins(): Promise<readonly PluginSummary[]> {
 	const result = await callRpc<{ readonly plugins: readonly PluginSummary[] }>("list_plugins");
 	return result.plugins;
+}
+export async function loadWebContributions(): Promise<WebManifest> {
+	const result = await callRpc<{ readonly manifest: WebManifest }>("list_web_contributions");
+	return result.manifest;
 }
 export async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginSummary> {
 	const result = await callRpc<{ readonly plugin: PluginSummary }>("set_plugin_enabled", { pluginId, enabled });

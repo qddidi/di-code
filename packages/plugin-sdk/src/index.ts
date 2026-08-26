@@ -16,5 +16,20 @@ export type {
 	RuntimeEvent,
 	RuntimeMode,
 	ServiceKey,
+	WebBundleDeclaration,
+	WebContribution,
+	WebManifest,
+	WebSlotContribution,
+	WebSlotId,
 } from "@di-code/plugin-runtime";
-export { createServiceKey, isPluginStatus, isRuntimeEvent, isRuntimeMode } from "@di-code/plugin-runtime";
+export {
+	assertWebContribution,
+	createServiceKey,
+	isPluginStatus,
+	isRuntimeEvent,
+	isRuntimeMode,
+	validateWebContribution,
+	validateWebManifest,
+	WebSlotRegistry,
+	WebSlotRegistryError,
+} from "@di-code/plugin-runtime";

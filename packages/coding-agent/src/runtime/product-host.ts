@@ -3,7 +3,7 @@ import type { ModelApi, Provider } from "@di-code/ai";
 import { providerRegistryKey } from "@di-code/builtins";
 import type { McpManager } from "@di-code/mcp";
 import { ProjectTrustStore } from "@di-code/plugin-loader";
-import type { Context } from "@di-code/plugin-runtime";
+import type { Context, WebContribution, WebManifest } from "@di-code/plugin-runtime";
 import { addMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "../mcp/config.ts";
 import { mcpClientServiceKey, mcpConfigServiceKey } from "../mcp/entries.ts";
 import type { RpcContextFileInfo, RpcMcpServerInfo, RpcProviderSummary, RpcSettingsSnapshot } from "../rpc/protocol.ts";
@@ -102,6 +102,7 @@ export interface ProductHost {
 	readonly removeMcpServer: (serverId: string, scope: McpConfigScope, signal?: AbortSignal) => Promise<void>;
 	readonly reconnectMcpServer: (serverId: string, signal?: AbortSignal) => Promise<RpcMcpServerInfo>;
 	readonly listPlugins: () => Promise<readonly RpcPluginInfo[]>;
+	readonly getWebContributions: () => Promise<WebManifest>;
 	readonly setPluginEnabled: (pluginId: string, enabled: boolean, signal?: AbortSignal) => Promise<RpcPluginInfo>;
 	readonly subscribe: (listener: ProductHostListener) => () => void;
 	readonly dispose: () => Promise<void>;
@@ -114,6 +115,58 @@ export interface RpcPluginInfo {
 	readonly installedAt: string;
 	readonly capabilities: readonly string[];
 }
+
+const BUILTIN_WEB_MANIFEST = Object.freeze({
+	protocolVersion: 1,
+	bundle: Object.freeze({ source: "builtin", csp: "default-src 'self'" }),
+	contributions: Object.freeze([
+		{
+			id: "workspace-status",
+			slot: "app.sidebar",
+			version: 1,
+			order: 10,
+			capability: "ui",
+			componentKey: "builtin.workspace-status",
+			data: { label: "Workspace status" },
+		},
+		{
+			id: "session-inspector",
+			slot: "session.tree",
+			version: 1,
+			order: 10,
+			capability: "session.read",
+			componentKey: "builtin.session-inspector",
+			data: { label: "Session inspector" },
+		},
+		{
+			id: "assistant-badge",
+			slot: "conversation.node",
+			version: 1,
+			order: 10,
+			capability: "conversation.read",
+			componentKey: "builtin.assistant-badge",
+			data: { label: "Agent activity" },
+		},
+		{
+			id: "tool-audit",
+			slot: "conversation.tool",
+			version: 1,
+			order: 10,
+			capability: "conversation.read",
+			componentKey: "builtin.tool-audit",
+			data: { label: "Tool audit" },
+		},
+		{
+			id: "plugin-diagnostics",
+			slot: "settings.panel",
+			version: 1,
+			order: 10,
+			capability: "settings.read",
+			componentKey: "builtin.plugin-diagnostics",
+			data: { label: "Plugin diagnostics" },
+		},
+	] as const),
+}) satisfies WebManifest;
 
 const API_BY_PROVIDER: Readonly<Record<string, Exclude<ModelApi, "faux">>> = {
 	openai: "openai-responses",
@@ -281,6 +334,17 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			capabilities: Object.keys(plugin.manifest.capabilities).sort(),
 		}));
 	};
+	const getWebContributions = async (): Promise<WebManifest> => {
+		ensureOpen();
+		const manager = options.context.get(pluginManagerKey);
+		const contributions: WebContribution[] = [...BUILTIN_WEB_MANIFEST.contributions];
+		if (manager && projectTrusted) {
+			for (const plugin of await manager.list()) {
+				if (plugin.enabled && plugin.manifest.web) contributions.push(...plugin.manifest.web.contributions);
+			}
+		}
+		return { ...BUILTIN_WEB_MANIFEST, contributions: Object.freeze(contributions) };
+	};
 	return {
 		state: () => ({ projectTrusted }),
 		listProviders: () => {
@@ -393,6 +457,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		},
 		listMcpServers,
 		listPlugins,
+		getWebContributions,
 		setPluginEnabled: async (pluginId, enabled, signal) => {
 			ensureOpen();
 			throwIfAborted(signal);

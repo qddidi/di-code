@@ -366,6 +366,11 @@ export class RpcDispatcher {
 						method: "list_plugins",
 						plugins: await this.requireProduct().listPlugins(),
 					});
+				case "list_web_contributions":
+					return this.success(request.id, {
+						method: "list_web_contributions",
+						manifest: await this.requireProduct().getWebContributions(),
+					});
 				case "list_context_files":
 				case "list_mcp_servers":
 				case "login":

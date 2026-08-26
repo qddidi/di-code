@@ -15,9 +15,11 @@ interface SidebarProps {
 	readonly onDeleteSession: (id: string) => Promise<void>;
 	readonly onBranchSession: (id: string) => Promise<void>;
 	readonly onInspectSession: (id: string) => Promise<unknown>;
+	readonly webSlot?: React.ReactNode;
+	readonly sessionWebSlot?: React.ReactNode;
 }
 
-export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession, onRenameSession, onDeleteSession, onBranchSession, onInspectSession }: SidebarProps): React.JSX.Element {
+export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession, onRenameSession, onDeleteSession, onBranchSession, onInspectSession, webSlot, sessionWebSlot }: SidebarProps): React.JSX.Element {
 	return (
 		<aside className={`sidebar${collapsed ? " is-collapsed" : ""}`} aria-label="Workspace navigation">
 			<div className="sidebar-topline">
@@ -31,6 +33,8 @@ export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSetting
 					<button className="new-session" type="button" onClick={onNewSession}><MessageSquarePlus size={17} />New session<span className="shortcut">⌘ K</span></button>
 					<div className="session-heading"><span>Sessions</span><span className="session-count">{sessions.length}</span></div>
 					<SessionTree sessions={sessions} activeSessionId={activeSessionId} onOpen={onOpenSession} onRename={onRenameSession} onDelete={onDeleteSession} onBranch={onBranchSession} onInspect={onInspectSession} />
+					{sessionWebSlot ? <div className="web-slot-session-tree">{sessionWebSlot}</div> : null}
+					{webSlot ? <div className="web-slot-sidebar">{webSlot}</div> : null}
 					<div className="sidebar-footer"><button className="footer-button" type="button" onClick={onSettings}><Settings size={17} />Settings</button><button className="footer-button" type="button"><Folder size={17} />Workspace files</button></div>
 				</>
 			) : <div className="collapsed-actions"><IconButton label="New session" icon={MessageSquarePlus} onClick={onNewSession} /><IconButton label="Settings" icon={Settings} onClick={onSettings} /></div>}

@@ -1,7 +1,14 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import type { Context, Fiber, PluginDefinition } from "@di-code/plugin-runtime";
+import {
+	type Context,
+	type Fiber,
+	type PluginDefinition,
+	validateWebManifest,
+	type WebManifest,
+} from "@di-code/plugin-runtime";
 import { parse as parseYaml } from "yaml";
 
 export type PluginModule<Config = unknown> = {
@@ -26,6 +33,8 @@ export interface PluginManifest {
 	readonly entry: string;
 	readonly permissions: PluginPermissions;
 	readonly capabilities: PluginCapabilities;
+	/** Optional declaration-only Web contributions. The browser never imports this package entry. */
+	readonly web?: WebManifest;
 }
 
 export type PluginCapability = "filesystem" | "network" | "process" | "ui" | "credentials";
@@ -105,6 +114,13 @@ function parsePackagePluginManifest(value: unknown): PluginManifest {
 		entry,
 		permissions: parsePermissions(value.permissions),
 		capabilities: parseCapabilities(value.capabilities),
+		...(value.web === undefined
+			? {}
+			: validateWebManifest(value.web)
+				? { web: value.web }
+				: (() => {
+						throw new Error("plugin manifest web declaration is invalid");
+					})()),
 	};
 }
 
@@ -132,7 +148,23 @@ export async function readPackagePluginManifest(root: string): Promise<PluginMan
 		entry: entries[0],
 		permissions: diCode.permissions ?? { filesystem: "none", network: [], process: [] },
 		capabilities: diCode.capabilities,
+		web: diCode.web,
 	});
+}
+
+/** Verifies a managed Web bundle declaration before it can be installed. */
+export async function verifyWebBundle(root: string, manifest: PluginManifest): Promise<void> {
+	const bundle = manifest.web?.bundle;
+	if (!bundle || bundle.source !== "managed") return;
+	if (!bundle.path || !bundle.sha256 || !bundle.csp)
+		throw new Error("managed Web bundle requires path, sha256, and csp");
+	const target = resolve(root, bundle.path);
+	if (relative(resolve(root), target).startsWith("..") || isAbsolute(relative(resolve(root), target)))
+		throw new Error("Web bundle path must stay inside the plugin root");
+	const bytes = await readFile(target);
+	const digest = createHash("sha256").update(bytes).digest("hex");
+	if (digest !== bundle.sha256) throw new Error("Web bundle sha256 does not match manifest");
+	if (!bundle.csp.includes("default-src 'self'")) throw new Error("Web bundle CSP must include default-src 'self'");
 }
 
 function exportTarget(value: unknown): string | undefined {
@@ -720,6 +752,7 @@ export class PluginInstallManager {
 	}
 	private async installFromRoot(sourceRoot: string, source: string, temporaryRoot?: string): Promise<ManagedPlugin> {
 		const manifest = await readPackagePluginManifest(sourceRoot);
+		await verifyWebBundle(sourceRoot, manifest);
 		await resolvePackagePluginExport(sourceRoot, manifest.entry);
 		const destination = resolve(this.managedRoot, manifest.id);
 		assertManagedPath(destination, this.managedRoot);

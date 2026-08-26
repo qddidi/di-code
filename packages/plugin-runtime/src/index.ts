@@ -945,6 +945,7 @@ export function createFiber(context: Context, pluginName: string, id?: string): 
 }
 
 export * from "./contribution-registry.ts";
+export * from "./web-slots.ts";
 
 export async function activatePlugin<TConfig>(
 	context: Context,

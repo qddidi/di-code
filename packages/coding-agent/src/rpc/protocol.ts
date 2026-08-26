@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@di-code/ai";
+import { validateWebManifest } from "@di-code/plugin-runtime";
 import type { AgentSessionEvent } from "../core/session.ts";
 
 export const RPC_PROTOCOL_VERSION = 1 as const;
@@ -55,6 +56,7 @@ export const RPC_METHODS = [
 	"remove_mcp_server",
 	"reconnect_mcp_server",
 	"list_plugins",
+	"list_web_contributions",
 	"set_plugin_enabled",
 	"create_attachment",
 	"approve_tool",
@@ -593,6 +595,13 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 			return;
 		case "list_mcp_servers":
 			if (!Array.isArray(result.servers)) throw new RpcProtocolError("INVALID_REQUEST", "RPC MCP result is invalid.");
+			return;
+		case "list_web_contributions":
+			{
+				const manifest = objectRecord(result.manifest);
+				if (!manifest || !validateWebManifest(manifest))
+					throw new RpcProtocolError("INVALID_REQUEST", "RPC Web contribution manifest is invalid.");
+			}
 			return;
 		case "configure_mcp_server":
 		case "reconnect_mcp_server":

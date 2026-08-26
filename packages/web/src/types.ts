@@ -119,3 +119,24 @@ export interface PluginSummary {
 	readonly installedAt: string;
 	readonly capabilities: readonly string[];
 }
+
+export type WebSlotId = "app.sidebar" | "session.tree" | "conversation.node" | "conversation.tool" | "settings.panel";
+export interface WebContribution {
+	readonly id: string;
+	readonly slot: WebSlotId | string;
+	readonly version: 1;
+	readonly order?: number;
+	readonly capability?: string;
+	readonly componentKey: string;
+	readonly data?: Readonly<Record<string, string | number | boolean | null>>;
+}
+export interface WebManifest {
+	readonly protocolVersion: 1;
+	readonly bundle?: {
+		readonly source: "builtin" | "managed";
+		readonly path?: string;
+		readonly sha256?: string;
+		readonly csp?: string;
+	};
+	readonly contributions: readonly WebContribution[];
+}
