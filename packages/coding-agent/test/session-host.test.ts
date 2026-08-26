@@ -264,6 +264,33 @@ describe("SessionHost", () => {
 		}
 	});
 
+	it("supports opaque session inspection, rename, branch, and confirmed deletion", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-depth-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-depth-agent-"));
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		const runtime = await setup(root, agentDir, faux);
+		try {
+			const created = await runtime.host.createSession();
+			await runtime.host.prompt("hello");
+			const inspected = await runtime.host.inspectSession(created.id);
+			expect(inspected.readOnly).toBe(true);
+			expect(inspected.stats.messageCount).toBe(2);
+			await expect(runtime.host.renameSession(created.id, "Renamed")).resolves.toMatchObject({ label: "Renamed" });
+			const branch = await runtime.host.branchSession(created.id);
+			expect(branch.id).not.toBe(created.id);
+			await expect(runtime.host.deleteSession(created.id, "wrong")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+			await runtime.host.closeSession();
+			await runtime.host.deleteSession(created.id, created.id);
+			expect((await runtime.host.listSessions()).some((item) => item.id === created.id)).toBe(false);
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("retries a cancelled prompt by its original request ID", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-host-cancel-retry-"));
 		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-cancel-retry-agent-"));

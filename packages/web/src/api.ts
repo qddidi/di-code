@@ -85,3 +85,17 @@ export async function loadSettings(): Promise<SettingsSnapshot> {
 	);
 	return result.settings;
 }
+
+export async function renameSession(sessionId: string, label: string): Promise<void> {
+	await callRpc("rename_session", { sessionId, label });
+}
+export async function deleteSession(sessionId: string): Promise<void> {
+	await callRpc("delete_session", { sessionId, confirmation: sessionId });
+}
+export async function branchSession(sessionId: string, entryId?: string): Promise<void> {
+	await callRpc("branch_session", { sessionId, ...(entryId ? { entryId } : {}) });
+}
+export async function inspectSession(sessionId: string): Promise<unknown> {
+	const result = await callRpc<{ readonly snapshot: unknown }>("inspect_session", { sessionId });
+	return result.snapshot;
+}

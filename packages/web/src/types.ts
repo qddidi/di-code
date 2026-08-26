@@ -9,6 +9,7 @@ export interface SessionSummary {
 	readonly id: string;
 	readonly label: string;
 	readonly modifiedAt?: string;
+	readonly stats?: { readonly entryCount: number; readonly messageCount: number; readonly branchCount: number };
 }
 
 export interface RpcEnvelope<T> {

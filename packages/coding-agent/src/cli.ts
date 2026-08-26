@@ -7,7 +7,7 @@ export type CompositionProfile = OutputMode;
 export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
-	| { kind: "web"; port: number }
+	| { kind: "web"; port: number; workspaces?: readonly string[] }
 	| { kind: "observe"; action: "trace" | "dump-composition" }
 	| {
 			kind: "plugin";
@@ -311,12 +311,23 @@ function parseMcpArgs(args: readonly string[]): Extract<CliCommand, { kind: "mcp
 }
 
 function parseWebArgs(args: readonly string[]): Extract<CliCommand, { kind: "web" }> {
-	if (args.length === 0) return { kind: "web", port: 0 };
-	if (args.length !== 2 || args[0] !== "--port") throw new CliUsageError("Web command accepts only --port <0-65535>.");
-	const port = Number(args[1]);
+	let port = 0;
+	const workspaces: string[] = [];
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === "--port") {
+			const value = args[++index];
+			if (value === undefined) throw new CliUsageError("Option --port requires a value.");
+			port = Number(value);
+		} else if (arg === "--workspace") {
+			const value = args[++index];
+			if (!value?.trim()) throw new CliUsageError("Option --workspace requires a path.");
+			workspaces.push(value);
+		} else throw new CliUsageError("Web command accepts --port <0-65535> and --workspace <path>.");
+	}
 	if (!Number.isSafeInteger(port) || port < 0 || port > 65_535)
 		throw new CliUsageError("Option --port expects a TCP port from 0 to 65535.");
-	return { kind: "web", port };
+	return { kind: "web", port, ...(workspaces.length ? { workspaces } : {}) };
 }
 
 export function helpText(locale: Locale): string {

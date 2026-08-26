@@ -31,7 +31,7 @@ function App(): React.JSX.Element {
 	const busy = conversation.operation?.status === "queued" || conversation.operation?.status === "running";
 	const retryable = conversation.operation?.status === "failed" || conversation.operation?.status === "cancelled";
 	return <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
-		<Sidebar collapsed={sidebarCollapsed} sessions={conversation.sessions} activeSessionId={conversation.activeSessionId} onToggle={() => setSidebarCollapsed((value) => !value)} onNewSession={() => { void conversation.newSession(); }} onOpenSession={(id) => { void conversation.openSession(id); }} onSettings={() => setSettingsOpen(true)} />
+		<Sidebar collapsed={sidebarCollapsed} sessions={conversation.sessions} activeSessionId={conversation.activeSessionId} onToggle={() => setSidebarCollapsed((value) => !value)} onNewSession={() => { void conversation.newSession(); }} onOpenSession={(id) => { void conversation.openSession(id); }} onRenameSession={conversation.renameSession} onDeleteSession={conversation.deleteSession} onBranchSession={conversation.branchSession} onInspectSession={conversation.inspectSession} onSettings={() => setSettingsOpen(true)} />
 		<div className="main-column"><WorkspaceBar onToggleSidebar={() => setSidebarCollapsed((value) => !value)} onSettings={() => setSettingsOpen(true)} /><main className="main-content">
 			{bootError || conversation.error ? <div className="connection-banner" role="alert">{conversation.error ?? bootError}</div> : null}
 			{!conversation.connected && !conversation.error ? <div className="connection-state" role="status">Reconnecting to session events...</div> : null}

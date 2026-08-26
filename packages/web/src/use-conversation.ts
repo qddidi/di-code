@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { callRpc, eventHeaders, loadSessions, rememberClient, uploadAttachment } from "./api.ts";
+import {
+	branchSession,
+	callRpc,
+	deleteSession,
+	eventHeaders,
+	inspectSession,
+	loadSessions,
+	rememberClient,
+	renameSession,
+	uploadAttachment,
+} from "./api.ts";
 import type {
 	AttachmentInfo,
 	ContextFile,
@@ -41,6 +51,10 @@ export interface ConversationState {
 	readonly retry: () => Promise<void>;
 	readonly newSession: () => Promise<void>;
 	readonly openSession: (id: string) => Promise<void>;
+	readonly renameSession: (id: string, label: string) => Promise<void>;
+	readonly deleteSession: (id: string) => Promise<void>;
+	readonly branchSession: (id: string) => Promise<void>;
+	readonly inspectSession: (id: string) => Promise<unknown>;
 	readonly addFiles: (files: FileList | readonly File[]) => Promise<void>;
 	readonly removeAttachment: (id: string) => void;
 	readonly approveTool: (approvalId: string, approved: boolean) => Promise<void>;
@@ -482,6 +496,40 @@ export function useConversation(ready: boolean): ConversationState {
 		},
 		[refresh],
 	);
+	const rename = useCallback(
+		async (id: string, label: string) => {
+			try {
+				await renameSession(id, label);
+				await refresh();
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : "Unable to rename the session.");
+			}
+		},
+		[refresh],
+	);
+	const remove = useCallback(
+		async (id: string) => {
+			try {
+				await deleteSession(id);
+				await refresh();
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : "Unable to delete the session.");
+			}
+		},
+		[refresh],
+	);
+	const branch = useCallback(
+		async (id: string) => {
+			try {
+				await branchSession(id);
+				await refresh();
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : "Unable to branch the session.");
+			}
+		},
+		[refresh],
+	);
+	const inspect = useCallback(async (id: string) => await inspectSession(id), []);
 	const addFiles = useCallback(
 		async (files: FileList | readonly File[]) => {
 			const selected = Array.from(files).slice(0, Math.max(0, 4 - attachments.length));
@@ -529,6 +577,10 @@ export function useConversation(ready: boolean): ConversationState {
 		retry,
 		newSession,
 		openSession,
+		renameSession: rename,
+		deleteSession: remove,
+		branchSession: branch,
+		inspectSession: inspect,
 		addFiles,
 		removeAttachment: (id) =>
 			setAttachments((current) => {

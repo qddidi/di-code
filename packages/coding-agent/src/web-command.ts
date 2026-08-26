@@ -77,6 +77,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 		server = new WebUiServer({
 			context,
 			allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,
+			allowedWorkspaces: command.workspaces,
 			agentDir,
 			provider: runtime.provider,
 			model: runtime.model,

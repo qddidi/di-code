@@ -45,10 +45,7 @@ export function installAgentSessionFactory(context: Context): Disposer {
 
 	const unregister = factory.register((input) => {
 		const options = asCompositionSessionOptions(input);
-		const workspace = context.require(workspaceCapabilityKey);
-		if (options.allowedRoot !== workspace.allowedRoot) {
-			throw new Error("AgentSession allowedRoot must match the composition workspace capability.");
-		}
+		const workspace = { ...context.require(workspaceCapabilityKey), allowedRoot: options.allowedRoot };
 		const skillCatalog = createSkillCatalog(
 			(options.skills ?? []).map((skill) => ({
 				skill: {

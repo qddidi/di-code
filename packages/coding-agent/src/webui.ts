@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, relative, resolve, sep } from "node:path";
 import type { ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
+import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
 import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "./rpc/protocol.ts";
 import { createManagedAttachmentStore } from "./runtime/attachment-store.ts";
@@ -14,6 +15,8 @@ import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal" | "toolApproval"> {
 	readonly context: Context;
 	readonly allowedRoot: string;
+	/** Additional workspace roots explicitly authorized by the launcher. */
+	readonly allowedWorkspaces?: readonly string[];
 	readonly host?: string;
 	readonly port?: number;
 	readonly token?: string;
@@ -405,8 +408,18 @@ export class WebUiServer {
 	}
 	private async actor(client: ClientState, url: URL): Promise<{ actor: SessionActor; dispatcher: RpcDispatcher }> {
 		const requested = await realpath(resolve(url.searchParams.get("workspace") ?? this.options.allowedRoot));
-		const allowed = await realpath(resolve(this.options.allowedRoot));
-		if (requested !== allowed) throw new Error("Workspace is not authorized for this WebUI token.");
+		const configuredRoots = [this.options.allowedRoot, ...(this.options.allowedWorkspaces ?? [])];
+		const authorized = new Map<string, string>();
+		for (const root of configuredRoots) {
+			const real = await realpath(resolve(root));
+			authorized.set(real.toLowerCase(), real);
+		}
+		const allowed = authorized.get(requested.toLowerCase());
+		if (!allowed) throw new Error("Workspace is not authorized for this WebUI token.");
+		if (allowed.toLowerCase() !== (await realpath(resolve(this.options.allowedRoot))).toLowerCase()) {
+			const trusted = await createProjectTrustStore(resolve(this.options.agentDir, "trust.json")).get(allowed);
+			if (!trusted) throw new Error("Workspace is not trusted for this WebUI token.");
+		}
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
 			const hostOptions = this.hostOptions(client.principal, allowed);

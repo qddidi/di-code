@@ -35,6 +35,21 @@ export interface SessionInfo {
 	readonly cwd: string;
 	readonly label: string;
 	readonly modifiedAt?: number;
+	readonly stats?: SessionStats;
+}
+
+export interface SessionStats {
+	readonly entryCount: number;
+	readonly messageCount: number;
+	readonly branchCount: number;
+}
+
+export interface SessionSnapshot {
+	readonly session: SessionInfo;
+	readonly transcript: readonly Message[];
+	readonly tree: readonly SessionTreeNode[];
+	readonly stats: SessionStats;
+	readonly readOnly: true;
 }
 
 export interface SessionHostState {
@@ -80,6 +95,10 @@ export interface SessionHost {
 	readonly listSessions: () => Promise<readonly SessionInfo[]>;
 	readonly createSession: () => Promise<SessionInfo>;
 	readonly openSession: (sessionId: string) => Promise<SessionInfo>;
+	readonly inspectSession: (sessionId: string) => Promise<SessionSnapshot>;
+	readonly renameSession: (sessionId: string, label: string) => Promise<SessionInfo>;
+	readonly deleteSession: (sessionId: string, confirmation: string) => Promise<void>;
+	readonly branchSession: (sessionId?: string, entryId?: string) => Promise<SessionInfo>;
 	readonly closeSession: () => Promise<void>;
 	readonly prompt: (input: PromptInput | string, signal?: AbortSignal) => Promise<AssistantMessage>;
 	readonly promptWithImages: (
@@ -224,6 +243,19 @@ function messageText(message: import("@di-code/ai").Message): string {
 }
 
 function sessionLabel(manager: SessionManager): string {
+	for (const entry of [...manager.entries].reverse()) {
+		if (entry.type !== "plugin" || entry.pluginId !== "di-code.session-label") continue;
+		const data = entry.data;
+		if (
+			typeof data === "object" &&
+			data !== null &&
+			!Array.isArray(data) &&
+			typeof (data as Record<string, unknown>).label === "string"
+		) {
+			const label = (data as Record<string, unknown>).label as string;
+			if (label.trim()) return label;
+		}
+	}
 	const first = manager.entries.find((entry) => entry.type === "message" && entry.message.role === "user");
 	return first?.type === "message"
 		? messageText(first.message) || basename(manager.filePath, extname(manager.filePath))
@@ -400,7 +432,19 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		displayId: basename(manager.filePath, extname(manager.filePath)),
 		cwd: manager.header.cwd,
 		label: sessionLabel(manager),
+		modifiedAt: Date.parse(manager.header.timestamp),
+		stats: statsFor(manager),
 	});
+	const statsFor = (manager: SessionManager): SessionStats => {
+		const entries = manager.entries;
+		const parentIds = new Set(entries.map((entry) => entry.parentId));
+		return {
+			entryCount: entries.length,
+			messageCount: entries.filter((entry) => entry.type === "message").length,
+			branchCount: [...parentIds].filter((parent) => entries.filter((entry) => entry.parentId === parent).length > 1)
+				.length,
+		};
+	};
 	const retryState = (manager: SessionManager): FailedPrompt | undefined => {
 		for (const entry of [...manager.getBranch()].reverse()) {
 			if (
@@ -607,6 +651,83 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			if (!(manager instanceof SessionManager))
 				throw new SessionHostError("INTERNAL", "JSONL SessionStore returned an incompatible SessionManager.");
 			return await openManager(manager);
+		},
+		inspectSession: async (id) => {
+			ensureOpen();
+			const path = await findSessionPath(id);
+			const manager = await store.open(path);
+			if (!(manager instanceof SessionManager)) throw new SessionHostError("INTERNAL", "Invalid SessionManager.");
+			const info = infoFor(manager);
+			return {
+				session: info,
+				transcript: manager.messages,
+				tree: manager.getTree(),
+				stats: statsFor(manager),
+				readOnly: true,
+			};
+		},
+		renameSession: async (id, label) => {
+			ensureOpen();
+			assertIdle("rename a Session");
+			if (!label.trim() || label.length > 200) throw new SessionHostError("INVALID_INPUT", "Session label is invalid.");
+			const path = await findSessionPath(id);
+			const manager = await store.open(path);
+			if (!(manager instanceof SessionManager)) throw new SessionHostError("INTERNAL", "Invalid SessionManager.");
+			const active = sessions.get(asId(id));
+			const unlock = active ? undefined : await lockSession(path);
+			try {
+				await manager.appendPlugin({
+					pluginId: "di-code.session-label",
+					pluginVersion: "1",
+					schemaVersion: 1,
+					data: { label: label.trim() },
+				});
+			} finally {
+				if (unlock) await unlock();
+			}
+			const info = infoFor(manager);
+			const existing = sessions.get(asId(id));
+			if (existing) sessions.set(asId(id), { ...existing, info });
+			return info;
+		},
+		deleteSession: async (id, confirmation) => {
+			ensureOpen();
+			assertIdle("delete a Session");
+			if (confirmation !== id) throw new SessionHostError("INVALID_INPUT", "Session deletion requires confirmation.");
+			if (activeId === id) await api.closeSession();
+			const path = await findSessionPath(id);
+			const unlock = await lockSession(path);
+			try {
+				await unlink(path);
+			} finally {
+				await unlock();
+			}
+		},
+		branchSession: async (id, entryId) => {
+			ensureOpen();
+			assertIdle("branch a Session");
+			const sourceId = id ?? activeId;
+			if (!sourceId) throw new SessionHostError("NOT_FOUND", "No Session is open.");
+			const sourcePath = await findSessionPath(sourceId);
+			const source = await store.open(sourcePath);
+			if (!(source instanceof SessionManager)) throw new SessionHostError("INTERNAL", "Invalid SessionManager.");
+			const branch = await store.create({
+				filePath: join(
+					bootstrap.sessionDirectory,
+					`${new Date().toISOString().replaceAll(/[:.]/g, "-")}-${randomUUID()}.jsonl`,
+				),
+				cwd: bootstrap.workspace,
+				deferCreate: true,
+			});
+			if (!(branch instanceof SessionManager)) throw new SessionHostError("INTERNAL", "Invalid SessionManager.");
+			const selected = entryId ? source.getEntry(entryId) : undefined;
+			if (entryId && !selected) throw new SessionHostError("NOT_FOUND", "Session tree entry was not found.");
+			const messages = source
+				.getBranch(entryId ?? source.leafId)
+				.filter((entry) => entry.type === "message")
+				.map((entry) => entry.message);
+			for (const message of messages) await branch.appendMessage(message);
+			return await openManager(branch);
 		},
 		closeSession: async () => {
 			ensureOpen();

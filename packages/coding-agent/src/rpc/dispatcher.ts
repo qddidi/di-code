@@ -161,9 +161,11 @@ function errorCode(cause: unknown): RpcErrorCode {
 			code === "NOT_FOUND" ||
 			code === "CANCELLED" ||
 			code === "DISPOSED" ||
-			code === "INVALID_INPUT"
+			code === "INVALID_INPUT" ||
+			code === "SESSION_IN_USE" ||
+			code === "INVALID_WORKSPACE"
 		)
-			return code === "INVALID_INPUT" ? "INVALID_PARAMS" : code;
+			return code === "INVALID_INPUT" ? "INVALID_PARAMS" : (code as RpcErrorCode);
 	}
 	return "INTERNAL_ERROR";
 }
@@ -295,6 +297,14 @@ export class RpcDispatcher {
 					return this.newSession(request);
 				case "open_session":
 					return this.openSession(request);
+				case "inspect_session":
+					return this.inspectSession(request);
+				case "rename_session":
+					return this.renameSession(request);
+				case "delete_session":
+					return this.deleteSession(request);
+				case "branch_session":
+					return this.branchSession(request);
 				case "get_transcript":
 					return this.transcript(request);
 				case "get_tree":
@@ -815,22 +825,67 @@ export class RpcDispatcher {
 			method: "list_sessions",
 			sessions: await this.host()
 				.listSessions()
-				.then((items) => items.map(({ id, label, modifiedAt }) => ({ id, label, modifiedAt }))),
+				.then((items) =>
+					items.map(({ id, label, modifiedAt, stats }) => ({ id, label, modifiedAt, ...(stats ? { stats } : {}) })),
+				),
 		});
 	}
 	private async newSession(request: RpcRequest): Promise<RpcResponse> {
 		const session = await this.host().createSession();
 		return this.success(request.id, {
 			method: "new_session",
-			session: { id: session.id, label: session.label, modifiedAt: session.modifiedAt },
+			session: {
+				id: session.id,
+				label: session.label,
+				modifiedAt: session.modifiedAt,
+				...(session.stats ? { stats: session.stats } : {}),
+			},
 		});
 	}
 	private async openSession(request: RpcRequest): Promise<RpcResponse> {
 		const session = await this.host().openSession(request.params.sessionId as string);
 		return this.success(request.id, {
 			method: "open_session",
-			session: { id: session.id, label: session.label, modifiedAt: session.modifiedAt },
+			session: {
+				id: session.id,
+				label: session.label,
+				modifiedAt: session.modifiedAt,
+				...(session.stats ? { stats: session.stats } : {}),
+			},
 		});
+	}
+	private async inspectSession(request: RpcRequest): Promise<RpcResponse> {
+		const snapshot = await this.host().inspectSession(request.params.sessionId as string);
+		return this.success(request.id, {
+			method: "inspect_session",
+			snapshot: {
+				session: {
+					id: snapshot.session.id,
+					label: snapshot.session.label,
+					modifiedAt: snapshot.session.modifiedAt,
+					...(snapshot.session.stats ? { stats: snapshot.session.stats } : {}),
+				},
+				transcript: snapshot.transcript,
+				tree: snapshot.tree,
+				stats: snapshot.stats,
+				readOnly: true,
+			},
+		});
+	}
+	private async renameSession(request: RpcRequest): Promise<RpcResponse> {
+		const session = await this.host().renameSession(request.params.sessionId as string, request.params.label as string);
+		return this.success(request.id, { method: "rename_session", session });
+	}
+	private async deleteSession(request: RpcRequest): Promise<RpcResponse> {
+		await this.host().deleteSession(request.params.sessionId as string, request.params.confirmation as string);
+		return this.success(request.id, { method: "delete_session" });
+	}
+	private async branchSession(request: RpcRequest): Promise<RpcResponse> {
+		const session = await this.host().branchSession(
+			request.params.sessionId as string | undefined,
+			request.params.entryId as string | undefined,
+		);
+		return this.success(request.id, { method: "branch_session", session });
 	}
 	private operationState(operation: StoredOperation): OperationState {
 		return {
@@ -905,6 +960,10 @@ const RPC_METHODS_FOR_CAPABILITIES = [
 	"get_transcript",
 	"get_tree",
 	"navigate_tree",
+	"inspect_session",
+	"rename_session",
+	"delete_session",
+	"branch_session",
 	"prompt",
 	"steer",
 	"retry",

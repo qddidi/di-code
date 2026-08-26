@@ -17,6 +17,10 @@ export const RPC_METHODS = [
 	"list_sessions",
 	"new_session",
 	"open_session",
+	"inspect_session",
+	"rename_session",
+	"delete_session",
+	"branch_session",
 	"get_transcript",
 	"get_tree",
 	"navigate_tree",
@@ -156,6 +160,8 @@ export type RpcErrorCode =
 	| "NOT_FOUND"
 	| "CANCELLED"
 	| "DISPOSED"
+	| "SESSION_IN_USE"
+	| "INVALID_WORKSPACE"
 	| "UNAUTHORIZED"
 	| "INTERNAL_ERROR"
 	| "PROCESS_EXIT";
@@ -170,6 +176,8 @@ const RPC_ERROR_CODES: ReadonlySet<RpcErrorCode> = new Set([
 	"NOT_FOUND",
 	"CANCELLED",
 	"DISPOSED",
+	"SESSION_IN_USE",
+	"INVALID_WORKSPACE",
 	"UNAUTHORIZED",
 	"INTERNAL_ERROR",
 	"PROCESS_EXIT",
@@ -340,6 +348,9 @@ export function parseRpcRequest(line: string): RpcRequest {
 		case "cancel":
 		case "get_operation":
 		case "open_session":
+		case "inspect_session":
+		case "rename_session":
+		case "delete_session":
 		case "navigate_tree":
 		case "set_model":
 		case "logout":
@@ -350,15 +361,23 @@ export function parseRpcRequest(line: string): RpcRequest {
 					? "requestId"
 					: method === "open_session"
 						? "sessionId"
-						: method === "navigate_tree"
-							? "entryId"
-							: method === "set_model"
-								? "modelId"
-								: method === "logout"
-									? "providerId"
-									: "serverId",
+						: method === "inspect_session" || method === "rename_session" || method === "delete_session"
+							? "sessionId"
+							: method === "navigate_tree"
+								? "entryId"
+								: method === "set_model"
+									? "modelId"
+									: method === "logout"
+										? "providerId"
+										: "serverId",
 				id,
 			);
+			if (method === "rename_session") stringParam(params, "label", id);
+			if (method === "delete_session") stringParam(params, "confirmation", id);
+			break;
+		case "branch_session":
+			if (params.sessionId !== undefined) stringParam(params, "sessionId", id, true);
+			if (params.entryId !== undefined) stringParam(params, "entryId", id, true);
 			break;
 		case "set_runtime":
 			stringParam(params, "providerId", id);
@@ -550,7 +569,13 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 			return;
 		case "new_session":
 		case "open_session":
+		case "rename_session":
+		case "branch_session":
 			assertSessionInfo(result.session);
+			return;
+		case "inspect_session":
+			if (!objectRecord(result.snapshot))
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC Session snapshot is invalid.");
 			return;
 		case "list_providers":
 			if (!Array.isArray(result.providers))

@@ -1,6 +1,7 @@
-import { ChevronDown, Folder, MessageSquarePlus, PanelLeftClose, Search, Settings, Sparkles } from "lucide-react";
+import { ChevronDown, Folder, MessageSquarePlus, PanelLeftClose, Settings, Sparkles } from "lucide-react";
 import type { SessionSummary } from "../types.ts";
 import { IconButton } from "./IconButton.tsx";
+import { SessionTree } from "./SessionTree.tsx";
 
 interface SidebarProps {
 	readonly sessions: readonly SessionSummary[];
@@ -10,9 +11,13 @@ interface SidebarProps {
 	readonly activeSessionId?: string;
 	readonly onOpenSession: (id: string) => void;
 	readonly onSettings: () => void;
+	readonly onRenameSession: (id: string, label: string) => Promise<void>;
+	readonly onDeleteSession: (id: string) => Promise<void>;
+	readonly onBranchSession: (id: string) => Promise<void>;
+	readonly onInspectSession: (id: string) => Promise<unknown>;
 }
 
-export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession }: SidebarProps): React.JSX.Element {
+export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession, onRenameSession, onDeleteSession, onBranchSession, onInspectSession }: SidebarProps): React.JSX.Element {
 	return (
 		<aside className={`sidebar${collapsed ? " is-collapsed" : ""}`} aria-label="Workspace navigation">
 			<div className="sidebar-topline">
@@ -24,11 +29,8 @@ export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSetting
 				<>
 					<button className="workspace-switcher" type="button"><span className="workspace-avatar">W</span><span className="workspace-name">Workspace</span><ChevronDown size={16} /></button>
 					<button className="new-session" type="button" onClick={onNewSession}><MessageSquarePlus size={17} />New session<span className="shortcut">⌘ K</span></button>
-					<label className="session-search"><Search size={16} /><input aria-label="Search sessions" placeholder="Search sessions" /></label>
 					<div className="session-heading"><span>Sessions</span><span className="session-count">{sessions.length}</span></div>
-					<div className="session-tree" role="list" aria-label="Sessions">
-					{sessions.length === 0 ? <p className="tree-placeholder">Your sessions will appear here.</p> : sessions.map((session) => <button className={`session-item${session.id === activeSessionId ? " is-active" : ""}`} key={session.id} type="button" aria-current={session.id === activeSessionId ? "page" : undefined} onClick={() => onOpenSession(session.id)}><MessageSquarePlus size={15} /><span>{session.label || "Untitled session"}</span></button>)}
-					</div>
+					<SessionTree sessions={sessions} activeSessionId={activeSessionId} onOpen={onOpenSession} onRename={onRenameSession} onDelete={onDeleteSession} onBranch={onBranchSession} onInspect={onInspectSession} />
 					<div className="sidebar-footer"><button className="footer-button" type="button" onClick={onSettings}><Settings size={17} />Settings</button><button className="footer-button" type="button"><Folder size={17} />Workspace files</button></div>
 				</>
 			) : <div className="collapsed-actions"><IconButton label="New session" icon={MessageSquarePlus} onClick={onNewSession} /><IconButton label="Settings" icon={Settings} onClick={onSettings} /></div>}
