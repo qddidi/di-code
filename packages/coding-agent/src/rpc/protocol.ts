@@ -54,6 +54,8 @@ export const RPC_METHODS = [
 	"configure_mcp_server",
 	"remove_mcp_server",
 	"reconnect_mcp_server",
+	"list_plugins",
+	"set_plugin_enabled",
 	"create_attachment",
 	"approve_tool",
 ] as const;
@@ -440,6 +442,10 @@ export function parseRpcRequest(line: string): RpcRequest {
 		case "remove_mcp_server":
 			stringParam(params, "serverId", id);
 			if (params.scope !== undefined) stringParam(params, "scope", id, true);
+			break;
+		case "set_plugin_enabled":
+			stringParam(params, "pluginId", id);
+			booleanParam(params, "enabled", id);
 			break;
 		case "set_compaction_enabled":
 		case "set_project_trust":

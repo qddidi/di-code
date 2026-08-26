@@ -27,6 +27,16 @@ function App(): React.JSX.Element {
 	const [onboarding, setOnboarding] = useState(false);
 	const [tab, setTab] = useState<"chat" | "trajectory">("chat");
 	useEffect(() => { void loadSettings().then((value) => { setSettings(value); setOnboarding(value.providers.every((provider) => !provider.configured)); }).catch(() => undefined); }, []);
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent): void => {
+			const modifier = event.ctrlKey || event.metaKey;
+			if (modifier && event.key.toLowerCase() === "k") { event.preventDefault(); setSidebarCollapsed(false); }
+			if (modifier && event.key === ",") { event.preventDefault(); setSettingsOpen(true); }
+			if (event.key === "Escape" && settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [settingsOpen]);
 	if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
 	const busy = conversation.operation?.status === "queued" || conversation.operation?.status === "running";
 	const retryable = conversation.operation?.status === "failed" || conversation.operation?.status === "cancelled";

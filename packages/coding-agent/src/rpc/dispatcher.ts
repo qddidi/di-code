@@ -361,6 +361,11 @@ export class RpcDispatcher {
 					});
 				case "get_settings":
 					return this.success(request.id, { method: "get_settings", settings: this.requireProduct().getSettings() });
+				case "list_plugins":
+					return this.success(request.id, {
+						method: "list_plugins",
+						plugins: await this.requireProduct().listPlugins(),
+					});
 				case "list_context_files":
 				case "list_mcp_servers":
 				case "login":
@@ -374,6 +379,7 @@ export class RpcDispatcher {
 				case "configure_mcp_server":
 				case "remove_mcp_server":
 				case "reconnect_mcp_server":
+				case "set_plugin_enabled":
 					return this.failure(
 						request.id,
 						"METHOD_NOT_FOUND",
@@ -608,6 +614,17 @@ export class RpcDispatcher {
 						),
 					};
 					break;
+				case "set_plugin_enabled":
+					this.assertProductIdle();
+					result = {
+						method: "set_plugin_enabled",
+						plugin: await this.requireProduct().setPluginEnabled(
+							request.params.pluginId as string,
+							request.params.enabled as boolean,
+							operation.controller.signal,
+						),
+					};
+					break;
 				default:
 					return this.failure(request.id, "METHOD_NOT_FOUND", "RPC method is unavailable for this Host.");
 			}
@@ -754,6 +771,7 @@ export class RpcDispatcher {
 			"configure_mcp_server",
 			"remove_mcp_server",
 			"reconnect_mcp_server",
+			"set_plugin_enabled",
 		].includes(method);
 	}
 	private success(id: string, result: RpcSuccessResult): RpcResponse {

@@ -97,3 +97,25 @@ export interface SettingsSnapshot {
 	readonly permissionMode: "ask" | "allow" | "deny";
 	readonly sources: Readonly<Record<string, string>>;
 }
+
+export interface SkillSummary {
+	readonly name: string;
+	readonly description: string;
+	readonly scope: string;
+}
+export interface McpServerSummary {
+	readonly id: string;
+	readonly scope?: string;
+	readonly state: "configured" | "connected" | "failed" | "disconnected";
+	readonly tools: number;
+	readonly resources: number;
+	readonly prompts: number;
+	readonly diagnostic?: string;
+}
+export interface PluginSummary {
+	readonly id: string;
+	readonly version: string;
+	readonly enabled: boolean;
+	readonly installedAt: string;
+	readonly capabilities: readonly string[];
+}

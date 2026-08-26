@@ -1,4 +1,13 @@
-import type { AttachmentInfo, BootData, RpcEnvelope, SessionsResult, SettingsSnapshot } from "./types.ts";
+import type {
+	AttachmentInfo,
+	BootData,
+	McpServerSummary,
+	PluginSummary,
+	RpcEnvelope,
+	SessionsResult,
+	SettingsSnapshot,
+	SkillSummary,
+} from "./types.ts";
 
 const CLIENT_ID_KEY = "di-code-web-client-id";
 
@@ -98,4 +107,25 @@ export async function branchSession(sessionId: string, entryId?: string): Promis
 export async function inspectSession(sessionId: string): Promise<unknown> {
 	const result = await callRpc<{ readonly snapshot: unknown }>("inspect_session", { sessionId });
 	return result.snapshot;
+}
+
+export async function loadSkills(): Promise<readonly SkillSummary[]> {
+	const result = await callRpc<{ readonly skills: readonly SkillSummary[] }>("list_skills");
+	return result.skills;
+}
+export async function loadMcpServers(): Promise<readonly McpServerSummary[]> {
+	const result = await callRpc<{ readonly servers: readonly McpServerSummary[] }>("list_mcp_servers");
+	return result.servers;
+}
+export async function loadPlugins(): Promise<readonly PluginSummary[]> {
+	const result = await callRpc<{ readonly plugins: readonly PluginSummary[] }>("list_plugins");
+	return result.plugins;
+}
+export async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginSummary> {
+	const result = await callRpc<{ readonly plugin: PluginSummary }>("set_plugin_enabled", { pluginId, enabled });
+	return result.plugin;
+}
+export async function setProjectTrust(trusted: boolean): Promise<boolean> {
+	const result = await callRpc<{ readonly trusted: boolean }>("set_project_trust", { trusted });
+	return result.trusted;
 }

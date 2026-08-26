@@ -18,6 +18,7 @@ import {
 	saveGlobalProviderApiKey,
 } from "../startup.ts";
 import { interactiveResourceServiceKey } from "./interactive-resource-service.ts";
+import { pluginManagerKey } from "./plugin-manager-entry.ts";
 
 export interface ProductHostOptions {
 	readonly context: Context;
@@ -100,8 +101,18 @@ export interface ProductHost {
 	) => Promise<RpcMcpServerInfo>;
 	readonly removeMcpServer: (serverId: string, scope: McpConfigScope, signal?: AbortSignal) => Promise<void>;
 	readonly reconnectMcpServer: (serverId: string, signal?: AbortSignal) => Promise<RpcMcpServerInfo>;
+	readonly listPlugins: () => Promise<readonly RpcPluginInfo[]>;
+	readonly setPluginEnabled: (pluginId: string, enabled: boolean, signal?: AbortSignal) => Promise<RpcPluginInfo>;
 	readonly subscribe: (listener: ProductHostListener) => () => void;
 	readonly dispose: () => Promise<void>;
+}
+
+export interface RpcPluginInfo {
+	readonly id: string;
+	readonly version: string;
+	readonly enabled: boolean;
+	readonly installedAt: string;
+	readonly capabilities: readonly string[];
 }
 
 const API_BY_PROVIDER: Readonly<Record<string, Exclude<ModelApi, "faux">>> = {
@@ -258,6 +269,18 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		throwIfAborted(signal);
 		return result;
 	};
+	const listPlugins = async (): Promise<readonly RpcPluginInfo[]> => {
+		ensureOpen();
+		const manager = options.context.get(pluginManagerKey);
+		if (!manager) return [];
+		return (await manager.list()).map((plugin) => ({
+			id: plugin.id,
+			version: plugin.manifest.version,
+			enabled: plugin.enabled,
+			installedAt: plugin.installedAt,
+			capabilities: Object.keys(plugin.manifest.capabilities).sort(),
+		}));
+	};
 	return {
 		state: () => ({ projectTrusted }),
 		listProviders: () => {
@@ -369,6 +392,37 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			return result;
 		},
 		listMcpServers,
+		listPlugins,
+		setPluginEnabled: async (pluginId, enabled, signal) => {
+			ensureOpen();
+			throwIfAborted(signal);
+			const manager = options.context.get(pluginManagerKey);
+			if (!manager) throw new Error("Plugin manager is unavailable.");
+			const plugin = enabled
+				? await manager.execute({
+						action: "enable",
+						argument: pluginId,
+						stdout: () => undefined,
+						stderr: () => undefined,
+					})
+				: await manager.execute({
+						action: "disable",
+						argument: pluginId,
+						stdout: () => undefined,
+						stderr: () => undefined,
+					});
+			if (plugin !== 0) throw new Error(`Unable to ${enabled ? "enable" : "disable"} plugin.`);
+			throwIfAborted(signal);
+			const updated = (await manager.list()).find((item) => item.id === pluginId);
+			if (!updated) throw new Error(`Unknown plugin: ${pluginId}`);
+			return {
+				id: updated.id,
+				version: updated.manifest.version,
+				enabled: updated.enabled,
+				installedAt: updated.installedAt,
+				capabilities: Object.keys(updated.manifest.capabilities).sort(),
+			};
+		},
 		configureMcpServer: async (input, signal) => {
 			ensureOpen();
 			throwIfAborted(signal);

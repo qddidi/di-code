@@ -665,3 +665,4 @@ WebUI 不是沙箱。认证客户端能触发当前 workspace 内的文件和 sh
 - 插件详细指南：[GitHub 上的《插件使用指南》](https://github.com/qddidi/di-code/blob/main/docs/%E6%8F%92%E4%BB%B6%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)
 - 问题反馈：<https://github.com/qddidi/di-code/issues>
 - 许可证：[MIT](https://github.com/qddidi/di-code/blob/main/LICENSE)
+WebUI 高级设置通过 RPC v1 暴露 `list_plugins` 与可取消的 `set_plugin_enabled`；Skills、MCP、Trust 和配置快照沿用现有窄方法，不提供任意命令执行入口。插件权限仅用于声明和审计，Workspace trust 只影响项目本地 Skills、MCP 与 composition 加载。

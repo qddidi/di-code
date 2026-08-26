@@ -55,6 +55,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 - 版本化 JSONL RPC，可从其他进程并发查询状态、提交或取消提示，并关联流式事件。
 - 本地优先的 `di-code web` 同源 Web 应用，以及供嵌入式客户端使用的 `di-code-webui` HTTP/SSE 入口；两者都复用 RPC Dispatcher、SessionHost 和既有 Agent loop。
 - Web 配置中心读取同一份脱敏 settings 快照，支持 onboarding、General、Models、locale、thinking 和权限默认值；环境变量托管凭据只读显示，浏览器不能覆盖完整 settings JSON。
+- Web 设置中心还提供 Skills 目录、MCP Server 诊断与可取消重连、受管 Plugins 清单、浏览器本地 Agent Presets、Workspace Trust 影响范围和快捷键说明；插件启停与配置变更均通过窄 RPC，凭据不会进入浏览器或 preset。
 - 独立 orchestrator 包，通过公开 RPC SDK 监督 Coding Agent 子进程，不依赖其内部实现。
 
 ## 架构
