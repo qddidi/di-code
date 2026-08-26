@@ -122,6 +122,7 @@ di-code "检查当前项目的测试状态"
 | `defaultProvider` | 可选的默认 Provider；`/login` 自动更新，多个 Provider 时用于消除启动歧义 |
 | `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 和 `/model` 自动更新 |
 | `locale` | 仅用户全局 `~/.di-code/settings.json`：`en` 或 `zh-CN`；控制内置 CLI 与交互终端文案 |
+| `permissionMode` | 仅用户全局 settings：`ask`、`allow` 或 `deny`；作为后续 Session 的工具权限默认值 |
 | `api` | 接口类型：`openai-responses`、`openai-chat-completions` 或 `anthropic-messages` |
 | `baseUrl` | Provider 的接口地址，必须是绝对的 `http` 或 `https` URL |
 | `apiKey` | API key，推荐填写 `$ENV_VAR` 或 `${ENV_VAR}` |
@@ -610,7 +611,7 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 
 `npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
 
-Web SPA 的首页壳层读取 `/api/boot`、`list_sessions` 等现有 RPC 快照，提供双栏导航、空状态、composer 外壳、响应式侧栏和只读 Settings overlay；外观切换仅作用于浏览器本地页面，不修改 Provider/settings。
+Web SPA 的首页读取 `/api/boot`、`list_sessions` 和脱敏 `get_settings` 快照，提供双栏导航、空状态、composer 外壳、响应式侧栏，以及拆分为 General/Models 的 Settings overlay。配置中心只接受窄参数 RPC：Provider 登录/登出、自定义 Provider、默认 Provider/model、locale 和权限模式；环境变量托管字段只读显示，API key 不会出现在快照、事件或错误中。外观切换仅作用于浏览器本地页面。
 
 `di-code-webui` 是给自定义或嵌入式 HTTP 客户端保留的 token header transport：
 

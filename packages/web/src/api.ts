@@ -1,4 +1,4 @@
-import type { BootData, RpcEnvelope, SessionsResult } from "./types.ts";
+import type { BootData, RpcEnvelope, SessionsResult, SettingsSnapshot } from "./types.ts";
 
 async function fetchBoot(): Promise<Response> {
 	const response = await fetch("/api/boot", { credentials: "same-origin" });
@@ -30,4 +30,11 @@ export async function callRpc<T>(method: string, params: Record<string, unknown>
 
 export async function loadSessions(): Promise<SessionsResult> {
 	return callRpc<SessionsResult>("list_sessions");
+}
+
+export async function loadSettings(): Promise<SettingsSnapshot> {
+	const result = await callRpc<{ readonly method: "get_settings"; readonly settings: SettingsSnapshot }>(
+		"get_settings",
+	);
+	return result.settings;
 }

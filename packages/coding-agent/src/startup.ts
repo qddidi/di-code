@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,7 +40,10 @@ export interface StartupConfiguration {
 	/** User-level per-provider/model thinking-level preferences. */
 	readonly thinkingLevels?: ThinkingLevelPreferences;
 	readonly locale?: Locale;
+	readonly permissionMode?: PermissionMode;
 }
+
+export type PermissionMode = "ask" | "allow" | "deny";
 
 export interface StartupDefaults {
 	readonly providerId?: string;
@@ -78,6 +82,7 @@ interface SettingsFile {
 	readonly defaultModel?: string;
 	readonly thinkingLevels?: ThinkingLevelPreferences;
 	readonly locale?: Locale;
+	readonly permissionMode?: PermissionMode;
 	readonly providers: Record<
 		string,
 		{
@@ -380,12 +385,21 @@ function parseSettings(value: unknown, settingsPath: string): SettingsFile {
 	if (record.locale !== undefined && !isLocale(record.locale)) {
 		throw new Error(`${settingsPath}: locale must be "en" or "zh-CN"`);
 	}
+	if (
+		record.permissionMode !== undefined &&
+		record.permissionMode !== "ask" &&
+		record.permissionMode !== "allow" &&
+		record.permissionMode !== "deny"
+	) {
+		throw new Error(`${settingsPath}: permissionMode must be "ask", "allow", or "deny"`);
+	}
 	return {
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
 		...(thinkingLevels === undefined ? {} : { thinkingLevels }),
 		...(record.locale === undefined ? {} : { locale: record.locale }),
+		...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode }),
 	};
 }
 
@@ -453,7 +467,24 @@ function mergeSettings(
 		...(defaultModel === undefined ? {} : { defaultModel }),
 		...(globalSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: globalSettings.thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
+		...(globalSettings?.permissionMode === undefined ? {} : { permissionMode: globalSettings.permissionMode }),
 	};
+}
+
+async function writeSettingsFile(agentDir: string, settings: SettingsFile): Promise<void> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	const temporaryPath = `${settingsFilePath}.tmp-${randomUUID()}`;
+	try {
+		await writeFile(temporaryPath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+		await rename(temporaryPath, settingsFilePath);
+	} finally {
+		try {
+			await unlink(temporaryPath);
+		} catch {
+			// The temporary file was renamed or was never created.
+		}
+	}
 }
 
 /** Persists a user-level terminal language preference without changing project settings. */
@@ -466,9 +497,18 @@ export async function saveGlobalLocale(agentDir: string, locale: Locale): Promis
 		...(existingSettings?.defaultModel === undefined ? {} : { defaultModel: existingSettings.defaultModel }),
 		...(existingSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: existingSettings.thinkingLevels }),
 		locale,
+		...(existingSettings?.permissionMode === undefined ? {} : { permissionMode: existingSettings.permissionMode }),
 	};
-	await mkdir(agentDir, { recursive: true, mode: 0o700 });
-	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	await writeSettingsFile(agentDir, settings);
+}
+
+/** Persists the default permission mode; the active Session keeps its own runtime until next turn. */
+export async function saveGlobalPermissionMode(agentDir: string, permissionMode: PermissionMode): Promise<void> {
+	const settingsFilePath = join(agentDir, SETTINGS_FILE_NAME);
+	const existingSettings = await readSettingsFile(settingsFilePath, settingsFilePath);
+	if (permissionMode !== "ask" && permissionMode !== "allow" && permissionMode !== "deny")
+		throw new Error(`${settingsFilePath}: permissionMode must be "ask", "allow", or "deny"`);
+	await writeSettingsFile(agentDir, { ...mergeSettings(existingSettings, undefined), permissionMode });
 }
 
 export async function saveGlobalProviderApiKey(
@@ -487,8 +527,7 @@ export async function saveGlobalProviderApiKey(
 		defaultProvider: providerId,
 		...(modelId === undefined ? {} : { defaultModel: modelId }),
 	});
-	await mkdir(agentDir, { recursive: true, mode: 0o700 });
-	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	await writeSettingsFile(agentDir, settings);
 }
 
 /** Persists the interactive model selection without changing credentials or Provider configuration. */
@@ -502,8 +541,7 @@ export async function saveGlobalModelSelection(agentDir: string, providerId: str
 		defaultProvider: normalizedProviderId,
 		defaultModel: normalizedModelId,
 	});
-	await mkdir(agentDir, { recursive: true, mode: 0o700 });
-	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	await writeSettingsFile(agentDir, settings);
 }
 
 /** Persists a per-provider/model thinking preference in user settings. */
@@ -527,8 +565,7 @@ export async function saveGlobalThinkingLevel(
 			},
 		},
 	};
-	await mkdir(agentDir, { recursive: true, mode: 0o700 });
-	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	await writeSettingsFile(agentDir, settings);
 }
 
 /**
@@ -556,8 +593,7 @@ export async function saveGlobalCustomProvider(
 		defaultProvider: "custom",
 		defaultModel: configuration.models?.[0]?.id,
 	});
-	await mkdir(agentDir, { recursive: true, mode: 0o700 });
-	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	await writeSettingsFile(agentDir, settings);
 	return configuration;
 }
 
@@ -586,8 +622,9 @@ export async function removeGlobalProviderApiKey(agentDir: string, providerId: s
 			: { defaultModel: existingSettings.defaultModel }),
 		...(existingSettings.thinkingLevels === undefined ? {} : { thinkingLevels: existingSettings.thinkingLevels }),
 		...(existingSettings.locale === undefined ? {} : { locale: existingSettings.locale }),
+		...(existingSettings.permissionMode === undefined ? {} : { permissionMode: existingSettings.permissionMode }),
 	};
-	await writeFile(settingsFilePath, `${JSON.stringify(settings, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+	await writeSettingsFile(agentDir, settings);
 	return true;
 }
 

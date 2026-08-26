@@ -35,6 +35,12 @@ export const RPC_METHODS = [
 	"get_resources",
 	"get_product_state",
 	"list_providers",
+	"get_settings",
+	"set_default_provider",
+	"set_default_model",
+	"set_locale",
+	"set_permission_mode",
+	"configure_custom_provider",
 	"login",
 	"logout",
 	"get_project_trust",
@@ -96,6 +102,19 @@ export interface RpcProviderSummary {
 	readonly name: string;
 	readonly models: readonly { readonly id: string; readonly name: string; readonly input: readonly string[] }[];
 	readonly configured: boolean;
+}
+
+export interface RpcSettingsSnapshot {
+	readonly providers: readonly (RpcProviderSummary & {
+		readonly api: string;
+		readonly baseUrl?: string;
+		readonly apiKeySource: "environment" | "settings" | "missing";
+	})[];
+	readonly defaults: { readonly providerId?: string; readonly modelId?: string };
+	readonly runtime: { readonly providerId: string; readonly modelId: string; readonly thinkingLevel?: string };
+	readonly locale?: "en" | "zh-CN";
+	readonly permissionMode: "ask" | "allow" | "deny";
+	readonly sources: Readonly<Record<string, "environment" | "settings" | "default" | "runtime">>;
 }
 
 export interface RpcContextFileInfo {
@@ -345,6 +364,36 @@ export function parseRpcRequest(line: string): RpcRequest {
 			stringParam(params, "providerId", id);
 			stringParam(params, "modelId", id);
 			break;
+		case "set_default_provider":
+		case "set_default_model":
+		case "set_locale":
+		case "set_permission_mode":
+			stringParam(
+				params,
+				method === "set_default_provider"
+					? "providerId"
+					: method === "set_default_model"
+						? "modelId"
+						: method === "set_locale"
+							? "locale"
+							: "permissionMode",
+				id,
+			);
+			if (method === "set_locale" && params.locale !== "en" && params.locale !== "zh-CN")
+				throw new RpcProtocolError("INVALID_PARAMS", "locale must be en or zh-CN.", id);
+			if (
+				method === "set_permission_mode" &&
+				params.permissionMode !== "ask" &&
+				params.permissionMode !== "allow" &&
+				params.permissionMode !== "deny"
+			)
+				throw new RpcProtocolError("INVALID_PARAMS", "permissionMode must be ask, allow, or deny.", id);
+			break;
+		case "configure_custom_provider":
+			for (const name of ["api", "baseUrl", "apiKey", "modelId"]) stringParam(params, name, id);
+			if (!["openai-responses", "openai-chat-completions", "anthropic-messages"].includes(params.api as string))
+				throw new RpcProtocolError("INVALID_PARAMS", "Unsupported custom Provider API.", id);
+			break;
 		case "set_thinking_level":
 			if (
 				params.level !== undefined &&
@@ -527,6 +576,16 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 			return;
 		case "logout":
 		case "remove_mcp_server":
+			return;
+		case "get_settings":
+			if (!objectRecord(result.settings))
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC settings result is invalid.");
+			return;
+		case "set_default_provider":
+		case "set_default_model":
+		case "set_locale":
+		case "set_permission_mode":
+		case "configure_custom_provider":
 			return;
 	}
 }

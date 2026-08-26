@@ -348,10 +348,17 @@ export class RpcDispatcher {
 						method: "list_providers",
 						providers: this.productHost?.listProviders() ?? [],
 					});
+				case "get_settings":
+					return this.success(request.id, { method: "get_settings", settings: this.requireProduct().getSettings() });
 				case "list_context_files":
 				case "list_mcp_servers":
 				case "login":
 				case "logout":
+				case "set_default_provider":
+				case "set_default_model":
+				case "set_locale":
+				case "set_permission_mode":
+				case "configure_custom_provider":
 				case "set_project_trust":
 				case "configure_mcp_server":
 				case "remove_mcp_server":
@@ -468,6 +475,41 @@ export class RpcDispatcher {
 					this.assertProductIdle();
 					await this.requireProduct().logout(request.params.providerId as string, operation.controller.signal);
 					result = { method: "logout" };
+					break;
+				case "set_default_provider":
+					this.assertProductIdle();
+					await this.requireProduct().setDefaultProvider(request.params.providerId as string);
+					result = { method: "set_default_provider" };
+					break;
+				case "set_default_model":
+					this.assertProductIdle();
+					await this.requireProduct().setDefaultModel(request.params.modelId as string);
+					result = { method: "set_default_model" };
+					break;
+				case "set_locale":
+					this.assertProductIdle();
+					await this.requireProduct().setLocale(request.params.locale as "en" | "zh-CN");
+					result = { method: "set_locale" };
+					break;
+				case "set_permission_mode":
+					this.assertProductIdle();
+					await this.requireProduct().setPermissionMode(request.params.permissionMode as "ask" | "allow" | "deny");
+					result = { method: "set_permission_mode" };
+					break;
+				case "configure_custom_provider":
+					this.assertProductIdle();
+					result = {
+						method: "configure_custom_provider",
+						provider: await this.requireProduct().configureCustomProvider(
+							{
+								api: request.params.api as Exclude<import("@di-code/ai").ModelApi, "faux">,
+								baseUrl: request.params.baseUrl as string,
+								apiKey: request.params.apiKey as string,
+								modelId: request.params.modelId as string,
+							},
+							operation.controller.signal,
+						),
+					};
 					break;
 				case "set_project_trust": {
 					this.assertProductIdle();
@@ -649,6 +691,11 @@ export class RpcDispatcher {
 			"list_mcp_servers",
 			"login",
 			"logout",
+			"set_default_provider",
+			"set_default_model",
+			"set_locale",
+			"set_permission_mode",
+			"configure_custom_provider",
 			"set_project_trust",
 			"configure_mcp_server",
 			"remove_mcp_server",
@@ -831,6 +878,11 @@ const RPC_METHODS_FOR_CAPABILITIES = [
 	"get_resources",
 	"get_product_state",
 	"list_providers",
+	"get_settings",
+	"set_default_provider",
+	"set_default_model",
+	"set_locale",
+	"set_permission_mode",
 	"login",
 	"logout",
 	"get_project_trust",

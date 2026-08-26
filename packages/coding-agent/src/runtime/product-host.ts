@@ -6,11 +6,15 @@ import { ProjectTrustStore } from "@di-code/plugin-loader";
 import type { Context } from "@di-code/plugin-runtime";
 import { addMcpConfig, listMcpConfig, type McpConfigScope, removeMcpConfig } from "../mcp/config.ts";
 import { mcpClientServiceKey, mcpConfigServiceKey } from "../mcp/entries.ts";
-import type { RpcContextFileInfo, RpcMcpServerInfo, RpcProviderSummary } from "../rpc/protocol.ts";
+import type { RpcContextFileInfo, RpcMcpServerInfo, RpcProviderSummary, RpcSettingsSnapshot } from "../rpc/protocol.ts";
 import {
 	removeGlobalProviderApiKey,
 	resolveStartupRuntime,
 	type StartupConfiguration,
+	saveGlobalCustomProvider,
+	saveGlobalLocale,
+	saveGlobalModelSelection,
+	saveGlobalPermissionMode,
 	saveGlobalProviderApiKey,
 } from "../startup.ts";
 import { interactiveResourceServiceKey } from "./interactive-resource-service.ts";
@@ -22,10 +26,18 @@ export interface ProductHostOptions {
 	readonly projectTrusted: boolean;
 	/** Current runtime is included even when a test or embeddable host supplied it outside the registry. */
 	readonly provider?: Provider;
+	readonly model?: import("@di-code/ai").Model;
+	readonly runtimeSnapshot?: () => {
+		readonly providerId: string;
+		readonly modelId: string;
+		readonly thinkingLevel?: string;
+	};
 	/** Startup settings used to report whether each Provider is actually configured. */
 	readonly startupConfiguration?: StartupConfiguration;
 	/** Re-resolves settings and swaps an idle Session runtime after login/logout changes. */
-	readonly reloadRuntime?: () => Promise<void>;
+	readonly reloadRuntime?: () => Promise<StartupConfiguration | undefined>;
+	/** Re-reads persisted settings without replacing the active Session runtime. */
+	readonly reloadConfiguration?: () => Promise<StartupConfiguration>;
 	/** Refreshes the owning SessionHost after a trust or MCP configuration change. */
 	readonly refreshResources?: (projectTrusted?: boolean, signal?: AbortSignal) => Promise<void>;
 }
@@ -50,6 +62,20 @@ export type ProductHostListener = (event: ProductHostEvent) => void | Promise<vo
 export interface ProductHost {
 	readonly state: () => { readonly projectTrusted: boolean };
 	readonly listProviders: () => readonly RpcProviderSummary[];
+	readonly getSettings: () => RpcSettingsSnapshot;
+	readonly setDefaultProvider: (providerId: string) => Promise<void>;
+	readonly setDefaultModel: (modelId: string) => Promise<void>;
+	readonly setLocale: (locale: "en" | "zh-CN") => Promise<void>;
+	readonly setPermissionMode: (mode: "ask" | "allow" | "deny") => Promise<void>;
+	readonly configureCustomProvider: (
+		input: {
+			readonly api: Exclude<ModelApi, "faux">;
+			readonly baseUrl: string;
+			readonly apiKey: string;
+			readonly modelId: string;
+		},
+		signal?: AbortSignal,
+	) => Promise<RpcProviderSummary>;
 	readonly login: (
 		input: {
 			readonly providerId: string;
@@ -91,6 +117,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	let manager: McpManager | undefined;
 	let connected = new Map<string, { tools: number; resources: number; prompts: number }>();
 	let disposed = false;
+	let startupConfiguration = options.startupConfiguration;
 	const listeners = new Set<ProductHostListener>();
 	const trustStore = new ProjectTrustStore(join(options.agentDir, "trust.json"));
 	const registry = options.context.require(providerRegistryKey);
@@ -120,10 +147,56 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		models: provider.models.map((model) => ({ id: model.id, name: model.name, input: [...model.input] })),
 		configured: isProviderConfigured(provider.id),
 	});
+	const settingsSnapshot = (): RpcSettingsSnapshot => {
+		const configuration = startupConfiguration;
+		const runtime =
+			options.runtimeSnapshot?.() ??
+			(options.provider
+				? { providerId: options.provider.id, modelId: options.model?.id ?? options.provider.models[0]?.id ?? "" }
+				: undefined);
+		const providers = registry.snapshot().map(({ provider }) => provider);
+		const customProviders = (configuration?.providers ?? [])
+			.filter((provider) => !providers.some((item) => item.id === provider.id) && provider.models)
+			.map((provider) => ({ id: provider.id, name: provider.name ?? provider.id, models: provider.models ?? [] }));
+		const allProviders = [...providers, ...customProviders];
+		return {
+			providers: allProviders.map((provider) => {
+				const configured = configuration?.providers.find((item) => item.id === provider.id);
+				const key = configured?.apiKey;
+				const keySource = key?.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/)
+					? "environment"
+					: key
+						? "settings"
+						: "missing";
+				return {
+					...providerSummary(provider),
+					api: configured?.api ?? API_BY_PROVIDER[provider.id] ?? "",
+					...(configured?.baseUrl ? { baseUrl: configured.baseUrl } : {}),
+					apiKeySource: keySource,
+				};
+			}),
+			defaults: configuration?.defaults ?? {},
+			runtime: runtime ?? { providerId: "uninitialized", modelId: "uninitialized" },
+			...(configuration?.locale ? { locale: configuration.locale } : {}),
+			permissionMode: configuration?.permissionMode ?? "ask",
+			sources: {
+				provider: configuration?.environment.DI_CODE_PROVIDER ? "environment" : "settings",
+				model: configuration?.environment.DI_CODE_MODEL ? "environment" : "settings",
+				locale: configuration?.environment.DI_CODE_LOCALE
+					? "environment"
+					: configuration?.locale
+						? "settings"
+						: "default",
+				permissionMode: configuration?.permissionMode ? "settings" : "default",
+				runtime: "runtime",
+			},
+		};
+	};
 	const isProviderConfigured = (providerId: string): boolean => {
-		if (providerId === "faux" || options.provider?.id === providerId) return true;
+		if (providerId === "faux") return options.provider?.id === "faux";
+		if (options.provider?.id === providerId) return true;
 		try {
-			const configuration = options.startupConfiguration;
+			const configuration = startupConfiguration;
 			const configured = configuration?.providers.find((item) => item.id === providerId);
 			if (configuration && configured) {
 				resolveStartupRuntime(configuration.environment, [configured], {
@@ -189,10 +262,60 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		state: () => ({ projectTrusted }),
 		listProviders: () => {
 			const providers = registry.snapshot().map(({ provider }) => provider);
+			for (const configured of startupConfiguration?.providers ?? []) {
+				if (!providers.some((provider) => provider.id === configured.id) && configured.models)
+					providers.push({
+						id: configured.id,
+						name: configured.name ?? configured.id,
+						models: configured.models,
+					} as Provider);
+			}
 			const selectedProvider = options.provider;
 			if (selectedProvider && !providers.some((provider) => provider.id === selectedProvider.id))
 				providers.push(selectedProvider);
 			return providers.map(providerSummary);
+		},
+		configureCustomProvider: async (input, signal) => {
+			ensureOpen();
+			throwIfAborted(signal);
+			const configuration = await saveGlobalCustomProvider(options.agentDir, input);
+			throwIfAborted(signal);
+			startupConfiguration = (await options.reloadConfiguration?.()) ?? startupConfiguration;
+			return {
+				id: configuration.id,
+				name: configuration.name ?? configuration.id,
+				models: (configuration.models ?? []).map((model) => ({
+					id: model.id,
+					name: model.name,
+					input: [...model.input],
+				})),
+				configured: true,
+			};
+		},
+		getSettings: settingsSnapshot,
+		setDefaultProvider: async (providerId) => {
+			const currentProvider = startupConfiguration?.defaults?.providerId;
+			const current = currentProvider === providerId ? startupConfiguration?.defaults?.modelId : undefined;
+			await saveGlobalModelSelection(options.agentDir, providerId, current ?? registry.select(providerId).model.id);
+			const refreshed = await options.reloadConfiguration?.();
+			if (refreshed) startupConfiguration = refreshed;
+		},
+		setDefaultModel: async (modelId) => {
+			const providerId = startupConfiguration?.defaults?.providerId ?? options.provider?.id;
+			if (!providerId) throw new Error("A default Provider is required before selecting a model.");
+			await saveGlobalModelSelection(options.agentDir, providerId, modelId);
+			const refreshed = await options.reloadConfiguration?.();
+			if (refreshed) startupConfiguration = refreshed;
+		},
+		setLocale: async (locale) => {
+			await saveGlobalLocale(options.agentDir, locale);
+			const refreshed = await options.reloadConfiguration?.();
+			if (refreshed) startupConfiguration = refreshed;
+		},
+		setPermissionMode: async (mode) => {
+			await saveGlobalPermissionMode(options.agentDir, mode);
+			const refreshed = await options.reloadConfiguration?.();
+			if (refreshed) startupConfiguration = refreshed;
 		},
 		login: async (input, signal) => {
 			ensureOpen();
@@ -202,7 +325,8 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			if (!api) throw new Error("Provider login API is unavailable.");
 			await saveGlobalProviderApiKey(options.agentDir, input.providerId, api, input.apiKey, selection.model.id);
 			throwIfAborted(signal);
-			await options.reloadRuntime?.();
+			const refreshed = await options.reloadRuntime?.();
+			if (refreshed) startupConfiguration = refreshed;
 			throwIfAborted(signal);
 			emitAudit({ action: "login", target: input.providerId });
 			return providerSummary(selection.provider);
@@ -212,6 +336,8 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			throwIfAborted(signal);
 			await removeGlobalProviderApiKey(options.agentDir, providerId);
 			throwIfAborted(signal);
+			const refreshed = await options.reloadRuntime?.();
+			if (refreshed) startupConfiguration = refreshed;
 			emitAudit({ action: "logout", target: providerId });
 		},
 		getProjectTrust: () => projectTrusted,

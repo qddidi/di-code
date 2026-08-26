@@ -17,6 +17,7 @@ import {
 	type RpcProviderSummary,
 	type RpcRequest,
 	type RpcSessionState,
+	type RpcSettingsSnapshot,
 	type RpcSuccessResult,
 } from "./protocol.ts";
 
@@ -257,6 +258,37 @@ export class RpcClient {
 	async listProviders(): Promise<readonly RpcProviderSummary[]> {
 		const result = await this.send("list_providers", {});
 		return result.providers as readonly RpcProviderSummary[];
+	}
+
+	async getSettings(): Promise<RpcSettingsSnapshot> {
+		const result = await this.send("get_settings", {});
+		return result.settings as RpcSettingsSnapshot;
+	}
+
+	async setDefaultProvider(providerId: string): Promise<void> {
+		await this.send("set_default_provider", { providerId });
+	}
+
+	async setDefaultModel(modelId: string): Promise<void> {
+		await this.send("set_default_model", { modelId });
+	}
+
+	async setLocale(locale: "en" | "zh-CN"): Promise<void> {
+		await this.send("set_locale", { locale });
+	}
+
+	async setPermissionMode(permissionMode: "ask" | "allow" | "deny"): Promise<void> {
+		await this.send("set_permission_mode", { permissionMode });
+	}
+
+	async configureCustomProvider(input: {
+		readonly api: "openai-responses" | "openai-chat-completions" | "anthropic-messages";
+		readonly baseUrl: string;
+		readonly apiKey: string;
+		readonly modelId: string;
+	}): Promise<RpcProviderSummary> {
+		const result = await this.send("configure_custom_provider", input);
+		return result.provider as RpcProviderSummary;
 	}
 
 	async login(

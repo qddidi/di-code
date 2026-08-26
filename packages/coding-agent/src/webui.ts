@@ -422,12 +422,23 @@ export class WebUiServer {
 				agentDir: hostOptions.agentDir,
 				projectTrusted: this.options.projectTrusted ?? false,
 				provider: hostOptions.provider,
+				model: hostOptions.model,
+				runtimeSnapshot: () => {
+					const ui = actor.ui();
+					return {
+						providerId: ui.providerId,
+						modelId: ui.modelId,
+						...(ui.thinkingLevel ? { thinkingLevel: ui.thinkingLevel } : {}),
+					};
+				},
 				startupConfiguration,
 				reloadRuntime: async () => {
 					const refreshed = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
 					const runtime = resolveStartupRuntime(refreshed.environment, refreshed.providers, refreshed.defaults);
 					actor.setRuntimeValue(runtime.provider, runtime.model);
+					return refreshed;
 				},
+				reloadConfiguration: () => loadStartupConfiguration(allowed, process.env, this.options.agentDir),
 				refreshResources: (projectTrusted) => actor.refreshResources(projectTrusted),
 			});
 			const attachments = await createManagedAttachmentStore({

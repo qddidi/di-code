@@ -21,3 +21,20 @@ export interface SessionsResult {
 	readonly method: "list_sessions";
 	readonly sessions: readonly SessionSummary[];
 }
+
+export interface SettingsSnapshot {
+	readonly providers: readonly {
+		readonly id: string;
+		readonly name: string;
+		readonly models: readonly { readonly id: string; readonly name: string; readonly input: readonly string[] }[];
+		readonly configured: boolean;
+		readonly api: string;
+		readonly baseUrl?: string;
+		readonly apiKeySource: "environment" | "settings" | "missing";
+	}[];
+	readonly defaults: { readonly providerId?: string; readonly modelId?: string };
+	readonly runtime: { readonly providerId: string; readonly modelId: string; readonly thinkingLevel?: string };
+	readonly locale?: "en" | "zh-CN";
+	readonly permissionMode: "ask" | "allow" | "deny";
+	readonly sources: Readonly<Record<string, string>>;
+}
