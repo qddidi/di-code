@@ -365,7 +365,7 @@ export const MODEL_SOURCE: readonly Model[] = [
 		contextWindow: 1_000_000,
 		maxOutputTokens: 32_768,
 	}),
-	openAiModel("gpt-4", "GPT-4", { reasoning: false, input: ["text"], contextWindow: 8_192, maxOutputTokens: 8_192 }),
+	openAiModel("gpt-4", "GPT-4", { reasoning: false, input: ["text"], contextWindow: 8_192, maxOutputTokens: 4_096 }),
 	openAiModel("gpt-4-turbo", "GPT-4 Turbo", { reasoning: false, contextWindow: 128_000, maxOutputTokens: 4_096 }),
 	openAiModel("gpt-4.1", "GPT-4.1", { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 }),
 	openAiModel("gpt-4.1-mini", "GPT-4.1 mini", { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 }),
@@ -558,6 +558,9 @@ export function validateModelCatalog(models: readonly Model[]): Model[] {
 		}
 		validatePositiveInteger(model.contextWindow, "contextWindow", label);
 		validatePositiveInteger(model.maxOutputTokens, "maxOutputTokens", label);
+		if (model.maxOutputTokens >= model.contextWindow) {
+			throw new Error(`${label}.maxOutputTokens must be smaller than contextWindow`);
+		}
 		validateCost(model, label);
 		const key = `${provider}\u0000${id}`;
 		if (keys.has(key)) throw new Error(`${label} is duplicated`);

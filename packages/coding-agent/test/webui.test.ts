@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxProvider } from "@di-code/ai";
@@ -41,6 +41,7 @@ async function createServer(overrides: Partial<ConstructorParameters<typeof WebU
 	readonly baseUrl: string;
 	readonly token: string;
 	readonly agentDir: string;
+	readonly root: string;
 }> {
 	const root = await mkdtemp(join(tmpdir(), "di-code-webui-root-"));
 	const agentDir = await mkdtemp(join(tmpdir(), "di-code-webui-agent-"));
@@ -99,6 +100,7 @@ async function createServer(overrides: Partial<ConstructorParameters<typeof WebU
 		baseUrl: `http://${address.host}:${address.port}`,
 		token: "test-webui-token-which-is-at-least-32-characters",
 		agentDir,
+		root,
 	};
 }
 
@@ -201,6 +203,249 @@ describe("WebUiServer", () => {
 		});
 		expect(denied.status).toBe(400);
 		expect(await denied.text()).not.toContain(rootPath(baseUrl));
+	});
+
+	it("returns a safe Provider failure for WebUI clients to render and retry", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "failure", errorMessage: "Provider rejected the credential" }],
+		});
+		const { baseUrl, token } = await createServer({ provider: faux.provider, model: faux.model });
+		const response = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "provider-failure",
+				method: "prompt",
+				params: { message: "hello" },
+			}),
+		});
+
+		expect(await response.json()).toMatchObject({
+			ok: true,
+			result: {
+				method: "prompt",
+				message: { stopReason: "error", errorMessage: "Provider rejected the credential", content: [] },
+			},
+		});
+	});
+
+	it("reports each model's supported reasoning efforts in the settings snapshot", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const model = {
+			...faux.model,
+			id: "glm-5.3",
+			name: "GLM-5.3",
+			provider: "zhipu",
+			reasoning: true,
+			reasoningEfforts: ["low", "high", "max"] as const,
+			defaultReasoningEffort: "max" as const,
+		};
+		const provider = { ...faux.provider, id: "zhipu", name: "Zhipu", models: [model] };
+		const { baseUrl, token } = await createServer({ provider, model });
+		const response = await fetch(`${baseUrl}/rpc`, {
+			headers: headers(token),
+			method: "POST",
+			body: JSON.stringify({ version: 1, kind: "request", id: "settings", method: "get_settings", params: {} }),
+		});
+
+		expect(await response.json()).toMatchObject({
+			ok: true,
+			result: {
+				method: "get_settings",
+				settings: {
+					providers: [{ id: "zhipu", models: [{ id: "glm-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
+				},
+			},
+		});
+	});
+
+	it("persists a WebUI runtime change for new Sessions and terminal startup", async () => {
+		const { baseUrl, token, agentDir } = await createServer();
+		const change = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "runtime-change",
+				method: "set_runtime",
+				params: { providerId: "faux", modelId: "faux-model" },
+			}),
+		});
+		expect(change.status).toBe(200);
+		expect(await change.json()).toMatchObject({ ok: true, result: { method: "set_runtime" } });
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "faux",
+			defaultModel: "faux-model",
+		});
+		const settings = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({ version: 1, kind: "request", id: "runtime-settings", method: "get_settings", params: {} }),
+		});
+		expect(await settings.json()).toMatchObject({
+			ok: true,
+			result: { settings: { defaults: { providerId: "faux", modelId: "faux-model" } } },
+		});
+	});
+
+	it("applies a configured Custom provider to the active WebUI Session", async () => {
+		const { baseUrl, token } = await createServer();
+		const configure = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "configure-custom",
+				method: "configure_custom_provider",
+				params: {
+					api: "openai-chat-completions",
+					baseUrl: "https://custom.example/v1",
+					apiKey: "test-custom-key",
+					modelId: "custom-model",
+				},
+			}),
+		});
+		expect(await configure.json()).toMatchObject({
+			ok: true,
+			result: { method: "configure_custom_provider", provider: { id: "custom", models: [{ id: "custom-model" }] } },
+		});
+		const change = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "use-custom",
+				method: "set_runtime",
+				params: { providerId: "custom", modelId: "custom-model" },
+			}),
+		});
+		expect(await change.json()).toMatchObject({
+			ok: true,
+			result: { method: "set_runtime", model: { id: "custom-model", provider: "custom" } },
+		});
+		const runtime = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({ version: 1, kind: "request", id: "custom-runtime", method: "get_runtime", params: {} }),
+		});
+		expect(await runtime.json()).toMatchObject({
+			ok: true,
+			result: { method: "get_runtime", providerId: "custom", modelId: "custom-model" },
+		});
+	});
+
+	it("starts a new WebUI actor with the persisted model preference", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const alternate = { ...faux.model, id: "faux-alternate", name: "Faux alternate" };
+		const provider = { ...faux.provider, models: [faux.model, alternate] };
+		const { baseUrl, token } = await createServer({ provider, model: faux.model });
+		const firstClient = "runtime-preference-first";
+		const secondClient = "runtime-preference-second";
+		const change = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, firstClient),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "alternate-runtime",
+				method: "set_runtime",
+				params: { providerId: "faux", modelId: "faux-alternate" },
+			}),
+		});
+		expect(await change.json()).toMatchObject({ ok: true, result: { method: "set_runtime" } });
+		const settings = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, secondClient),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "new-actor-settings",
+				method: "get_settings",
+				params: {},
+			}),
+		});
+		expect(await settings.json()).toMatchObject({
+			ok: true,
+			result: { settings: { runtime: { providerId: "faux", modelId: "faux-alternate" } } },
+		});
+	});
+
+	it("persists a WebUI thinking-level change for the selected model", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const model = {
+			...faux.model,
+			reasoning: true,
+			reasoningEfforts: ["low", "high"] as const,
+			defaultReasoningEffort: "low" as const,
+		};
+		const provider = { ...faux.provider, models: [model] };
+		const { baseUrl, token, agentDir } = await createServer({ provider, model });
+		const change = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "thinking-change",
+				method: "set_thinking_level",
+				params: { level: "high" },
+			}),
+		});
+		expect(change.status).toBe(200);
+		expect(await change.json()).toMatchObject({ ok: true, result: { method: "set_thinking_level", level: "high" } });
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({
+			thinkingLevels: { faux: { "faux-model": "high" } },
+		});
+	});
+
+	it("persists WebUI runtime preferences in existing workspace settings", async () => {
+		const faux = createFauxProvider({ responses: [] });
+		const model = {
+			...faux.model,
+			reasoning: true,
+			reasoningEfforts: ["low", "high"] as const,
+			defaultReasoningEffort: "low" as const,
+		};
+		const provider = { ...faux.provider, models: [model] };
+		const { baseUrl, token, agentDir, root } = await createServer({ provider, model });
+		await mkdir(join(root, ".di-code"));
+		await writeFile(join(root, ".di-code", "settings.json"), JSON.stringify({ providers: {} }));
+
+		const runtime = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "workspace-runtime-change",
+				method: "set_runtime",
+				params: { providerId: "faux", modelId: "faux-model" },
+			}),
+		});
+		expect(await runtime.json()).toMatchObject({ ok: true, result: { method: "set_runtime" } });
+		const thinking = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "workspace-thinking-change",
+				method: "set_thinking_level",
+				params: { level: "high" },
+			}),
+		});
+		expect(await thinking.json()).toMatchObject({ ok: true, result: { method: "set_thinking_level", level: "high" } });
+		expect(JSON.parse(await readFile(join(root, ".di-code", "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "faux",
+			defaultModel: "faux-model",
+			thinkingLevels: { faux: { "faux-model": "high" } },
+		});
+		await expect(readFile(join(agentDir, "settings.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("enforces token and Origin checks, accepts bounded image attachments, and provides SSE resume credentials", async () => {

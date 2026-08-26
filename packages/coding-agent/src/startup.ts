@@ -37,7 +37,7 @@ export interface StartupConfiguration {
 	readonly environment: Environment;
 	readonly providers: readonly StartupProviderConfiguration[];
 	readonly defaults?: StartupDefaults;
-	/** User-level per-provider/model thinking-level preferences. */
+	/** Per-provider/model thinking-level preferences after workspace overrides. */
 	readonly thinkingLevels?: ThinkingLevelPreferences;
 	readonly locale?: Locale;
 	readonly permissionMode?: PermissionMode;
@@ -250,6 +250,16 @@ function parseModels(
 		if (chatCompletionsCompat !== undefined && typedApi !== "openai-chat-completions") {
 			throw new Error(`${settingsPath}: ${modelPath}.chatCompletionsCompat requires api "openai-chat-completions"`);
 		}
+		const contextWindow = positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000, settingsPath);
+		const maxOutputTokens = positiveInteger(
+			model.maxTokens ?? model.maxOutputTokens,
+			`${modelPath}.maxTokens`,
+			16_384,
+			settingsPath,
+		);
+		if (maxOutputTokens >= contextWindow) {
+			throw new Error(`${settingsPath}: ${modelPath}.maxTokens must be smaller than contextWindow`);
+		}
 		return {
 			id,
 			name: requiredString(model.name ?? id, `${modelPath}.name`, settingsPath),
@@ -265,13 +275,8 @@ function parseModels(
 			...(chatCompletionsCompat ? { chatCompletionsCompat } : {}),
 			...(model.cacheRetention === "long" ? { cacheRetention: "long" as const } : {}),
 			...(model.sessionAffinity === "codex" ? { sessionAffinity: "codex" as const } : {}),
-			contextWindow: positiveInteger(model.contextWindow, `${modelPath}.contextWindow`, 128_000, settingsPath),
-			maxOutputTokens: positiveInteger(
-				model.maxTokens ?? model.maxOutputTokens,
-				`${modelPath}.maxTokens`,
-				16_384,
-				settingsPath,
-			),
+			contextWindow,
+			maxOutputTokens,
 			cost: {
 				input: nonNegativeNumber(prices.input, `${modelPath}.cost.input`, 0, settingsPath) / 1_000_000,
 				output: nonNegativeNumber(prices.output, `${modelPath}.cost.output`, 0, settingsPath) / 1_000_000,
@@ -460,15 +465,29 @@ function mergeSettings(
 	const defaultModel =
 		projectSettings?.defaultModel ??
 		(projectSettings?.defaultProvider === undefined ? globalSettings?.defaultModel : undefined);
+	const thinkingLevels = mergeThinkingLevels(globalSettings?.thinkingLevels, projectSettings?.thinkingLevels);
 	const locale = globalSettings?.locale;
 	return {
 		providers,
 		...(defaultProvider === undefined ? {} : { defaultProvider }),
 		...(defaultModel === undefined ? {} : { defaultModel }),
-		...(globalSettings?.thinkingLevels === undefined ? {} : { thinkingLevels: globalSettings.thinkingLevels }),
+		...(thinkingLevels === undefined ? {} : { thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
 		...(globalSettings?.permissionMode === undefined ? {} : { permissionMode: globalSettings.permissionMode }),
 	};
+}
+
+function mergeThinkingLevels(
+	globalPreferences: ThinkingLevelPreferences | undefined,
+	workspacePreferences: ThinkingLevelPreferences | undefined,
+): ThinkingLevelPreferences | undefined {
+	if (globalPreferences === undefined && workspacePreferences === undefined) return undefined;
+	const result: Record<string, Record<string, ThinkingLevel>> = {};
+	for (const [providerId, models] of Object.entries(globalPreferences ?? {})) result[providerId] = { ...models };
+	for (const [providerId, models] of Object.entries(workspacePreferences ?? {})) {
+		result[providerId] = { ...result[providerId], ...models };
+	}
+	return result;
 }
 
 async function writeSettingsFile(agentDir: string, settings: SettingsFile): Promise<void> {
@@ -544,6 +563,32 @@ export async function saveGlobalModelSelection(agentDir: string, providerId: str
 	await writeSettingsFile(agentDir, settings);
 }
 
+/**
+ * Persists a runtime preference in an existing workspace settings file, falling back to user settings when the
+ * workspace has no settings file. This keeps an explicit WebUI selection aligned with startup resolution.
+ */
+export async function saveScopedModelSelection(
+	cwd: string,
+	agentDir: string,
+	providerId: string,
+	modelId: string,
+): Promise<void> {
+	const workspaceDir = join(cwd, ".di-code");
+	const workspacePath = join(cwd, SETTINGS_PATH);
+	const workspaceSettings = await readSettingsFile(workspacePath, SETTINGS_PATH);
+	if (workspaceSettings === undefined) {
+		await saveGlobalModelSelection(agentDir, providerId, modelId);
+		return;
+	}
+	const normalizedProviderId = requiredString(providerId, "providerId", SETTINGS_PATH);
+	const normalizedModelId = requiredString(modelId, "modelId", SETTINGS_PATH);
+	await writeSettingsFile(workspaceDir, {
+		...workspaceSettings,
+		defaultProvider: normalizedProviderId,
+		defaultModel: normalizedModelId,
+	});
+}
+
 /** Persists a per-provider/model thinking preference in user settings. */
 export async function saveGlobalThinkingLevel(
 	agentDir: string,
@@ -566,6 +611,35 @@ export async function saveGlobalThinkingLevel(
 		},
 	};
 	await writeSettingsFile(agentDir, settings);
+}
+
+/** Persists a thinking preference beside an existing workspace model selection, or in user settings as a fallback. */
+export async function saveScopedThinkingLevel(
+	cwd: string,
+	agentDir: string,
+	providerId: string,
+	modelId: string,
+	level: ThinkingLevel,
+): Promise<void> {
+	const workspaceDir = join(cwd, ".di-code");
+	const workspacePath = join(cwd, SETTINGS_PATH);
+	const workspaceSettings = await readSettingsFile(workspacePath, SETTINGS_PATH);
+	if (workspaceSettings === undefined) {
+		await saveGlobalThinkingLevel(agentDir, providerId, modelId, level);
+		return;
+	}
+	const normalizedProviderId = requiredString(providerId, "providerId", SETTINGS_PATH);
+	const normalizedModelId = requiredString(modelId, "modelId", SETTINGS_PATH);
+	await writeSettingsFile(workspaceDir, {
+		...workspaceSettings,
+		thinkingLevels: {
+			...(workspaceSettings.thinkingLevels ?? {}),
+			[normalizedProviderId]: {
+				...(workspaceSettings.thinkingLevels?.[normalizedProviderId] ?? {}),
+				[normalizedModelId]: level,
+			},
+		},
+	});
 }
 
 /**
@@ -865,6 +939,7 @@ export async function loadStartupConfiguration(
 		providers,
 		...(settings.thinkingLevels === undefined ? {} : { thinkingLevels: settings.thinkingLevels }),
 		...(locale === undefined ? {} : { locale }),
+		...(settings.permissionMode === undefined ? {} : { permissionMode: settings.permissionMode }),
 		...(defaults === undefined ? {} : { defaults }),
 	};
 }

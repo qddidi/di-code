@@ -10,7 +10,12 @@ import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerM
 import { createManagedAttachmentStore } from "./runtime/attachment-store.ts";
 import { createProductHost, type ProductHost } from "./runtime/product-host.ts";
 import { HostManager, type SessionActor, type SessionHostBootstrapOptions } from "./runtime/session-host.ts";
-import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
+import {
+	loadStartupConfiguration,
+	resolveStartupRuntime,
+	type StartupConfiguration,
+	type StartupRuntime,
+} from "./startup.ts";
 
 export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal" | "toolApproval"> {
 	readonly context: Context;
@@ -422,23 +427,20 @@ export class WebUiServer {
 		}
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
-			const hostOptions = this.hostOptions(client.principal, allowed);
 			const startupConfiguration = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
-			const permissionMode = startupConfiguration.permissionMode ?? "ask";
+			const hostOptions = this.hostOptions(client.principal, allowed, this.resolveActorRuntime(startupConfiguration));
+			let permissionMode = startupConfiguration.permissionMode ?? "ask";
 			let requestApproval:
 				| ((toolName: string, parameters: unknown, signal?: AbortSignal) => Promise<boolean>)
 				| undefined;
-			const toolApproval: ToolApprovalCapability | undefined =
-				permissionMode === "ask"
-					? {
-							request: async (toolName, parameters, signal) => {
-								if (!requestApproval) throw new Error("Tool approval is unavailable.");
-								if (!(await requestApproval(toolName, parameters, signal))) throw new Error("Tool approval denied.");
-							},
-						}
-					: permissionMode === "deny"
-						? { request: async () => Promise.reject(new Error("Tool approval denied.")) }
-						: undefined;
+			const toolApproval: ToolApprovalCapability = {
+				request: async (toolName, parameters, signal) => {
+					if (permissionMode === "allow") return;
+					if (permissionMode === "deny") throw new Error("Tool approval denied.");
+					if (!requestApproval) throw new Error("Tool approval is unavailable.");
+					if (!(await requestApproval(toolName, parameters, signal))) throw new Error("Tool approval denied.");
+				},
+			};
 			const actor = await this.hostManager.get({
 				...hostOptions,
 				principal: client.principal,
@@ -469,6 +471,9 @@ export class WebUiServer {
 					return refreshed;
 				},
 				reloadConfiguration: () => loadStartupConfiguration(allowed, process.env, this.options.agentDir),
+				onPermissionModeChange: (mode) => {
+					permissionMode = mode;
+				},
 				refreshResources: (projectTrusted) => actor.refreshResources(projectTrusted),
 			});
 			const attachments = await createManagedAttachmentStore({
@@ -509,7 +514,26 @@ export class WebUiServer {
 		});
 		return { actor, dispatcher };
 	}
-	private hostOptions(_principal: string, cwd: string): SessionHostBootstrapOptions {
+	private resolveActorRuntime(configuration: StartupConfiguration): StartupRuntime {
+		const initialProvider = this.options.provider;
+		const initialModel = this.options.model;
+		const providerId = configuration.environment.DI_CODE_PROVIDER?.trim() || configuration.defaults?.providerId;
+		const modelId =
+			configuration.environment.DI_CODE_MODEL?.trim() ||
+			(configuration.defaults?.providerId === providerId ? configuration.defaults?.modelId : undefined);
+		if (initialProvider && providerId === initialProvider.id && modelId) {
+			const model = initialProvider.models.find((candidate) => candidate.id === modelId);
+			if (model) return { provider: initialProvider, model };
+		}
+		try {
+			return resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
+		} catch {
+			// Embedders may inject a runtime without a corresponding settings file.
+			if (initialProvider && initialModel) return { provider: initialProvider, model: initialModel };
+			throw new Error("Provider is not configured.");
+		}
+	}
+	private hostOptions(_principal: string, cwd: string, runtime?: StartupRuntime): SessionHostBootstrapOptions {
 		return {
 			cwd,
 			// SessionHost uses the same durable root as TUI. Browser identity only
@@ -519,8 +543,8 @@ export class WebUiServer {
 			noSkills: this.options.noSkills,
 			noContextFiles: this.options.noContextFiles,
 			skillPaths: this.options.skillPaths,
-			provider: this.options.provider,
-			model: this.options.model,
+			provider: runtime?.provider ?? this.options.provider,
+			model: runtime?.model ?? this.options.model,
 			signal: this.options.signal,
 			compaction: this.options.compaction,
 		};

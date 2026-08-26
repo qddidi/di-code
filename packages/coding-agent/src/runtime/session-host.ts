@@ -841,8 +841,16 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		setRuntime: (providerId, modelId) => {
 			ensureOpen();
 			assertIdle("change runtime");
-			const selection = context.require(providerRegistryKey).select(providerId, modelId);
-			return api.setRuntimeValue(selection.provider, selection.model);
+			try {
+				const selection = context.require(providerRegistryKey).select(providerId, modelId);
+				return api.setRuntimeValue(selection.provider, selection.model);
+			} catch (cause) {
+				const provider = bootstrap.provider;
+				const model =
+					provider.id === providerId ? provider.models.find((candidate) => candidate.id === modelId) : undefined;
+				if (model) return api.setRuntimeValue(provider, model);
+				throw cause;
+			}
 		},
 		setRuntimeValue: (provider, model) => {
 			ensureOpen();

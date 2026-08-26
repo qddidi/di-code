@@ -1,17 +1,19 @@
-import { StrictMode, useEffect, useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { Composer } from "./components/Composer.tsx";
 import { EmptyState } from "./components/EmptyState.tsx";
-import { RuntimeControls } from "./components/RuntimeControls.tsx";
 import { SettingsOverlay } from "./components/SettingsOverlay.tsx";
 import { OnboardingPanel } from "./components/OnboardingPanel.tsx";
 import { Transcript } from "./components/Transcript.tsx";
-import { loadSettings, loadWebContributions } from "./api.ts";
+import { callRpc, loadSettings, loadWebContributions } from "./api.ts";
 import type { SettingsSnapshot, WebManifest } from "./types.ts";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { WorkspaceBar } from "./components/WorkspaceBar.tsx";
 import { ApprovalBar } from "./components/ApprovalBar.tsx";
 import { Trajectory } from "./components/Trajectory.tsx";
+import { LoadingSkeleton } from "./components/LoadingSkeleton.tsx";
+import { SessionLogOverlay } from "./components/SessionLogOverlay.tsx";
+import { Toast } from "./components/Toast.tsx";
 import { useBoot } from "./use-boot.ts";
 import { useConversation } from "./use-conversation.ts";
 import "./styles.css";
@@ -26,11 +28,23 @@ function App(): React.JSX.Element {
 	const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
 	const [settings, setSettings] = useState<SettingsSnapshot>();
 	const [onboarding, setOnboarding] = useState(false);
+	const [sessionLogOpen, setSessionLogOpen] = useState(false);
+	const [toast, setToast] = useState<string>();
 	const [tab, setTab] = useState<"chat" | "trajectory">("chat");
 	const [webManifest, setWebManifest] = useState<WebManifest>({ protocolVersion: 1, contributions: [] });
 	const webAbort = useMemo(() => new AbortController(), []);
 	const webActions = useMemo(() => ({ openSettings: () => setSettingsOpen(true), focusSession: (id: string) => { void conversation.openSession(id); } }), [conversation.openSession]);
 	const webHost = useMemo(() => createWebSlotHost(webManifest, webActions), [webManifest, webActions]);
+	const refreshSettings = useCallback(async (): Promise<SettingsSnapshot> => {
+		const value = await loadSettings();
+		setSettings(value);
+		setOnboarding(value.providers.every((provider) => !provider.configured));
+		return value;
+	}, []);
+	const updateSettings = useCallback(async (method: string, params: Record<string, unknown>): Promise<void> => {
+		await callRpc(method, params);
+		await refreshSettings();
+	}, [refreshSettings]);
 	useEffect(() => () => { webAbort.abort(); webHost.dispose(); }, [webAbort, webHost]);
 	useEffect(() => {
 		const refreshWebContributions = (): void => { void loadWebContributions().then(setWebManifest).catch(() => undefined); };
@@ -38,7 +52,21 @@ function App(): React.JSX.Element {
 		window.addEventListener("di-code-web-contributions-changed", refreshWebContributions);
 		return () => window.removeEventListener("di-code-web-contributions-changed", refreshWebContributions);
 	}, []);
-	useEffect(() => { void loadSettings().then((value) => { setSettings(value); setOnboarding(value.providers.every((provider) => !provider.configured)); }).catch(() => undefined); }, []);
+	useEffect(() => {
+		if (!data) return;
+		let active = true;
+		const load = async (attempt: number): Promise<void> => {
+			try {
+				await refreshSettings();
+			} catch {
+				if (active && attempt === 0) window.setTimeout(() => void load(1), 150);
+			}
+		};
+		void load(0);
+		return () => {
+			active = false;
+		};
+	}, [data, refreshSettings]);
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent): void => {
 			const modifier = event.ctrlKey || event.metaKey;
@@ -51,17 +79,59 @@ function App(): React.JSX.Element {
 	}, [settingsOpen]);
 	if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
 	const busy = conversation.operation?.status === "queued" || conversation.operation?.status === "running";
+	const waitingForResponse =
+		busy &&
+		conversation.operation?.kind !== "compact" &&
+		!conversation.messages.some((message) => message.role === "assistant" && message.status === "streaming");
 	const retryable = conversation.operation?.status === "failed" || conversation.operation?.status === "cancelled";
-	return <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+	const hero = conversation.messages.length === 0 && !busy;
+	const activeTitle = conversation.sessions.find((session) => session.id === conversation.activeSessionId)?.label;
+	const activeSession = conversation.sessions.find((session) => session.id === conversation.activeSessionId);
+	const runtimeProvider = settings?.providers.find((provider) => provider.id === settings.runtime.providerId);
+	const runtimeModel = runtimeProvider?.models.find((model) => model.id === settings?.runtime.modelId);
+	const runtimeOptions = runtimeProvider?.models.map((model) => ({ providerId: runtimeProvider.id, providerName: runtimeProvider.name, modelId: model.id, label: model.name })) ?? [];
+	const reasoningEfforts =
+		runtimeModel?.reasoningEfforts ??
+		(settings?.runtime.providerId === "zhipu" && ["glm-5.2", "glm-5.3"].includes(settings.runtime.modelId)
+			? (["low", "high", "max"] as const)
+			: []);
+	const modelLabel = `${settings?.runtime.modelId ?? data?.runtime.modelId ?? "Model"}${settings?.runtime.thinkingLevel ? ` ${settings.runtime.thinkingLevel[0]?.toUpperCase()}${settings.runtime.thinkingLevel.slice(1)}` : ""}`;
+	const setRuntime = async (providerId: string, modelId: string): Promise<void> => {
+		await updateSettings("set_runtime", { providerId, modelId });
+	};
+	const setPermissionMode = async (permissionMode: SettingsSnapshot["permissionMode"]): Promise<void> => {
+		setSettings((current) => current ? { ...current, permissionMode } : current);
+		try {
+			await updateSettings("set_permission_mode", { permissionMode });
+		} catch {
+			void refreshSettings();
+		}
+	};
+	const setThinkingLevel = async (level: "low" | "medium" | "high" | "max"): Promise<void> => {
+		await updateSettings("set_thinking_level", { level });
+	};
+	useEffect(() => {
+		const message = conversation.operation?.status === "failed" ? conversation.operation.error?.message : undefined;
+		if (!message) return;
+		setToast(message);
+		const timer = window.setTimeout(() => setToast((current) => (current === message ? undefined : current)), 5_000);
+		return () => window.clearTimeout(timer);
+	}, [conversation.operation?.error?.message, conversation.operation?.status]);
+	return <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${hero ? " is-hero" : " is-active"}`}>
 		<Sidebar collapsed={sidebarCollapsed} sessions={conversation.sessions} activeSessionId={conversation.activeSessionId} onToggle={() => setSidebarCollapsed((value) => !value)} onNewSession={() => { void conversation.newSession(); }} onOpenSession={(id) => { void conversation.openSession(id); }} onRenameSession={conversation.renameSession} onDeleteSession={conversation.deleteSession} onBranchSession={conversation.branchSession} onInspectSession={conversation.inspectSession} onSettings={() => setSettingsOpen(true)} webSlot={<WebSlot host={webHost} slot="app.sidebar" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} sessionWebSlot={<WebSlot host={webHost} slot="session.tree" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} />
-		<div className="main-column"><WorkspaceBar onToggleSidebar={() => setSidebarCollapsed((value) => !value)} onSettings={() => setSettingsOpen(true)} /><main className="main-content">
+		<div className="main-column">{!hero ? <WorkspaceBar title={activeTitle} onToggleSidebar={() => setSidebarCollapsed((value) => !value)} onSettings={() => setSettingsOpen(true)} onSessionLog={() => setSessionLogOpen(true)} /> : null}<main className={`main-content${hero ? " is-hero" : ""}`}>
 			{bootError || conversation.error ? <div className="connection-banner" role="alert">{conversation.error ?? bootError}</div> : null}
 			{!conversation.connected && !conversation.error ? <div className="connection-state" role="status">Reconnecting to session events...</div> : null}
-			{loading ? <div className="loading-state" aria-busy="true">Loading workspace...</div> : <><nav className="conversation-tabs" aria-label="Conversation views"><button type="button" className={tab === "chat" ? "is-selected" : ""} onClick={() => setTab("chat")}>Chat</button><button type="button" className={tab === "trajectory" ? "is-selected" : ""} onClick={() => setTab("trajectory")}>Trajectory{conversation.tools.length ? ` (${conversation.tools.length})` : ""}</button></nav>{tab === "chat" ? <>{conversation.messages.length === 0 ? <EmptyState /> : <Transcript messages={conversation.messages} canRetry={retryable} onRetry={() => { void conversation.retry(); }} webSlot={<WebSlot host={webHost} slot="conversation.node" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} />}</> : <Trajectory tools={conversation.tools} contextFiles={conversation.contextFiles} compaction={conversation.compaction} />}<WebSlot host={webHost} slot="conversation.tool" context={{ sessionId: conversation.activeSessionId, toolName: conversation.tools.at(-1)?.name, status: conversation.tools.at(-1)?.status }} actions={webActions} signal={webAbort.signal} /><ApprovalBar approvals={conversation.approvals} onApprove={(id, approved) => { void conversation.approveTool(id, approved); }} /><RuntimeControls operation={conversation.operation} usage={conversation.usage} onCancel={() => { void conversation.cancel(); }} onCompact={() => { void conversation.compact(); }} onRetry={() => { void conversation.retry(); }} /><Composer disabled={data === undefined} busy={busy} attachments={conversation.attachments} onAddFiles={conversation.addFiles} onRemoveAttachment={conversation.removeAttachment} onSend={conversation.send} onSteer={conversation.steer} onCancel={conversation.cancel} /></>}
+			{loading ? <LoadingSkeleton /> : <>{!hero ? <nav className="conversation-tabs" aria-label="Conversation views"><button type="button" className={tab === "chat" ? "is-selected" : ""} onClick={() => setTab("chat")}>Chat</button><button type="button" className={tab === "trajectory" ? "is-selected" : ""} onClick={() => setTab("trajectory")}>Trajectory{conversation.tools.length ? ` (${conversation.tools.length})` : ""}</button></nav> : null}{tab === "chat" ? <>{conversation.messages.length === 0 && !waitingForResponse ? <EmptyState /> : <Transcript messages={conversation.messages} waitingForResponse={waitingForResponse} canRetry={retryable} onRetry={() => { void conversation.retry(); }} onBranch={() => { if (conversation.activeSessionId) void conversation.branchSession(conversation.activeSessionId); }} webSlot={<WebSlot host={webHost} slot="conversation.node" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} />}</> : <Trajectory tools={conversation.tools} contextFiles={conversation.contextFiles} compaction={conversation.compaction} />}<WebSlot host={webHost} slot="conversation.tool" context={{ sessionId: conversation.activeSessionId, toolName: conversation.tools.at(-1)?.name, status: conversation.tools.at(-1)?.status }} actions={webActions} signal={webAbort.signal} /><ApprovalBar approvals={conversation.approvals} onApprove={(id, approved) => { void conversation.approveTool(id, approved); }} /><Composer disabled={data === undefined} busy={busy} hero={hero} modelLabel={modelLabel} activeRuntime={{ providerId: settings?.runtime.providerId ?? data?.runtime.providerId ?? "", modelId: settings?.runtime.modelId ?? data?.runtime.modelId ?? "" }} permissionMode={settings?.permissionMode ?? "ask"} thinkingLevel={settings?.runtime.thinkingLevel} reasoningEfforts={reasoningEfforts} retryable={retryable} runtimeOptions={runtimeOptions} usage={conversation.usage} attachments={conversation.attachments} onAddFiles={conversation.addFiles} onRemoveAttachment={conversation.removeAttachment} onSend={conversation.send} onSteer={conversation.steer} onCancel={conversation.cancel} onCompact={conversation.compact} onRetry={conversation.retry} onNewSession={() => { void conversation.newSession(); }} onOpenSettings={() => setSettingsOpen(true)} onSetRuntime={setRuntime} onSetPermissionMode={setPermissionMode} onSetThinkingLevel={setThinkingLevel} /></>}
 		</main></div>
-		<SettingsOverlay open={settingsOpen} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={setTheme} webSlot={<WebSlot host={webHost} slot="settings.panel" context={{}} actions={webActions} signal={webAbort.signal} />} />
+		<SettingsOverlay open={settingsOpen} settings={settings} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={setTheme} onSettingsUpdate={updateSettings} onSettingsRefresh={refreshSettings} webSlot={<WebSlot host={webHost} slot="settings.panel" context={{}} actions={webActions} signal={webAbort.signal} />} />
+		<SessionLogOverlay open={sessionLogOpen} session={activeSession} usage={conversation.usage} onClose={() => setSessionLogOpen(false)} />
+		<Toast message={toast} onClose={() => setToast(undefined)} />
 		{onboarding && settings ? <OnboardingPanel settings={settings} onComplete={() => { setOnboarding(false); void loadSettings().then(setSettings); }} /> : null}
 	</div>;
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+const container = document.getElementById("root")! as HTMLElement & { __diCodeRoot?: Root };
+const root = container.__diCodeRoot ?? createRoot(container);
+container.__diCodeRoot = root;
+root.render(<StrictMode><App /></StrictMode>);

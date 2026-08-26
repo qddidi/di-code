@@ -119,8 +119,9 @@ di-code "检查当前项目的测试状态"
 | 字段 | 作用 |
 | --- | --- |
 | `providers` | Provider 配置对象，key 是 Provider ID |
-| `defaultProvider` | 可选的默认 Provider；`/login` 自动更新，多个 Provider 时用于消除启动歧义 |
-| `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 和 `/model` 自动更新 |
+| `defaultProvider` | 可选的默认 Provider；`/login` 自动更新，多个 Provider 时用于消除启动歧义；项目值优先于用户级值 |
+| `defaultModel` | `defaultProvider` 的可选默认模型；`/login` 和 `/model` 自动更新；项目值优先于用户级值 |
+| `thinkingLevels` | 按 Provider 和模型保存的推理强度；项目值优先于同一用户级偏好 |
 | `locale` | 仅用户全局 `~/.di-code/settings.json`：`en` 或 `zh-CN`；控制内置 CLI 与交互终端文案 |
 | `permissionMode` | 仅用户全局 settings：`ask`、`allow` 或 `deny`；作为后续 Session 的工具权限默认值 |
 | `api` | 接口类型：`openai-responses`、`openai-chat-completions` 或 `anthropic-messages` |
@@ -131,7 +132,7 @@ di-code "检查当前项目的测试状态"
 | `models[].input` | 输入类型，填写 `text`、`image` 或两者 |
 | `models[].reasoning` | 是否支持 reasoning/thinking 内容 |
 | `models[].contextWindow` | 上下文 token 上限 |
-| `models[].maxTokens` | 单次最大输出 token 数 |
+| `models[].maxTokens` | 单次最大输出 token 数，必须小于 `contextWindow`，以保留输入空间 |
 
 `models` 可以配置多个模型，运行时用 `/model` 切换，或者修改 `DI_CODE_MODEL`：
 
@@ -311,7 +312,7 @@ di-code --continue "继续上一次工作"
 
 ### 会话
 
-交互式启动默认会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 创建 v2 JSONL 会话。记录为 append-only（只追加）格式，可引用任意已提交父节点，因此一份文件可以保存多个分支；重启默认恢复物理文件末端记录所在的分支。`/tree` 只在 interactive 模式提供专用树浏览器：以紧凑单栏树显示节点摘要和当前路径，当前选择以 `›` 标识；选择用户消息会将其文本恢复到编辑器，并从它的父节点创建新的 sibling 分支；选择 assistant、tool result 或 summary 则将该节点作为活动叶节点。`s` 会在所选路径上执行现有上下文压缩，成功后的 summary 成为下一条 prompt 的分支父节点；没有有效压缩切点时会明确失败。图片附件不会自动恢复，导航只改变模型可见上下文，不能回滚工作区副作用。v1 或未知版本的会话文件不迁移，打开时返回 `UNSUPPORTED_VERSION`。完整磁盘历史和发送给模型的压缩上下文分开保存，summary 只作用于其所在分支。`/session` 与 `--continue` 只显示或恢复当前工作区的默认会话；`--session` 可以打开任意指定路径。已有项目内 `.di-code/sessions/` 文件不会自动移动，仍可用 `--session <path>` 显式打开。
+交互式启动默认会在用户目录 `~/.di-code/sessions/<工作区哈希>/` 创建 v2 JSONL 会话。记录为 append-only（只追加）格式，可引用任意已提交父节点，因此一份文件可以保存多个分支；重启默认恢复物理文件末端记录所在的分支。`/tree` 只在 interactive 模式提供专用树浏览器：以紧凑单栏树显示节点摘要和当前路径，当前选择以 `›` 标识；选择用户消息会将其文本恢复到编辑器，并从它的父节点创建新的 sibling 分支；选择 assistant、tool result 或 summary 则将该节点作为活动叶节点。`s` 会在所选路径上执行现有上下文压缩，成功后的 summary 成为下一条 prompt 的分支父节点；手动压缩在“保留最近 token”配置覆盖整段历史时仍会保留最新完整用户回合并压缩更早历史，只有没有可压缩的早期回合时才会明确失败。图片附件不会自动恢复，导航只改变模型可见上下文，不能回滚工作区副作用。v1 或未知版本的会话文件不迁移，打开时返回 `UNSUPPORTED_VERSION`。完整磁盘历史和发送给模型的压缩上下文分开保存，summary 只作用于其所在分支。`/session` 与 `--continue` 只显示或恢复当前工作区的默认会话；`--session` 可以打开任意指定路径。已有项目内 `.di-code/sessions/` 文件不会自动移动，仍可用 `--session <path>` 显式打开。
 
 产品 interactive 与 RPC 会话都由 Composition 的 `AgentSessionFactory` 创建。factory 为每个会话建立 isolated Context，并从当时已激活的 `ToolRegistry` 与 capability services 固定工具快照；禁用或未加载的工具不会被会话补回。interactive 的 JSONL 持久化通过 `SessionStoreRegistry` 的 `jsonl` entry 创建或打开，不能绕过 registry 直接在宿主启动分支中组装 Session。直接构造 `AgentSession` 必须传入不可变 `tools` 快照；SDK 集成应使用 Composition factory 或自行从其注册表创建该快照。
 
@@ -577,7 +578,7 @@ worker 由 composition 的 `session-factory` 创建 session，并由同一 compo
 
 `RpcServer` 是 JSONL 传输适配器；协议解析、参数校验、方法分发、操作表和事件恢复由无 stdin/stdout 依赖的 `RpcDispatcher` 完成。嵌入其他传输时只能复用 dispatcher，不得让网络写入等待 Agent 事件处理。
 
-新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法。`set_thinking_level` 传入 `level: "low" | "medium" | "high" | "max"` 时按值设置；省略 `level` 保持原有循环行为。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
+新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法。`set_runtime` 和 `set_thinking_level` 都会在空闲时更新当前 Session，并持久化为之后 WebUI Session 与终端启动使用的默认模型/推理偏好；已有工作区 `.di-code/settings.json` 时写入工作区，否则写入用户级 settings。若终端显式设置了 `DI_CODE_PROVIDER` 或 `DI_CODE_MODEL`，环境变量仍优先。`set_thinking_level` 传入 `level: "low" | "medium" | "high" | "max"` 时按值设置；省略 `level` 保持原有循环行为。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
 
 v1 只新增方法与可选字段。产品配置、附件、工具审批和插件命名空间仍要求对应的显式 Host capability、schema、权限和 owner disposer；没有这些能力的 composition 会以 `METHOD_NOT_FOUND` 拒绝，绝不映射到 `commandRegistry` 或任意插件命令。
 
@@ -611,14 +612,14 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 
 `npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
 
-Web SPA 的首页读取 `/api/boot`、`list_sessions` 和脱敏 `get_settings` 快照，提供双栏导航、受管 Session 创建/打开、响应式侧栏，以及拆分为 General/Models 的 Settings overlay。对话 store 以 `get_state`、完整 transcript 和 usage snapshot 为权威，消费有序 SSE 来投影 streaming text、thinking、operation 与 usage；重连使用 resume token，收到 `snapshot_required` 或刷新后完整重拉，绝不静默重放 prompt。composer 支持输入法组合、拖放/粘贴/文件选择图片、最多四个 opaque attachment handle、运行时 steer、cancel 和失败 retry。浏览器内仅有预览 object URL；服务端路径、transport token、Provider key 不会出现在页面、事件或错误中。配置中心只接受窄参数 RPC：Provider 登录/登出、自定义 Provider、默认 Provider/model、locale 和权限模式；环境变量托管字段只读显示，API key 不会出现在快照、事件或错误中。外观切换仅作用于浏览器本地页面。
+Web SPA 的首页读取 `/api/boot`、`list_sessions` 和脱敏 `get_settings` 快照，提供双栏导航、受管 Session 创建/打开、响应式侧栏，以及拆分为 General/Models 的 Settings overlay。设置快照中的每个模型会包含其实际支持的 `reasoningEfforts`；活动 Provider 即使未注册到全局目录也会作为运行时回退返回。对话 store 以 `get_state`、完整 transcript 和 usage snapshot 为权威，消费有序 SSE 来投影 streaming text、thinking、operation 与 usage；重连使用 resume token，收到 `snapshot_required` 或刷新后完整重拉，绝不静默重放 prompt。composer 支持输入法组合、拖放/粘贴/文件选择图片、最多四个 opaque attachment handle、运行时 steer、cancel 和失败 retry。浏览器内仅有预览 object URL；服务端路径、transport token、Provider key 不会出现在页面、事件或错误中。配置中心只接受窄参数 RPC：Provider 登录/登出、自定义 Provider、运行时模型和推理强度、默认 Provider/model、locale 和权限模式；已有工作区 settings 时模型与推理强度保存到工作区，否则保存到用户级 settings。环境变量托管字段只读显示，API key 不会出现在快照、事件或错误中。外观切换仅作用于浏览器本地页面。
 
 对话区的 `Chat`/`Trajectory` tabs 直接消费 `tool_execution_start/end`、`compaction_*`、`usage_update` 和 `tool_approval` 事件。空闲时的 `Compact context` 控制项调用现有 `compact` RPC，生成或压缩期间会禁用。工具卡为 `read`、`write`、`edit`、`bash`、`glob`、`grep` 保留独立状态和折叠输出，edit 结果的 `details.diff/patch` 以纯文本代码块显示；长输出不会注入 HTML。`ask` 模式的审批使用服务端生成的 `approvalId`，浏览器通过 `approve_tool` 回传决定，不能绕过 Agent 的工具校验。
 
 `di-code-webui` 是给自定义或嵌入式 HTTP 客户端保留的 token header transport：
 
 `di-code-webui` 使用 `webui` composition 创建 `HostManager` 和每个浏览器 client 的 `SessionActor`，再由 `RpcDispatcher` 执行所有 RPC v1
-方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。Web 与 TUI 通过同一个用户级 `~/.di-code` 根读取 Provider、模型、语言、thinking 默认值和持久化 Session；client/actor 目录只保存附件等传输临时状态，不能承载 settings 或 Session。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
+方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。Web 与 TUI 使用同一套环境变量、工作区和用户级 settings 解析 Provider、模型、语言、thinking 默认值和持久化 Session；client/actor 目录只保存附件等传输临时状态，不能承载 settings 或 Session。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
 `127.0.0.1` 和随机可用端口，可用 `DI_CODE_WEBUI_PORT` 指定端口。`DI_CODE_WEBUI_HOST` 只有与 `DI_CODE_WEBUI_ALLOW_REMOTE=1` 同时设置时才可绑定非回环地址。
 
 `POST /rpc`、`GET /events` 和 `POST /attachments` 都要求 `Authorization: Bearer <token>` 或 `X-Di-Code-Token` header。服务拒绝不匹配的

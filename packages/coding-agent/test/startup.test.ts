@@ -12,6 +12,8 @@ import {
 	saveGlobalLocale,
 	saveGlobalModelSelection,
 	saveGlobalThinkingLevel,
+	saveScopedModelSelection,
+	saveScopedThinkingLevel,
 	validateCustomBaseUrl,
 } from "../src/startup.ts";
 
@@ -86,6 +88,22 @@ describe("Pi-style startup configuration", () => {
 				},
 			],
 		});
+	});
+
+	it("rejects a configured model that leaves no context for input", async () => {
+		await writeSettings({
+			providers: {
+				gateway: {
+					api: "openai-responses",
+					baseUrl: "https://api.example.test/v1",
+					models: [{ id: "gateway-model", contextWindow: 8_192, maxTokens: 8_192 }],
+				},
+			},
+		});
+
+		await expect(loadStartupConfiguration(root, {}, globalDir)).rejects.toThrow(
+			"models[0].maxTokens must be smaller than contextWindow",
+		);
 	});
 
 	it("saves a Custom provider with known model capabilities and preserves unrelated global settings", async () => {
@@ -277,7 +295,7 @@ describe("Pi-style startup configuration", () => {
 		).toBe("glm-5.2");
 	});
 
-	it("persists thinking preferences per provider and model without accepting project overrides", async () => {
+	it("merges project thinking preferences over global preferences", async () => {
 		await writeGlobalSettings({ providers: {}, thinkingLevels: { zhipu: { "glm-5.3": "max" } } });
 		await writeSettings({ providers: {}, thinkingLevels: { zhipu: { "glm-5.3": "low" } } });
 
@@ -287,7 +305,25 @@ describe("Pi-style startup configuration", () => {
 			thinkingLevels: { zhipu: { "glm-5.3": "max", "glm-5.2": "high" } },
 		});
 		expect((await loadStartupConfiguration(root, {}, globalDir)).thinkingLevels).toEqual({
-			zhipu: { "glm-5.3": "max", "glm-5.2": "high" },
+			zhipu: { "glm-5.3": "low", "glm-5.2": "high" },
+		});
+	});
+
+	it("persists model and thinking preferences in existing workspace settings", async () => {
+		await writeGlobalSettings({ providers: {}, defaultProvider: "zhipu", defaultModel: "glm-5.3" });
+		await writeSettings({ providers: {}, defaultProvider: "zhipu", defaultModel: "glm-5.3" });
+
+		await saveScopedModelSelection(root, globalDir, "zhipu", "glm-5.2");
+		await saveScopedThinkingLevel(root, globalDir, "zhipu", "glm-5.2", "high");
+
+		expect(JSON.parse(await readFile(join(root, ".di-code", "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "zhipu",
+			defaultModel: "glm-5.2",
+			thinkingLevels: { zhipu: { "glm-5.2": "high" } },
+		});
+		expect(JSON.parse(await readFile(join(globalDir, "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "zhipu",
+			defaultModel: "glm-5.3",
 		});
 	});
 

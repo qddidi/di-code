@@ -494,21 +494,41 @@ export class RpcDispatcher {
 				case "set_model":
 					result = { method: "set_model", model: this.host().setModel(request.params.modelId as string) };
 					break;
-				case "set_runtime":
+				case "set_runtime": {
+					this.assertProductIdle();
+					const providerId = request.params.providerId as string;
+					const modelId = request.params.modelId as string;
+					await this.requireProduct().setRuntimePreference(providerId, modelId);
+					const runtime = this.host().ui();
+					const model = runtime.availableModels.find((candidate) => candidate.id === runtime.modelId);
+					if (!model) throw new Error("The selected runtime was not applied to the active Session.");
 					result = {
 						method: "set_runtime",
-						model: this.host().setRuntime(request.params.providerId as string, request.params.modelId as string),
+						model,
 					};
 					break;
-				case "set_thinking_level":
+				}
+				case "set_thinking_level": {
+					this.assertProductIdle();
+					const ui = this.host().ui();
+					const model = ui.availableModels.find((candidate) => candidate.id === ui.modelId);
+					const efforts = model?.reasoningEfforts ?? [];
+					const requested = request.params.level as import("@di-code/ai").ThinkingLevel | undefined;
+					const next =
+						requested ??
+						(efforts.length === 0
+							? undefined
+							: efforts[
+									((ui.thinkingLevel === undefined ? -1 : efforts.indexOf(ui.thinkingLevel)) + 1) % efforts.length
+								]);
+					if (next !== undefined)
+						await this.requireProduct().setThinkingLevelPreference(ui.providerId, ui.modelId, next);
 					result = {
 						method: "set_thinking_level",
-						level:
-							request.params.level === undefined
-								? this.host().cycleThinkingLevel()
-								: this.host().setThinkingLevel(request.params.level as import("@di-code/ai").ThinkingLevel),
+						level: next === undefined ? this.host().cycleThinkingLevel() : this.host().setThinkingLevel(next),
 					};
 					break;
+				}
 				case "list_context_files":
 					result = {
 						method: "list_context_files",

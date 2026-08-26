@@ -1,23 +1,29 @@
-import { BrainCircuit, RotateCcw } from "lucide-react";
+import { Check, Copy, GitBranch, RotateCcw } from "lucide-react";
+import { ActivityTimeline } from "./ActivityTimeline.tsx";
 import type { ConversationMessage } from "../types.ts";
 
 interface TranscriptProps {
 	readonly messages: readonly ConversationMessage[];
 	readonly onRetry: () => void;
 	readonly canRetry: boolean;
+	readonly onBranch: () => void;
 	readonly webSlot?: React.ReactNode;
+	readonly waitingForResponse?: boolean;
 }
 
-export function Transcript({ messages, onRetry, canRetry, webSlot }: TranscriptProps): React.JSX.Element {
-	if (messages.length === 0) return <section className="conversation-empty" aria-live="polite">Start a session to work with di-code.</section>;
+export function Transcript({ messages, onRetry, canRetry, onBranch, webSlot, waitingForResponse = false }: TranscriptProps): React.JSX.Element {
+	if (messages.length === 0 && !waitingForResponse) return <section className="conversation-empty" aria-live="polite">Start a session to work with di-code.</section>;
+	const copyMessage = (text: string): void => { void navigator.clipboard?.writeText(text); };
 	return <section className="transcript" aria-label="Conversation transcript">
-		{messages.map((message, index) => <article className={`message message-${message.role}`} key={`${message.role}-${index}`}>
+		{messages.map((message, index) => <article className={`message message-${message.role}${message.status === "error" ? " message-error" : ""}`} key={`${message.role}-${index}`}>
 			<div className="message-label">{message.role === "user" ? "You" : message.role === "assistant" ? "di-code" : "Tool"}</div>
-			{message.thinking ? <details className="thinking"><summary><BrainCircuit size={15} />Thinking</summary><pre>{message.thinking}</pre></details> : null}
+			{message.role === "assistant" ? <ActivityTimeline activities={message.activities} streaming={message.status === "streaming"} /> : null}
 			{message.text ? <div className="message-body">{message.text}</div> : null}
-			{message.status === "streaming" ? <span className="streaming-cursor" aria-label="Streaming response" /> : null}
+			{message.status === "streaming" && !message.text && !message.activities?.length ? <span className="streaming-status" role="status" aria-label="Streaming response"><span className="streaming-dots"><i /><i /><i /></span></span> : null}
+			{message.role === "assistant" && message.status !== "streaming" && message.status !== "error" ? <div className="message-actions"><button type="button" aria-label="Copy" title="Copy" onClick={() => copyMessage(message.text)}><Copy size={15} /></button><button type="button" aria-label="Branch into a new conversation" title="Branch into a new conversation" onClick={onBranch}><GitBranch size={15} /></button><span className="message-complete"><Check size={13} />Completed</span></div> : null}
 			{message.role === "assistant" && canRetry && index === messages.length - 1 ? <button className="message-retry" type="button" onClick={onRetry}><RotateCcw size={14} />Retry</button> : null}
 			{index === messages.length - 1 ? webSlot : null}
 		</article>)}
+		{waitingForResponse ? <article className="message message-assistant message-pending"><div className="message-label">di-code</div><span className="streaming-status" role="status" aria-label="Waiting for response"><span className="streaming-dots"><i /><i /><i /></span></span></article> : null}
 	</section>;
 }

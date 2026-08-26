@@ -13,9 +13,10 @@ import {
 	type StartupConfiguration,
 	saveGlobalCustomProvider,
 	saveGlobalLocale,
-	saveGlobalModelSelection,
 	saveGlobalPermissionMode,
 	saveGlobalProviderApiKey,
+	saveScopedModelSelection,
+	saveScopedThinkingLevel,
 } from "../startup.ts";
 import { interactiveResourceServiceKey } from "./interactive-resource-service.ts";
 import { pluginManagerKey } from "./plugin-manager-entry.ts";
@@ -35,10 +36,12 @@ export interface ProductHostOptions {
 	};
 	/** Startup settings used to report whether each Provider is actually configured. */
 	readonly startupConfiguration?: StartupConfiguration;
-	/** Re-resolves settings and swaps an idle Session runtime after login/logout changes. */
+	/** Re-resolves settings and swaps an idle Session runtime after a persisted runtime change. */
 	readonly reloadRuntime?: () => Promise<StartupConfiguration | undefined>;
 	/** Re-reads persisted settings without replacing the active Session runtime. */
 	readonly reloadConfiguration?: () => Promise<StartupConfiguration>;
+	/** Applies a persisted permission change to the current Session actor. */
+	readonly onPermissionModeChange?: (mode: "ask" | "allow" | "deny") => void;
 	/** Refreshes the owning SessionHost after a trust or MCP configuration change. */
 	readonly refreshResources?: (projectTrusted?: boolean, signal?: AbortSignal) => Promise<void>;
 }
@@ -64,6 +67,14 @@ export interface ProductHost {
 	readonly state: () => { readonly projectTrusted: boolean };
 	readonly listProviders: () => readonly RpcProviderSummary[];
 	readonly getSettings: () => RpcSettingsSnapshot;
+	/** Persists a validated runtime preference for future CLI and WebUI Sessions. */
+	readonly setRuntimePreference: (providerId: string, modelId: string) => Promise<void>;
+	/** Persists a validated per-model thinking preference for future CLI and WebUI Sessions. */
+	readonly setThinkingLevelPreference: (
+		providerId: string,
+		modelId: string,
+		level: import("@di-code/ai").ThinkingLevel,
+	) => Promise<void>;
 	readonly setDefaultProvider: (providerId: string) => Promise<void>;
 	readonly setDefaultModel: (modelId: string) => Promise<void>;
 	readonly setLocale: (locale: "en" | "zh-CN") => Promise<void>;
@@ -185,6 +196,24 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	const listeners = new Set<ProductHostListener>();
 	const trustStore = new ProjectTrustStore(join(options.agentDir, "trust.json"));
 	const registry = options.context.require(providerRegistryKey);
+	const selectRuntime = (
+		providerId: string,
+		modelId: string,
+	): { readonly provider: Provider; readonly model: import("@di-code/ai").Model } => {
+		try {
+			return registry.select(providerId, modelId);
+		} catch (cause) {
+			const provider = options.provider;
+			const model =
+				provider?.id === providerId ? provider.models.find((candidate) => candidate.id === modelId) : undefined;
+			if (provider && model) return { provider, model };
+			const configured = startupConfiguration?.providers.find((candidate) => candidate.id === providerId);
+			if (configured) {
+				return resolveStartupRuntime({}, [configured], { providerId, modelId });
+			}
+			throw cause;
+		}
+	};
 	const ensureOpen = (): void => {
 		if (disposed) throw new Error("ProductHost has been disposed.");
 	};
@@ -204,11 +233,21 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	const providerSummary = (provider: {
 		id: string;
 		name: string;
-		models: readonly { id: string; name: string; input: readonly string[] }[];
+		models: readonly {
+			id: string;
+			name: string;
+			input: readonly string[];
+			reasoningEfforts?: readonly ("low" | "medium" | "high" | "max")[];
+		}[];
 	}): RpcProviderSummary => ({
 		id: provider.id,
 		name: provider.name,
-		models: provider.models.map((model) => ({ id: model.id, name: model.name, input: [...model.input] })),
+		models: provider.models.map((model) => ({
+			id: model.id,
+			name: model.name,
+			input: [...model.input],
+			...(model.reasoningEfforts ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+		})),
 		configured: isProviderConfigured(provider.id),
 	});
 	const settingsSnapshot = (): RpcSettingsSnapshot => {
@@ -219,6 +258,8 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 				? { providerId: options.provider.id, modelId: options.model?.id ?? options.provider.models[0]?.id ?? "" }
 				: undefined);
 		const providers = registry.snapshot().map(({ provider }) => provider);
+		if (options.provider && !providers.some((provider) => provider.id === options.provider?.id))
+			providers.push(options.provider);
 		const customProviders = (configuration?.providers ?? [])
 			.filter((provider) => !providers.some((item) => item.id === provider.id) && provider.models)
 			.map((provider) => ({ id: provider.id, name: provider.name ?? provider.id, models: provider.models ?? [] }));
@@ -380,17 +421,38 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			};
 		},
 		getSettings: settingsSnapshot,
+		setRuntimePreference: async (providerId, modelId) => {
+			ensureOpen();
+			const selection = selectRuntime(providerId, modelId);
+			await saveScopedModelSelection(options.cwd, options.agentDir, selection.provider.id, selection.model.id);
+			const refreshed = (await options.reloadRuntime?.()) ?? (await options.reloadConfiguration?.());
+			if (refreshed) startupConfiguration = refreshed;
+		},
+		setThinkingLevelPreference: async (providerId, modelId, level) => {
+			ensureOpen();
+			const selection = selectRuntime(providerId, modelId);
+			if (!selection.model.reasoningEfforts?.includes(level))
+				throw new Error(`Thinking level "${level}" is not supported by model "${selection.model.id}".`);
+			await saveScopedThinkingLevel(options.cwd, options.agentDir, selection.provider.id, selection.model.id, level);
+			const refreshed = await options.reloadConfiguration?.();
+			if (refreshed) startupConfiguration = refreshed;
+		},
 		setDefaultProvider: async (providerId) => {
 			const currentProvider = startupConfiguration?.defaults?.providerId;
 			const current = currentProvider === providerId ? startupConfiguration?.defaults?.modelId : undefined;
-			await saveGlobalModelSelection(options.agentDir, providerId, current ?? registry.select(providerId).model.id);
+			await saveScopedModelSelection(
+				options.cwd,
+				options.agentDir,
+				providerId,
+				current ?? registry.select(providerId).model.id,
+			);
 			const refreshed = await options.reloadConfiguration?.();
 			if (refreshed) startupConfiguration = refreshed;
 		},
 		setDefaultModel: async (modelId) => {
 			const providerId = startupConfiguration?.defaults?.providerId ?? options.provider?.id;
 			if (!providerId) throw new Error("A default Provider is required before selecting a model.");
-			await saveGlobalModelSelection(options.agentDir, providerId, modelId);
+			await saveScopedModelSelection(options.cwd, options.agentDir, providerId, modelId);
 			const refreshed = await options.reloadConfiguration?.();
 			if (refreshed) startupConfiguration = refreshed;
 		},
@@ -403,6 +465,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			await saveGlobalPermissionMode(options.agentDir, mode);
 			const refreshed = await options.reloadConfiguration?.();
 			if (refreshed) startupConfiguration = refreshed;
+			options.onPermissionModeChange?.(mode);
 		},
 		login: async (input, signal) => {
 			ensureOpen();

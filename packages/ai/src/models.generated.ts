@@ -225,7 +225,7 @@ export const MODELS: readonly Model[] = [
 		input: ["text"],
 		reasoning: false,
 		contextWindow: 8192,
-		maxOutputTokens: 8192,
+		maxOutputTokens: 4096,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
 	{

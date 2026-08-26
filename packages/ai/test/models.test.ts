@@ -237,6 +237,14 @@ describe("model catalog", () => {
 		expect(() => renderModelCatalog([openAiModel, { ...openAiModel }])).toThrow("model(openai/gpt-4o) is duplicated");
 	});
 
+	it("rejects a model that reserves its entire context for output", () => {
+		const openAiModel = openAiSourceModel();
+
+		expect(() => renderModelCatalog([{ ...openAiModel, contextWindow: 8_192, maxOutputTokens: 8_192 }])).toThrow(
+			"maxOutputTokens must be smaller than contextWindow",
+		);
+	});
+
 	it("reports a stale generated catalog", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "di-code-model-catalog-"));
 		temporaryDirectories.push(directory);

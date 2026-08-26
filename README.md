@@ -322,7 +322,7 @@ Provider 字段：
 | `input` | array | 默认 `["text"]`；只允许 `text`、`image` |
 | `reasoning` | boolean | 默认 `false` |
 | `contextWindow` | positive integer | 默认 `128000` |
-| `maxTokens` | positive integer | 默认 `16384`；也接受 `maxOutputTokens`，同时存在时 `maxTokens` 优先 |
+| `maxTokens` | positive integer | 默认 `16384`；也接受 `maxOutputTokens`，同时存在时 `maxTokens` 优先；必须小于 `contextWindow`，以保留输入空间 |
 | `cost.input` | non-negative number | 默认 `0`，配置单位为美元/百万 token |
 | `cost.output` | non-negative number | 默认 `0`，配置单位为美元/百万 token |
 | `cost.cacheRead` | non-negative number | 默认 `0`，配置单位为美元/百万 token |
@@ -371,7 +371,7 @@ ZAI_API_KEY=<your-zhipu-api-key>
 4. settings 中没有 Provider、没有明确选择且处于交互 TTY 时，启动选择向导。
 5. 非交互模式有多个 Provider 但没有明确选择时立即报错，不会等待输入。
 
-模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则，当所选 Provider 与用户全局 `defaultProvider` 一致时使用 `defaultModel`（在 `/model` 或 `/login` 中选择后自动保存）；再否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。
+模型选择规则：设置了 `DI_CODE_MODEL` 时选择该模型；否则，当所选 Provider 与合并后的 `defaultProvider` 一致时使用 `defaultModel`（在 `/model` 或 `/login` 中选择后自动保存）；再否则 OpenAI 默认使用 `gpt-4o`，Zhipu 默认使用 `glm-5.3`，其他 Provider 使用其模型列表中的第一个模型。项目 `.di-code/settings.json` 中的模型默认值与 `thinkingLevels` 优先于用户级 `~/.di-code/settings.json`；WebUI 在已有项目 settings 时把模型和推理强度选择写回该项目文件，否则写入用户级 settings。环境变量始终优先。
 
 ### 终端语言
 
@@ -534,7 +534,9 @@ npm run web:dev
 
 `npm run web:dev` 会以当前用户已有的 settings 启动 Web backend，再启动 Vite 并代理 API；退出时会清理两个子进程。生产静态资源随 `@di-code/coding-agent` tarball 的 `dist/web` 一起发布。静态文件只允许位于该目录内，带 hash 的 `assets/` 使用 immutable cache，其他 SPA 路径回退到 `index.html`，`/api` 与旧 HTTP/SSE 路由不会被 SPA fallback 接管。Web 应用只授权启动目录对应的真实 workspace，不支持远程 bind，也不创建第二套 Agent loop。
 
-Web 首页提供 DSH 风格的双栏 App Shell：桌面侧栏可创建和打开受管 Session，主区从 `get_transcript`、runtime 和 usage 快照恢复对话，并通过 SSE 增量显示文本和 thinking。composer 支持输入法组合、拖放/粘贴或选择最多四张图片、运行中的 steer、cancel 和失败 turn retry；浏览器只保存 attachment handle 与本地预览，绝不显示服务端文件路径或 transport token。连接按 sequence 去重，断开后使用 `resumeToken` 和 `Last-Event-ID` 恢复；收到 `snapshot_required` 或刷新页面时完整重拉 snapshot，不会重放 prompt。窄屏将侧栏收为导航抽屉。Settings overlay 读取 `/api/boot` 解析出的 Provider/model，并支持本地 Light/Dark/System 外观切换；不会写入 Provider 配置或 settings 文件。
+Web 首页提供 DSH 风格的双栏 App Shell：空会话以居中 hero 和单一 composer 进入，已有会话以标题栏、Chat/Trajectory tabs 和底部 sticky composer 呈现。初始恢复使用骨架屏；发送后到首个流事件前显示 three-dot loading，流式文本不使用闪烁光标，完成消息提供复制、反馈与分支入口。桌面侧栏可创建和打开受管 Session，超长会话标题通过三点菜单提供 Rename、Branch、Inspect 和 Delete 操作；主区从 `get_transcript`、runtime 和 usage 快照恢复对话，并通过 SSE 增量显示文本和 thinking。composer 支持输入法组合、拖放/粘贴或选择最多四张图片、运行中的 steer、cancel 和失败 turn retry；Provider 请求失败会作为脱敏的失败 assistant 回复展示，保留用户消息和 retry；底部显示当前估算上下文占用，累计输入与输出 token 在 Session log 中明确标注；用量、`Compact context` 和 retry 保持在同一个 composer 内。已配置 Provider 的卡片点击会立即用服务器保存的凭据切换当前 Session；只有未配置 Provider 才需要输入 key。权限菜单直接提供 `Ask before tools`（默认）、`Allow tools` 和 `Deny tools`，切换立即作用于当前 Session 的工具审批并保存为默认权限模式；模型菜单只展示当前 runtime 配置的模型，并在同一入口提供 `Default`、`Low`、`Medium`、`High`、`Max` 推理等级。下拉菜单和弹窗支持点击空白或 `Escape` 关闭。浏览器只保存 attachment handle 与本地预览，绝不显示服务端文件路径或 transport token。连接按 sequence 去重，断开后使用 `resumeToken` 和 `Last-Event-ID` 恢复；收到 `snapshot_required` 或刷新页面时完整重拉 snapshot，不会重放 prompt。窄屏将侧栏收为导航抽屉，`prefers-reduced-motion` 会关闭非必要动画。Settings overlay 使用固定的可视高度，导航和内容可独立滚动；模型和推理强度使用同一套 scoped settings 持久化，外观切换仅保存在浏览器本地。
+
+Custom Provider 只在 Models 中选中 `Custom` 时显示。模型 ID 输入框提供已知目录模型作为候选，仍可直接输入任意兼容网关模型 ID；保存连接后会切换当前 WebUI Session 到该 `custom` runtime。Settings overlay 保持固定可视高度，导航与内容可以独立滚动。
 
 对话区提供 `Chat`/`Trajectory` tabs。Trajectory 由真实 RPC 事件投影工具卡，覆盖 `read`、`write`、`edit`、`bash`、`glob`、`grep` 的 loading、success、error、cancelled、timeout 和 truncated 状态；edit 的 diff/patch、上下文文件和 compaction 事件可独立折叠查看。空闲时的 `Compact context` 操作调用当前 Session 的受限 `compact` RPC，生成或压缩期间会禁用它。工具参数和输出使用纯文本/code block 渲染，长输出限制在可滚动折叠区域。`ask` 权限模式下 Web actor 会通过 `tool_approval` 事件暂停工具，客户端必须以同一 `approvalId` 调用 `approve_tool`。
 
@@ -553,7 +555,7 @@ di-code-webui
 `POST /attachments` 接收 `{ name, contentType, data }` JSON，其中 `data` 是 base64。附件只接受 PNG、JPEG、WebP、GIF，单个最大 5 MiB，
 每个浏览器 client 最多保留 32 个或 64 MiB，总计 10 分钟后过期；WebUI 将附件保存到该 client 独立的受管临时目录，
 并以 opaque `attachmentId` 引用，不暴露服务器路径。Provider、模型、语言、thinking 默认值和持久化 Session 与 TUI
-共同使用用户级 `~/.di-code`；浏览器 client 临时目录不承载产品 settings 或 Session。
+共同使用同一套 settings 解析：已有工作区 `.di-code/settings.json` 时，WebUI 的模型和推理强度选择写入工作区；否则写入用户级 `~/.di-code`。浏览器 client 临时目录不承载产品 settings 或 Session。
 
 首次响应返回 `X-Di-Code-Client-Id`。SSE `ready` 事件带 10 分钟有效的 `resumeToken`；每次成功恢复都会轮换它，旧 token 立即失效。带 sequence 的事件同时使用 SSE `id`，空闲连接每 15 秒发送 comment keepalive；重连在 header 发送该 token 和 `Last-Event-ID`，服务器重放有界事件或发送
 `snapshot_required`。默认最多 8 个 SSE 连接/浏览器 client、64 个/服务进程；达到限制会返回 `429`。HTTP/SSE 断开不会取消 prompt、steer、retry 或 compact；用 `get_operation` 查询终态，只有 `cancel` 会显式取消。

@@ -121,6 +121,28 @@ describe("AgentSession automatic compaction", () => {
 		expect(events).toEqual(["compaction_start:manual", "compaction_end:manual"]);
 	});
 
+	it("manually compacts history even when the configured recent suffix covers every message", async () => {
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		const seeded = await seedTwoTurns(manager);
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "manual fallback summary" }] }],
+		});
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: smallModel(faux.model),
+			sessionManager: manager,
+			compaction: { keepRecentTokens: 100 },
+		});
+
+		await session.compact();
+
+		expect(manager.latestSummary).toMatchObject({
+			summary: "manual fallback summary",
+			firstKeptEntryId: seeded.recentUser.id,
+		});
+	});
+
 	it("compacts when context plus the pending user is exactly at the threshold", async () => {
 		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
 		await seedTwoTurns(manager);

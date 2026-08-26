@@ -108,7 +108,13 @@ export interface RpcProductState {
 export interface RpcProviderSummary {
 	readonly id: string;
 	readonly name: string;
-	readonly models: readonly { readonly id: string; readonly name: string; readonly input: readonly string[] }[];
+	readonly models: readonly {
+		readonly id: string;
+		readonly name: string;
+		readonly input: readonly string[];
+		/** Omitted when the model does not expose selectable reasoning levels. */
+		readonly reasoningEfforts?: readonly ("low" | "medium" | "high" | "max")[];
+	}[];
 	readonly configured: boolean;
 }
 

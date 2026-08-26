@@ -13,6 +13,7 @@ import {
 import type {
 	AttachmentInfo,
 	ContextFile,
+	ConversationActivity,
 	ConversationMessage,
 	OperationState,
 	SessionSummary,
@@ -85,56 +86,112 @@ function toolStatus(output: string, isError: boolean, details?: Record<string, u
 	return "error";
 }
 
+function appendThinking(activities: readonly ConversationActivity[], delta: string): readonly ConversationActivity[] {
+	const last = activities.at(-1);
+	if (last?.kind === "thinking") return [...activities.slice(0, -1), { ...last, text: last.text + delta }];
+	return [...activities, { id: `thinking-${activities.length}`, kind: "thinking", text: delta }];
+}
+
+function updateActivityTool(
+	activities: readonly ConversationActivity[],
+	id: string,
+	tool: ToolTrace,
+): readonly ConversationActivity[] {
+	const found = activities.some((activity) => activity.kind === "tool" && activity.tool.id === id);
+	return found
+		? activities.map((activity) =>
+				activity.kind === "tool" && activity.tool.id === id ? { ...activity, tool } : activity,
+			)
+		: [...activities, { id, kind: "tool", tool }];
+}
+
 function messagesFromTranscript(transcript: unknown): { messages: ConversationMessage[]; tools: ToolTrace[] } {
 	if (!Array.isArray(transcript)) return { messages: [], tools: [] };
 	const tools: ToolTrace[] = [];
-	const messages = transcript.flatMap((value) => {
+	const messages: ConversationMessage[] = [];
+	let assistant: { text: string; activities: readonly ConversationActivity[] } | undefined;
+	const flushAssistant = (): void => {
+		if (!assistant) return;
+		messages.push({
+			role: "assistant",
+			text: assistant.text,
+			...(assistant.activities.length ? { activities: assistant.activities } : {}),
+		});
+		assistant = undefined;
+	};
+	const ensureAssistant = (): NonNullable<typeof assistant> => {
+		if (!assistant) assistant = { text: "", activities: [] };
+		return assistant;
+	};
+	for (const value of transcript) {
 		const message = asRecord(value);
 		if (!message || (message.role !== "user" && message.role !== "assistant" && message.role !== "tool_result"))
-			return [];
-		const thinking = Array.isArray(message.content)
-			? message.content
-					.map((item) => {
-						const block = asRecord(item);
-						return block?.type === "thinking" && typeof block.thinking === "string" ? block.thinking : "";
-					})
-					.join("")
-			: "";
-		if (message.role === "tool_result") {
-			const id = typeof message.toolCallId === "string" ? message.toolCallId : crypto.randomUUID();
-			const tool = {
-				id,
-				name: typeof message.toolName === "string" ? message.toolName : "tool",
-				arguments: {},
-				output: textFromContent(message.content),
-				...(asRecord(message.details) ? { details: asRecord(message.details) } : {}),
-				status: toolStatus(textFromContent(message.content), message.isError === true, asRecord(message.details)),
-			} as ToolTrace;
-			const previous = tools.findIndex((item) => item.id === id);
-			if (previous === -1) tools.push(tool);
-			else
-				tools[previous] = {
-					...tools[previous],
-					...tool,
-					status: toolStatus(tool.output ?? "", message.isError === true, tool.details),
-				};
-			return [];
+			continue;
+		if (message.role === "user") {
+			flushAssistant();
+			messages.push({ role: "user", text: textFromContent(message.content) });
+			continue;
 		}
-		if (message.role === "assistant" && Array.isArray(message.content)) {
-			for (const item of message.content) {
-				const block = asRecord(item);
-				if (block?.type === "tool_call" && typeof block.id === "string" && typeof block.name === "string")
-					tools.push({ id: block.id, name: block.name, arguments: asRecord(block.arguments) ?? {}, status: "loading" });
+		if (message.role === "assistant") {
+			if (message.stopReason === "error") {
+				flushAssistant();
+				messages.push({
+					role: "assistant",
+					text:
+						typeof message.errorMessage === "string" && message.errorMessage.trim()
+							? message.errorMessage
+							: "The model request failed.",
+					status: "error",
+				});
+				continue;
 			}
+			if (message.stopReason === "aborted") {
+				flushAssistant();
+				continue;
+			}
+			if (!Array.isArray(message.content)) continue;
+			for (const item of message.content) {
+				const current = ensureAssistant();
+				const block = asRecord(item);
+				if (block?.type === "text" && typeof block.text === "string")
+					assistant = { ...current, text: current.text + block.text };
+				if (block?.type === "thinking" && typeof block.thinking === "string")
+					assistant = { ...current, activities: appendThinking(current.activities, block.thinking) };
+				if (block?.type === "tool_call" && typeof block.id === "string" && typeof block.name === "string") {
+					const tool = {
+						id: block.id,
+						name: block.name,
+						arguments: asRecord(block.arguments) ?? {},
+						status: "loading",
+					} as ToolTrace;
+					const previous = tools.findIndex((item) => item.id === tool.id);
+					if (previous === -1) tools.push(tool);
+					else tools[previous] = tool;
+					assistant = { ...current, activities: updateActivityTool(current.activities, tool.id, tool) };
+				}
+			}
+			continue;
 		}
-		return [
-			{
-				role: message.role as "user" | "assistant",
-				text: textFromContent(message.content),
-				...(thinking ? { thinking } : {}),
-			},
-		];
-	});
+		const id = typeof message.toolCallId === "string" ? message.toolCallId : crypto.randomUUID();
+		const output = textFromContent(message.content);
+		const details = asRecord(message.details);
+		const previous = tools.find((item) => item.id === id);
+		const tool = {
+			id,
+			name: typeof message.toolName === "string" ? message.toolName : (previous?.name ?? "tool"),
+			arguments: previous?.arguments ?? {},
+			output,
+			...(details ? { details } : {}),
+			status: toolStatus(output, message.isError === true, details),
+			...(message.isError === true ? { error: output } : {}),
+		} as ToolTrace;
+		const previousIndex = tools.findIndex((item) => item.id === id);
+		if (previousIndex === -1) tools.push(tool);
+		else tools[previousIndex] = tool;
+		const current = ensureAssistant();
+		assistant = { ...current, activities: updateActivityTool(current.activities, id, tool) };
+	}
+	flushAssistant();
 	return { messages, tools };
 }
 
@@ -183,6 +240,7 @@ export function useConversation(ready: boolean): ConversationState {
 	const [attachments, setAttachments] = useState<readonly AttachmentInfo[]>([]);
 	const [connected, setConnected] = useState(false);
 	const [error, setError] = useState<string>();
+	const lastCompactionError = useRef<string | undefined>(undefined);
 	const sequence = useRef(0);
 	const resumeToken = useRef<string | undefined>(undefined);
 	const stopped = useRef(false);
@@ -227,7 +285,9 @@ export function useConversation(ready: boolean): ConversationState {
 					typeof next.requestId === "string" &&
 					typeof next.kind === "string" &&
 					typeof next.status === "string"
-				)
+				) {
+					if (next.kind !== "prompt" && next.kind !== "steer" && next.kind !== "retry" && next.kind !== "compact")
+						return;
 					setOperation((current) =>
 						current &&
 						current.requestId !== next.requestId &&
@@ -235,6 +295,7 @@ export function useConversation(ready: boolean): ConversationState {
 							? current
 							: (next as unknown as OperationState),
 					);
+				}
 				return;
 			}
 			if (type === "tool_approval") {
@@ -259,6 +320,7 @@ export function useConversation(ready: boolean): ConversationState {
 				return;
 			}
 			if (type === "compaction_start") {
+				lastCompactionError.current = undefined;
 				setCompaction({
 					state: "running",
 					reason: typeof record.event.reason === "string" ? record.event.reason : "threshold",
@@ -266,6 +328,10 @@ export function useConversation(ready: boolean): ConversationState {
 				return;
 			}
 			if (type === "compaction_end") {
+				lastCompactionError.current =
+					record.event.success === true || typeof record.event.errorMessage !== "string"
+						? undefined
+						: record.event.errorMessage;
 				setCompaction({
 					state: record.event.success === true ? "success" : "error",
 					reason: typeof record.event.reason === "string" ? record.event.reason : "threshold",
@@ -277,10 +343,20 @@ export function useConversation(ready: boolean): ConversationState {
 			if (type === "tool_execution_start") {
 				const id = typeof record.event.toolCallId === "string" ? record.event.toolCallId : crypto.randomUUID();
 				const name = typeof record.event.toolName === "string" ? record.event.toolName : "tool";
-				setTools((current) => [
-					...current.filter((item) => item.id !== id),
-					{ id, name, arguments: asRecord(record.event.arguments) ?? {}, status: "loading" },
-				]);
+				const tool = { id, name, arguments: asRecord(record.event.arguments) ?? {}, status: "loading" } as ToolTrace;
+				setTools((current) => [...current.filter((item) => item.id !== id), tool]);
+				setMessages((current) => {
+					const last = current.at(-1);
+					if (last?.role === "assistant" && last.status === "streaming")
+						return [
+							...current.slice(0, -1),
+							{ ...last, activities: updateActivityTool(last.activities ?? [], id, tool) },
+						];
+					return [
+						...current,
+						{ role: "assistant", text: "", activities: [{ id, kind: "tool", tool }], status: "streaming" },
+					];
+				});
 				return;
 			}
 			if (type === "tool_execution_end") {
@@ -302,6 +378,21 @@ export function useConversation(ready: boolean): ConversationState {
 									}
 								: item,
 						),
+					);
+					setMessages((current) =>
+						current.map((message) => {
+							if (message.role !== "assistant" || !message.activities) return message;
+							const activity = message.activities.find((item) => item.kind === "tool" && item.tool.id === id);
+							if (!activity || activity.kind !== "tool") return message;
+							const completedTool: ToolTrace = {
+								...activity.tool,
+								output,
+								...(details ? { details } : {}),
+								status: toolStatus(output, isError, details),
+								...(isError ? { error: output } : {}),
+							};
+							return { ...message, activities: updateActivityTool(message.activities, id, completedTool) };
+						}),
 					);
 				}
 				return;
@@ -327,13 +418,29 @@ export function useConversation(ready: boolean): ConversationState {
 					setMessages((current) => {
 						const last = current.at(-1);
 						if (last?.role === "assistant" && last.status === "streaming")
-							return [...current.slice(0, -1), { ...last, thinking: (last.thinking ?? "") + delta }];
-						return [...current, { role: "assistant", text: "", thinking: delta, status: "streaming" }];
+							return [
+								...current.slice(0, -1),
+								{
+									...last,
+									thinking: (last.thinking ?? "") + delta,
+									activities: appendThinking(last.activities ?? [], delta),
+								},
+							];
+						return [
+							...current,
+							{
+								role: "assistant",
+								text: "",
+								thinking: delta,
+								activities: appendThinking([], delta),
+								status: "streaming",
+							},
+						];
 					});
 				}
 				return;
 			}
-			if (type === "message_end" || type === "agent_end") void refresh().catch(() => undefined);
+			if (type === "agent_end") void refresh().catch(() => undefined);
 		},
 		[refresh],
 	);
@@ -395,18 +502,22 @@ export function useConversation(ready: boolean): ConversationState {
 			const requestId = crypto.randomUUID();
 			setError(undefined);
 			setOperation({ requestId, kind: "prompt", status: "queued" });
+			setMessages((current) => [...current, { role: "user", text }]);
 			try {
-				const result = await callRpc<{ readonly message?: { readonly stopReason?: string } }>(
+				const result = await callRpc<{
+					readonly message?: { readonly stopReason?: string; readonly errorMessage?: string };
+				}>(
 					"prompt",
 					{ message: text, ...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}) },
 					requestId,
 				);
 				await refresh();
 				if (result.message?.stopReason === "aborted" || result.message?.stopReason === "error") {
+					const failed = result.message.stopReason === "error";
 					setOperation({
 						requestId,
 						kind: "prompt",
-						status: result.message.stopReason === "aborted" ? "cancelled" : "failed",
+						status: failed ? "failed" : "cancelled",
 					});
 				} else setOperation(undefined);
 			} catch (cause) {
@@ -446,13 +557,17 @@ export function useConversation(ready: boolean): ConversationState {
 	const compact = useCallback(async () => {
 		const requestId = crypto.randomUUID();
 		setError(undefined);
+		lastCompactionError.current = undefined;
 		setOperation({ requestId, kind: "compact", status: "queued" });
 		try {
 			await callRpc("compact", {}, requestId);
 			await refresh();
 			setOperation(undefined);
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Unable to compact the session context.");
+			const message =
+				lastCompactionError.current ??
+				(cause instanceof Error ? cause.message : "Unable to compact the session context.");
+			setOperation({ requestId, kind: "compact", status: "failed", error: { code: "INTERNAL_ERROR", message } });
 		}
 	}, [refresh]);
 	const retry = useCallback(async () => {

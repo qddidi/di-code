@@ -18,13 +18,6 @@ export interface RpcEnvelope<T> {
 	readonly error?: { readonly message?: string };
 }
 
-export interface ConversationMessage {
-	readonly role: "user" | "assistant" | "tool";
-	readonly text: string;
-	readonly thinking?: string;
-	readonly status?: string;
-}
-
 export type ToolStatus = "loading" | "success" | "error" | "cancelled" | "timeout" | "truncated";
 
 export interface ToolTrace {
@@ -35,6 +28,18 @@ export interface ToolTrace {
 	readonly details?: Record<string, unknown>;
 	readonly status: ToolStatus;
 	readonly error?: string;
+}
+
+export type ConversationActivity =
+	| { readonly id: string; readonly kind: "thinking"; readonly text: string }
+	| { readonly id: string; readonly kind: "tool"; readonly tool: ToolTrace };
+
+export interface ConversationMessage {
+	readonly role: "user" | "assistant" | "tool";
+	readonly text: string;
+	readonly thinking?: string;
+	readonly activities?: readonly ConversationActivity[];
+	readonly status?: string;
 }
 
 export interface ToolApproval {
@@ -85,7 +90,12 @@ export interface SettingsSnapshot {
 	readonly providers: readonly {
 		readonly id: string;
 		readonly name: string;
-		readonly models: readonly { readonly id: string; readonly name: string; readonly input: readonly string[] }[];
+		readonly models: readonly {
+			readonly id: string;
+			readonly name: string;
+			readonly input: readonly string[];
+			readonly reasoningEfforts?: readonly ("low" | "medium" | "high" | "max")[];
+		}[];
 		readonly configured: boolean;
 		readonly api: string;
 		readonly baseUrl?: string;

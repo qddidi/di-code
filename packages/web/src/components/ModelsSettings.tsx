@@ -1,12 +1,129 @@
-import { useState } from "react";
+import { Check, Plus } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { SettingsSnapshot } from "../types.ts";
 
-export interface ModelsSettingsProps { readonly settings: SettingsSnapshot; readonly onDefaultModel: (id: string) => void; readonly onLogin: (providerId: string, apiKey: string, modelId?: string) => Promise<void>; readonly onLogout: (providerId: string) => Promise<void>; readonly onCustomProvider: (input: { readonly api: "openai-responses" | "openai-chat-completions" | "anthropic-messages"; readonly baseUrl: string; readonly apiKey: string; readonly modelId: string }) => Promise<void>; }
+type CustomApi = "openai-responses" | "openai-chat-completions" | "anthropic-messages";
+const API_KEY_MASK = "••••••••••••••••";
 
-export function ModelsSettings({ settings, onDefaultModel, onLogin, onLogout, onCustomProvider }: ModelsSettingsProps): React.JSX.Element {
-	const [selected, setSelected] = useState(settings.defaults.providerId ?? settings.runtime.providerId);
-	const [apiKey, setApiKey] = useState("");
-	const [custom, setCustom] = useState({ api: "openai-responses" as "openai-responses" | "openai-chat-completions" | "anthropic-messages", baseUrl: "", modelId: "" });
-	const provider = settings.providers.find((item) => item.id === selected) ?? settings.providers[0];
-	return <div className="settings-section" aria-labelledby="models-title"><h3 id="models-title">Models</h3><p className="settings-section-note">Credentials never leave the server. Environment-managed credentials are displayed but cannot be edited here.</p><div className="provider-list">{settings.providers.map((item) => <article className={`provider-card${item.id === selected ? " is-selected" : ""}`} key={item.id}><button type="button" className="provider-card-main" onClick={() => setSelected(item.id)}><strong>{item.name}</strong><span>{item.id} · {item.models.length} models</span></button><span className={`provider-status status-${item.apiKeySource}`}>{item.apiKeySource === "environment" ? "Environment" : item.configured ? "Configured" : "Not configured"}</span></article>)}</div>{provider ? <div className="model-controls"><label>Default model<select value={settings.defaults.providerId === provider.id ? settings.defaults.modelId ?? "" : ""} onChange={(event) => onDefaultModel(event.target.value)}><option value="">Select a model</option>{provider.models.map((model) => <option value={model.id} key={model.id}>{model.name} ({model.id})</option>)}</select></label>{provider.apiKeySource === "environment" ? <p className="readonly-note">API key is managed by the environment.</p> : <div className="login-row"><input aria-label={`${provider.name} API key`} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={provider.configured ? "Replace API key" : "API key"} /><button type="button" onClick={() => void onLogin(provider.id, apiKey, provider.models[0]?.id).then(() => setApiKey(""))} disabled={!apiKey.trim()}>Save key</button>{provider.configured ? <button type="button" className="button-quiet" onClick={() => void onLogout(provider.id)}>Log out</button> : null}</div>}</div> : null}<div className="custom-provider-form"><strong>Custom Provider</strong><div className="login-row"><select aria-label="Custom Provider API" value={custom.api} onChange={(event) => setCustom({ ...custom, api: event.target.value as typeof custom.api })}><option value="openai-responses">OpenAI Responses</option><option value="openai-chat-completions">Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option></select><input aria-label="Custom Provider Base URL" placeholder="https://gateway.example/v1" value={custom.baseUrl} onChange={(event) => setCustom({ ...custom, baseUrl: event.target.value })} /><input aria-label="Custom Provider model" placeholder="Model ID" value={custom.modelId} onChange={(event) => setCustom({ ...custom, modelId: event.target.value })} /><input aria-label="Custom Provider API key" type="password" placeholder="API key" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /><button type="button" disabled={!custom.baseUrl || !custom.modelId || !apiKey} onClick={() => void onCustomProvider({ ...custom, apiKey }).then(() => setApiKey(""))}>Add custom</button></div></div></div>;
+export interface ModelsSettingsProps {
+	readonly settings: SettingsSnapshot;
+	readonly onRuntimeChange: (providerId: string, modelId: string) => Promise<void>;
+	readonly onLogin: (providerId: string, apiKey: string, modelId?: string) => Promise<void>;
+	readonly onLogout: (providerId: string) => Promise<void>;
+	readonly onCustomProvider: (input: {
+		readonly api: CustomApi;
+		readonly baseUrl: string;
+		readonly apiKey: string;
+		readonly modelId: string;
+	}) => Promise<void>;
+}
+
+function providerStatus(provider: SettingsSnapshot["providers"][number]): string {
+	if (provider.apiKeySource === "environment") return "Environment";
+	return provider.configured ? "Configured" : "Not configured";
+}
+
+export function ModelsSettings({ settings, onRuntimeChange, onLogin, onLogout, onCustomProvider }: ModelsSettingsProps): React.JSX.Element {
+	const [selectedId, setSelectedId] = useState(settings.runtime.providerId);
+	const [selectedModelId, setSelectedModelId] = useState(settings.runtime.modelId);
+	const [providerApiKey, setProviderApiKey] = useState("");
+	const [customApiKey, setCustomApiKey] = useState("");
+	const [focusedKeyField, setFocusedKeyField] = useState<"provider" | "custom">();
+	const [custom, setCustom] = useState<{ api: CustomApi; baseUrl: string; modelId: string }>({
+		api: "openai-responses",
+		baseUrl: "",
+		modelId: "",
+	});
+	const modelCatalogId = useId();
+	const configuredCustom = settings.providers.find((provider) => provider.id === "custom");
+	const providers = settings.providers.filter((provider) => provider.id !== "custom");
+	const selectedProvider = providers.find((provider) => provider.id === selectedId);
+	const customSelected = selectedId === "custom";
+	const providerHasStoredKey = selectedProvider?.apiKeySource === "settings";
+	const customHasStoredKey = configuredCustom?.apiKeySource === "settings";
+	const modelCatalog = useMemo(
+		() =>
+			Array.from(
+				new Map(
+					settings.providers.flatMap((provider) =>
+						provider.models.map((model) => [model.id, { id: model.id, name: model.name }]),
+					),
+				).values(),
+			).sort((left, right) => left.name.localeCompare(right.name)),
+		[settings.providers],
+	);
+
+	useEffect(() => {
+		setSelectedId(settings.runtime.providerId);
+		setSelectedModelId(settings.runtime.modelId);
+	}, [settings.runtime.modelId, settings.runtime.providerId]);
+	useEffect(() => {
+		if (!configuredCustom) return;
+		setCustom((current) => ({
+			...current,
+			api: current.api === "openai-responses" ? (configuredCustom.api as CustomApi) : current.api,
+			baseUrl: current.baseUrl || configuredCustom.baseUrl || "",
+			modelId:
+				current.modelId ||
+				configuredCustom.models.find((model) => model.id === settings.runtime.modelId)?.id ||
+				configuredCustom.models[0]?.id ||
+				"",
+		}));
+	}, [configuredCustom, settings.runtime.modelId]);
+
+	const selectProvider = (providerId: string): void => {
+		setSelectedId(providerId);
+		setProviderApiKey("");
+		setFocusedKeyField(undefined);
+		if (providerId === "custom") {
+			const modelId =
+				configuredCustom?.models.find((model) => model.id === settings.runtime.modelId)?.id ??
+				configuredCustom?.models[0]?.id ??
+				"";
+			setSelectedModelId(modelId);
+			if (modelId) void onRuntimeChange("custom", modelId);
+			return;
+		}
+		const provider = providers.find((item) => item.id === providerId);
+		const modelId =
+			settings.runtime.providerId === providerId ? settings.runtime.modelId : (provider?.models[0]?.id ?? "");
+		setSelectedModelId(modelId);
+		if (provider?.configured && modelId) void onRuntimeChange(provider.id, modelId);
+	};
+	const saveCustom = async (): Promise<void> => {
+		const modelId = custom.modelId.trim();
+		if (!custom.baseUrl.trim() || !modelId || !customApiKey.trim()) return;
+		await onCustomProvider({ ...custom, baseUrl: custom.baseUrl.trim(), modelId, apiKey: customApiKey });
+		await onRuntimeChange("custom", modelId);
+		setCustomApiKey("");
+	};
+	const useCustomModel = (): void => {
+		const modelId = custom.modelId.trim();
+		if (configuredCustom && modelId) void onRuntimeChange("custom", modelId);
+	};
+
+	return <div className="settings-section" aria-labelledby="models-title">
+		<h3 id="models-title">Models</h3>
+		<p className="settings-section-note">Credentials never leave the server. Environment-managed credentials cannot be edited here.</p>
+		<div className="provider-selector" role="radiogroup" aria-label="Provider">
+			{providers.map((provider) => <button className={`provider-choice${selectedId === provider.id ? " is-selected" : ""}`} type="button" role="radio" aria-checked={selectedId === provider.id} key={provider.id} onClick={() => selectProvider(provider.id)}><span><strong>{provider.name}</strong><small>{provider.models.length} models</small></span><em className={`status-${provider.apiKeySource}`}>{providerStatus(provider)}</em>{settings.runtime.providerId === provider.id ? <Check size={15} aria-label="Active provider" /> : null}</button>)}
+			<button className={`provider-choice provider-choice-custom${customSelected ? " is-selected" : ""}`} type="button" role="radio" aria-checked={customSelected} onClick={() => selectProvider("custom")}><span><strong>Custom</strong><small>{configuredCustom ? `${configuredCustom.models.length} saved models` : "Configure a gateway"}</small></span><em className={configuredCustom ? `status-${configuredCustom.apiKeySource}` : "status-missing"}>{configuredCustom ? providerStatus(configuredCustom) : "Not configured"}</em>{settings.runtime.providerId === "custom" ? <Check size={15} aria-label="Active provider" /> : <Plus size={15} aria-hidden="true" />}</button>
+		</div>
+		{selectedProvider ? <section className="model-controls" aria-labelledby={`${selectedProvider.id}-model-title`}>
+			<h4 id={`${selectedProvider.id}-model-title`}>{selectedProvider.name}</h4>
+			<label>Model<select value={selectedModelId} onChange={(event) => { setSelectedModelId(event.target.value); void onRuntimeChange(selectedProvider.id, event.target.value); }}><option value="">Select a model</option>{selectedProvider.models.map((model) => <option value={model.id} key={model.id}>{model.name} ({model.id})</option>)}</select></label>
+			{selectedProvider.apiKeySource === "environment" ? <p className="readonly-note">API key is managed by the environment: <span className="masked-key-indicator">{API_KEY_MASK}</span></p> : <div className="login-row"><input aria-label={`${selectedProvider.name} API key`} className={providerHasStoredKey && focusedKeyField !== "provider" ? "masked-key" : undefined} type="password" value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} onFocus={() => setFocusedKeyField("provider")} onBlur={() => setFocusedKeyField(undefined)} placeholder={providerHasStoredKey && focusedKeyField !== "provider" ? API_KEY_MASK : "API key"} /><button type="button" onClick={() => void onLogin(selectedProvider.id, providerApiKey, selectedModelId).then(() => setProviderApiKey(""))} disabled={!providerApiKey.trim() || !selectedModelId}>Save key</button>{selectedProvider.configured ? <button type="button" className="button-quiet" onClick={() => void onLogout(selectedProvider.id)}>Log out</button> : null}</div>}
+		</section> : null}
+		{customSelected ? <section className="custom-provider-form" aria-labelledby="custom-provider-title">
+			<div className="custom-provider-heading"><div><h4 id="custom-provider-title">Custom Provider</h4><p>{configuredCustom ? "Update connection" : "New connection"}</p></div>{configuredCustom ? <button type="button" className="button-quiet" onClick={useCustomModel} disabled={!custom.modelId.trim()}>Use model</button> : null}</div>
+			<div className="custom-provider-grid">
+				<label>API<select aria-label="Custom Provider API" value={custom.api} onChange={(event) => setCustom({ ...custom, api: event.target.value as CustomApi })}><option value="openai-responses">OpenAI Responses</option><option value="openai-chat-completions">OpenAI Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option></select></label>
+				<label>Model ID<input aria-label="Custom Provider model" list={modelCatalogId} placeholder="Choose or enter a model ID" value={custom.modelId} onChange={(event) => setCustom({ ...custom, modelId: event.target.value })} /></label>
+				<label className="custom-provider-wide">Base URL<input aria-label="Custom Provider Base URL" placeholder="https://gateway.example/v1" value={custom.baseUrl} onChange={(event) => setCustom({ ...custom, baseUrl: event.target.value })} /></label>
+				<label className="custom-provider-wide">API key<input aria-label="Custom Provider API key" className={customHasStoredKey && focusedKeyField !== "custom" ? "masked-key" : undefined} type="password" placeholder={customHasStoredKey && focusedKeyField !== "custom" ? API_KEY_MASK : "API key"} value={customApiKey} onChange={(event) => setCustomApiKey(event.target.value)} onFocus={() => setFocusedKeyField("custom")} onBlur={() => setFocusedKeyField(undefined)} /></label>
+			</div>
+			<datalist id={modelCatalogId}>{modelCatalog.map((model) => <option value={model.id} label={model.name} key={model.id} />)}</datalist>
+			<button type="button" className="custom-save" disabled={!custom.baseUrl.trim() || !custom.modelId.trim() || !customApiKey.trim()} onClick={() => void saveCustom()}>{configuredCustom ? "Save custom provider" : "Add custom provider"}</button>
+		</section> : null}
+	</div>;
 }

@@ -6,6 +6,7 @@ import { RpcServer } from "./rpc/server.ts";
 import { rpcServerKey } from "./rpc/server-service.ts";
 import { createProductHost } from "./runtime/product-host.ts";
 import { createSessionHost } from "./runtime/session-host.ts";
+import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 
 export { type RpcServerService, rpcServerKey } from "./rpc/server-service.ts";
 
@@ -27,6 +28,29 @@ export const apply: PluginDefinition["apply"] = async (context, _config, fiber) 
 		agentDir: join(homedir(), ".di-code"),
 		projectTrusted: context.capabilities.trustedProject,
 		provider: selection.provider,
+		model: selection.model,
+		runtimeSnapshot: () => {
+			const ui = session.ui();
+			return {
+				providerId: ui.providerId,
+				modelId: ui.modelId,
+				...(ui.thinkingLevel ? { thinkingLevel: ui.thinkingLevel } : {}),
+			};
+		},
+		reloadRuntime: async () => {
+			const cwd = context.require(workspaceCapabilityKey).allowedRoot;
+			const agentDir = join(homedir(), ".di-code");
+			const configuration = await loadStartupConfiguration(cwd, process.env, agentDir);
+			const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
+			session.setRuntimeValue(runtime.provider, runtime.model);
+			return configuration;
+		},
+		reloadConfiguration: () =>
+			loadStartupConfiguration(
+				context.require(workspaceCapabilityKey).allowedRoot,
+				process.env,
+				join(homedir(), ".di-code"),
+			),
 		refreshResources: (projectTrusted) => session.refreshResources(projectTrusted),
 	});
 	if (!session.state().activeSession) await session.createSession();

@@ -561,7 +561,9 @@ export class AgentSession {
 			await this.emitSession({ type: "compaction_end", reason, success: false, errorMessage: error.message });
 			throw error;
 		}
-		const preparation = prepareCompaction(messages, this.keepRecentTokens);
+		const preparation =
+			prepareCompaction(messages, this.keepRecentTokens) ??
+			(reason === "manual" ? this.prepareManualCompaction(messages) : undefined);
 		const firstKeptEntryId = preparation ? context.sourceEntryIds[preparation.firstKeptMessageIndex] : undefined;
 		if (!preparation || typeof firstKeptEntryId !== "string") {
 			const errorMessage =
@@ -602,5 +604,14 @@ export class AgentSession {
 
 		this.agent.replaceContext(this.sessionManager.buildContext().messages);
 		await this.emitSession({ type: "compaction_end", reason, success: true });
+	}
+
+	/** A manual request may retain only the newest complete user turn when the configured suffix is larger than history. */
+	private prepareManualCompaction(messages: readonly Message[]) {
+		for (let index = messages.length - 1; index > 0; index--) {
+			if (messages[index]?.role !== "user") continue;
+			return prepareCompaction(messages, estimateContextTokens(messages.slice(index)));
+		}
+		return undefined;
 	}
 }

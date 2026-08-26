@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, MessageSquarePlus, PanelLeftClose, Settings, Sparkles } from "lucide-react";
+import { ChevronDown, MessageSquarePlus, PanelLeftClose, Settings, Sparkles } from "lucide-react";
 import type { SessionSummary } from "../types.ts";
 import { IconButton } from "./IconButton.tsx";
 import { SessionTree } from "./SessionTree.tsx";
@@ -29,13 +29,13 @@ export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSetting
 			</div>
 			{!collapsed ? (
 				<>
-					<button className="workspace-switcher" type="button"><span className="workspace-avatar">W</span><span className="workspace-name">Workspace</span><ChevronDown size={16} /></button>
+					<div className="workspace-switcher"><span className="workspace-avatar">W</span><span className="workspace-name">Workspace</span><ChevronDown size={16} /></div>
 					<button className="new-session" type="button" onClick={onNewSession}><MessageSquarePlus size={17} />New session<span className="shortcut">⌘ K</span></button>
 					<div className="session-heading"><span>Sessions</span><span className="session-count">{sessions.length}</span></div>
 					<SessionTree sessions={sessions} activeSessionId={activeSessionId} onOpen={onOpenSession} onRename={onRenameSession} onDelete={onDeleteSession} onBranch={onBranchSession} onInspect={onInspectSession} />
 					{sessionWebSlot ? <div className="web-slot-session-tree">{sessionWebSlot}</div> : null}
 					{webSlot ? <div className="web-slot-sidebar">{webSlot}</div> : null}
-					<div className="sidebar-footer"><button className="footer-button" type="button" onClick={onSettings}><Settings size={17} />Settings</button><button className="footer-button" type="button"><Folder size={17} />Workspace files</button></div>
+					<div className="sidebar-footer"><button className="footer-button" type="button" onClick={onSettings}><Settings size={17} />Settings</button></div>
 				</>
 			) : <div className="collapsed-actions"><IconButton label="New session" icon={MessageSquarePlus} onClick={onNewSession} /><IconButton label="Settings" icon={Settings} onClick={onSettings} /></div>}
 		</aside>
