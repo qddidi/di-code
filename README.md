@@ -674,6 +674,8 @@ npm run dev -- --trust-project --interactive
 
 ## 开发
 
+按主题阅读完整中文文档：[docs 文档索引](docs/README.md)。其中包含开发教程、CLI/配置、Session 与 Skills、MCP、插件、WebUI、TUI 以及运行时/RPC 架构说明。
+
 ```powershell
 npm run build   # 依次构建全部 workspace
 npm run check   # Biome 检查与 TypeScript 类型检查
