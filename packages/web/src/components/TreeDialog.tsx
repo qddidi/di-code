@@ -1,6 +1,7 @@
 import { Bot, FileText, GitBranch, MessageSquare, Puzzle, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionTreeEntry, SessionTreeNode } from "../types.ts";
+import { useI18n } from "../i18n.tsx";
 
 interface TreeGutter {
 	readonly level: number;
@@ -135,6 +136,7 @@ function entryMeta(entry: SessionTreeEntry): EntryMeta {
 }
 
 export function TreeDialog({ open, tree, onClose, onContinue }: TreeDialogProps): React.JSX.Element | null {
+	const { t } = useI18n();
 	const nodes = useMemo(() => flatten(tree), [tree]);
 	const [selectedIndex, setSelectedIndex] = useState(-1);
 	const [navigating, setNavigating] = useState(false);
@@ -162,7 +164,7 @@ export function TreeDialog({ open, tree, onClose, onContinue }: TreeDialogProps)
 			if (event.key === "ArrowUp") { event.preventDefault(); setSelectedIndex((current) => nextContinuableIndex(nodes, current, -1)); }
 			if (event.key === "Enter") { event.preventDefault(); void navigate(); }
 		}}>
-			<header className="tree-dialog-header"><div><span className="eyebrow">Session history</span><h2 id="tree-dialog-title">Choose where to continue</h2></div><button ref={closeButton} className="icon-button" type="button" aria-label="Close session tree" title="Close" onClick={onClose}><X size={17} /></button></header>
+			<header className="tree-dialog-header"><div><span className="eyebrow">{t("Session history")}</span><h2 id="tree-dialog-title">{t("Choose where to continue")}</h2></div><button ref={closeButton} className="icon-button" type="button" aria-label={t("Close session tree")} title={t("Close")} onClick={onClose}><X size={17} /></button></header>
 			<div className="tree-dialog-list" role="listbox" aria-label="Session tree" aria-activedescendant={selected ? `tree-node-${selected.entry.id}` : undefined}>
 				{nodes.length ? nodes.map((node, index) => {
 					const meta = entryMeta(node.entry);
@@ -176,9 +178,9 @@ export function TreeDialog({ open, tree, onClose, onContinue }: TreeDialogProps)
 						<Icon size={15} className={`tree-dialog-icon tree-dialog-${meta.tone}`} />
 						<span className="tree-dialog-copy"><strong>{meta.label}</strong><span>{entryText(node.entry)}</span></span>
 					</button>;
-				}) : <p className="tree-dialog-empty">This session has no history nodes.</p>}
+				}) : <p className="tree-dialog-empty">{t("This session has no history nodes.")}</p>}
 			</div>
-			<footer className="tree-dialog-footer"><span>{selected ? `${selectedIndex + 1} of ${nodes.length}` : "No available nodes"}</span><button type="button" className="tree-continue" disabled={!selected || navigating} onClick={() => void navigate()}><GitBranch size={15} />{navigating ? "Switching..." : "Continue from selected"}</button></footer>
+			<footer className="tree-dialog-footer"><span>{selected ? `${selectedIndex + 1} / ${nodes.length}` : t("No available nodes")}</span><button type="button" className="tree-continue" disabled={!selected || navigating} onClick={() => void navigate()}><GitBranch size={15} />{navigating ? t("Switching...") : t("Continue from selected")}</button></footer>
 		</section>
 	</div>;
 }

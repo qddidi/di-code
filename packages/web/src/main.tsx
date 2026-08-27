@@ -21,8 +21,10 @@ import { useConversation } from "./use-conversation.ts";
 import "./styles.css";
 import "./settings.css";
 import { createWebSlotHost, WebSlot } from "./web-slots.tsx";
+import { I18nProvider, useI18n } from "./i18n.tsx";
 
 function App(): React.JSX.Element {
+	const { setLocale } = useI18n();
 	const { data, error: bootError, loading } = useBoot();
 	const [workspaceId, setWorkspaceId] = useState<string>();
 	selectWorkspace(workspaceId);
@@ -44,6 +46,7 @@ function App(): React.JSX.Element {
 	const refreshSettings = useCallback(async (): Promise<SettingsSnapshot> => {
 		const value = await loadSettings();
 		setSettings(value);
+		setLocale(value.locale === "zh-CN" ? "zh-CN" : "en");
 		setOnboarding(value.providers.every((provider) => !provider.configured));
 		return value;
 	}, []);
@@ -143,4 +146,4 @@ function App(): React.JSX.Element {
 const container = document.getElementById("root")! as HTMLElement & { __diCodeRoot?: Root };
 const root = container.__diCodeRoot ?? createRoot(container);
 container.__diCodeRoot = root;
-root.render(<StrictMode><App /></StrictMode>);
+root.render(<StrictMode><I18nProvider><App /></I18nProvider></StrictMode>);
