@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,8 @@ import {
 export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal" | "toolApproval"> {
 	readonly context: Context;
 	readonly allowedRoot: string;
+	/** User-level directory shared by WebUI restarts for workspace registrations. */
+	readonly workspaceRegistryDir?: string;
 	/** Additional workspace roots explicitly authorized by the launcher. */
 	readonly allowedWorkspaces?: readonly string[];
 	readonly host?: string;
@@ -130,6 +132,9 @@ export class WebUiServer {
 	private readonly clientsByResumeToken = new Map<string, ClientState>();
 	private readonly server: Server;
 	private readonly addedWorkspaceRoots = new Set<string>();
+	private readonly removedWorkspaceRoots = new Set<string>();
+	private workspaceRegistryLoaded = false;
+	private readonly workspaceNames = new Map<string, string>();
 	private tokenValue: string;
 	private sseConnections = 0;
 	private disposed = false;
@@ -217,6 +222,10 @@ export class WebUiServer {
 			if (!this.rateAllowed(client)) return json(res, 429, { error: "Rate limit exceeded." });
 			if (req.method === "GET" && url.pathname === "/api/boot") return await this.boot(res, client, url);
 			if (req.method === "POST" && url.pathname === "/api/workspaces") return await this.addWorkspaceRoute(req, res);
+			if (req.method === "POST" && url.pathname === "/api/workspaces/rename")
+				return await this.renameWorkspaceRoute(req, res);
+			if (req.method === "POST" && url.pathname === "/api/workspaces/delete")
+				return await this.deleteWorkspaceRoute(req, res);
 			if (req.method === "POST" && url.pathname === "/api/workspaces/pick") return await this.pickWorkspaceRoute(res);
 			if (req.method === "POST" && url.pathname === "/api/rpc") return await this.rpc(req, res, client, url);
 			if (req.method === "GET" && url.pathname === "/api/events") return await this.events(req, res, client, url);
@@ -534,6 +543,7 @@ export class WebUiServer {
 		return { actor, dispatcher };
 	}
 	private async authorizedWorkspaces(): Promise<readonly WebWorkspace[]> {
+		await this.loadWorkspaceRegistry();
 		const primary = await realpath(resolve(this.options.allowedRoot));
 		const candidates = [
 			this.options.allowedRoot,
@@ -543,8 +553,14 @@ export class WebUiServer {
 		const seen = new Set<string>();
 		const result: WebWorkspace[] = [];
 		for (const candidate of candidates) {
-			const root = await realpath(resolve(candidate));
+			let root: string;
+			try {
+				root = await realpath(resolve(candidate));
+			} catch {
+				continue;
+			}
 			const key = root.toLowerCase();
+			if (this.removedWorkspaceRoots.has(key)) continue;
 			if (seen.has(key)) continue;
 			seen.add(key);
 			if (key !== primary.toLowerCase()) {
@@ -553,7 +569,7 @@ export class WebUiServer {
 			}
 			result.push({
 				id: createHash("sha256").update(root).digest("hex").slice(0, 24),
-				name: basename(root) || "Workspace",
+				name: this.workspaceNames.get(key) ?? (basename(root) || "Workspace"),
 				root,
 			});
 		}
@@ -566,6 +582,42 @@ export class WebUiServer {
 		const workspace = await this.addWorkspace((value as { readonly path: string }).path);
 		json(res, 200, { workspace });
 	}
+	private async renameWorkspaceRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
+		const value: unknown = JSON.parse(await body(req, 64 * 1024));
+		if (typeof value !== "object" || value === null) throw new Error("Workspace details are required.");
+		const input = value as { readonly workspaceId?: unknown; readonly name?: unknown };
+		if (typeof input.workspaceId !== "string" || typeof input.name !== "string")
+			throw new Error("Workspace details are invalid.");
+		const workspace = await this.workspaceById(input.workspaceId);
+		const name = input.name.trim();
+		if (!name || name.length > 120) throw new Error("Workspace name is invalid.");
+		this.workspaceNames.set(workspace.root.toLowerCase(), name);
+		await this.saveWorkspaceRegistry();
+		json(res, 200, { workspace: { id: workspace.id, name } });
+	}
+	private async deleteWorkspaceRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
+		const value: unknown = JSON.parse(await body(req, 64 * 1024));
+		if (
+			typeof value !== "object" ||
+			value === null ||
+			typeof (value as { readonly workspaceId?: unknown }).workspaceId !== "string"
+		)
+			throw new Error("Workspace ID is required.");
+		const workspace = await this.workspaceById((value as { readonly workspaceId: string }).workspaceId);
+		const primary = await realpath(resolve(this.options.allowedRoot));
+		if (workspace.root.toLowerCase() === primary.toLowerCase())
+			throw new Error("The startup workspace cannot be deleted.");
+		this.addedWorkspaceRoots.delete(workspace.root);
+		this.removedWorkspaceRoots.add(workspace.root.toLowerCase());
+		this.workspaceNames.delete(workspace.root.toLowerCase());
+		await this.saveWorkspaceRegistry();
+		json(res, 200, { deleted: true, workspaceId: workspace.id });
+	}
+	private async workspaceById(id: string): Promise<WebWorkspace> {
+		const workspace = (await this.authorizedWorkspaces()).find((item) => item.id === id);
+		if (!workspace) throw new Error("Workspace is not authorized for this WebUI token.");
+		return workspace;
+	}
 	private async pickWorkspaceRoute(res: ServerResponse): Promise<void> {
 		const requestedPath = await this.pickWorkspacePath();
 		if (!requestedPath) return json(res, 200, { cancelled: true });
@@ -575,21 +627,48 @@ export class WebUiServer {
 	private async pickWorkspacePath(): Promise<string | undefined> {
 		if (process.platform === "win32") {
 			const script =
-				"Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }";
-			const result = await execFileAsync("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
+				"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }";
+			const result = await this.runWorkspacePicker("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
 				windowsHide: true,
 			});
 			return result.stdout.trim() || undefined;
 		}
 		if (process.platform === "darwin") {
-			const result = await execFileAsync("osascript", [
+			const result = await this.runWorkspacePicker("osascript", [
 				"-e",
 				'POSIX path of (choose folder with prompt "Choose a workspace")',
 			]);
 			return result.stdout.trim() || undefined;
 		}
-		const result = await execFileAsync("zenity", ["--file-selection", "--directory", "--title=Choose a workspace"]);
+		const result = await this.runWorkspacePicker("zenity", [
+			"--file-selection",
+			"--directory",
+			"--title=Choose a workspace",
+		]);
 		return result.stdout.trim() || undefined;
+	}
+	private async runWorkspacePicker(
+		command: string,
+		args: readonly string[],
+		options: { readonly windowsHide?: boolean } = {},
+	): Promise<{ readonly stdout: string }> {
+		try {
+			const result = await execFileAsync(command, [...args], {
+				...options,
+				timeout: 5 * 60 * 1000,
+				maxBuffer: 64 * 1024,
+			});
+			return { stdout: result.stdout };
+		} catch (cause) {
+			const error = cause as { readonly code?: number | string; readonly stderr?: string };
+			// osascript and zenity use non-zero exit codes for an explicit cancel.
+			if (error.code === 1 || error.code === 255 || error.code === -128) return { stdout: "" };
+			if (typeof error.code === "string" && error.code === "ENOENT")
+				throw new Error(
+					`Unable to open the ${command} directory picker. Install ${command} or choose a workspace another way.`,
+				);
+			throw new Error(`Workspace directory picker failed.${error.stderr?.trim() ? ` ${error.stderr.trim()}` : ""}`);
+		}
 	}
 	/** Adds a validated local directory to this server's explicitly authorized workspace set. */
 	private async addWorkspace(requestedPath: string): Promise<Pick<WebWorkspace, "id" | "name">> {
@@ -601,7 +680,45 @@ export class WebUiServer {
 			await createProjectTrustStore(resolve(this.options.agentDir, "trust.json")).set(root, true);
 		}
 		this.addedWorkspaceRoots.add(root);
-		return { id: createHash("sha256").update(root).digest("hex").slice(0, 24), name: basename(root) || "Workspace" };
+		this.removedWorkspaceRoots.delete(root.toLowerCase());
+		await this.saveWorkspaceRegistry();
+		const id = createHash("sha256").update(root).digest("hex").slice(0, 24);
+		return { id, name: this.workspaceNames.get(root.toLowerCase()) ?? (basename(root) || "Workspace") };
+	}
+	private workspaceRegistryPath(): string {
+		return resolve(this.options.workspaceRegistryDir ?? this.options.agentDir, "webui", "workspaces.json");
+	}
+	private async loadWorkspaceRegistry(): Promise<void> {
+		if (this.workspaceRegistryLoaded) return;
+		this.workspaceRegistryLoaded = true;
+		try {
+			const value = JSON.parse(await readFile(this.workspaceRegistryPath(), "utf8")) as {
+				readonly roots?: unknown;
+				readonly removed?: unknown;
+				readonly names?: unknown;
+			};
+			if (Array.isArray(value.roots))
+				for (const root of value.roots) if (typeof root === "string") this.addedWorkspaceRoots.add(root);
+			if (Array.isArray(value.removed))
+				for (const root of value.removed) if (typeof root === "string") this.removedWorkspaceRoots.add(root);
+			if (value.names && typeof value.names === "object")
+				for (const [root, name] of Object.entries(value.names as Record<string, unknown>))
+					if (typeof name === "string") this.workspaceNames.set(root, name);
+		} catch {}
+	}
+	private async saveWorkspaceRegistry(): Promise<void> {
+		await mkdir(resolve(this.options.workspaceRegistryDir ?? this.options.agentDir, "webui"), {
+			recursive: true,
+		});
+		await writeFile(
+			this.workspaceRegistryPath(),
+			JSON.stringify({
+				roots: [...this.addedWorkspaceRoots],
+				removed: [...this.removedWorkspaceRoots],
+				names: Object.fromEntries(this.workspaceNames.entries()),
+			}),
+			"utf8",
+		);
 	}
 	private async resolveWorkspace(url: URL): Promise<WebWorkspace> {
 		const workspaces = await this.authorizedWorkspaces();

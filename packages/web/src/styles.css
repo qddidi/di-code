@@ -17,6 +17,8 @@
 .workspace-add-dialog { width: min(420px, 100%); padding: 18px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 16px 48px rgba(18,25,33,.2); }
 .workspace-pick-button { display: inline-flex; align-items: center; gap: 7px; width: 100%; margin-top: 18px; padding: 10px 12px; color: var(--ink); background: #f0f2f4; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; }
 .workspace-pick-button:hover { background: #e7eaed; }
+.workspace-drop-zone { display: grid; justify-items: center; gap: 6px; margin-top: 16px; padding: 22px 12px; color: var(--muted); border: 1px dashed #b9c2cc; border-radius: 6px; text-align: center; }
+.workspace-drop-zone svg { color: #5a789d; }.workspace-drop-zone span { color: var(--ink); font-size: 12px; }.workspace-drop-zone small { font-size: 11px; }
 .workspace-add-header { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .workspace-add-header h2 { margin: 0; font-size: 18px; }
 .workspace-add-note { margin: 16px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
@@ -45,6 +47,7 @@
 .workspace-row-actions { display: inline-flex; align-items: center; gap: 1px; padding-right: 4px; opacity: 0; }
 .workspace-section-header-wrap:hover .workspace-row-actions, .workspace-section.is-active > .workspace-section-header-wrap .workspace-row-actions, .workspace-row-actions:focus-within { opacity: 1; }
 .workspace-row-actions .icon-button { width: 26px; height: 26px; }
+.workspace-menu-anchor { position: relative; }.workspace-action-menu { position: absolute; z-index: 9; top: calc(100% + 3px); right: 0; min-width: 132px; display: grid; gap: 2px; padding: 5px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 10px 28px rgba(23,32,43,.16); }.workspace-action-menu button { padding: 7px 8px; color: inherit; background: transparent; border-radius: 4px; text-align: left; font-size: 11px; }.workspace-action-menu button:hover { background: #f0f2f4; }.workspace-inline-name { min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); background: var(--surface); font-size: 12px; }
 .workspace-section-sessions { padding: 0 0 4px 17px; }
 .workspace-section-sessions .session-tree { min-height: 0; overflow: visible; }
 .workspace-section-sessions .session-item { padding-top: 7px; padding-bottom: 7px; }

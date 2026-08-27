@@ -53,6 +53,7 @@ try {
 		context,
 		allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,
 		agentDir,
+		workspaceRegistryDir: resolve(join(homedir(), ".di-code")),
 		provider: runtime.provider,
 		model: runtime.model,
 		projectTrusted,

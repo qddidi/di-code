@@ -4,6 +4,7 @@ import {
 	callRpc,
 	deleteSession,
 	eventHeaders,
+	eventsPath,
 	inspectSession,
 	loadSessions,
 	rememberClient,
@@ -295,6 +296,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const [attachments, setAttachments] = useState<readonly AttachmentInfo[]>([]);
 	const [connected, setConnected] = useState(false);
 	const [error, setError] = useState<string>();
+	const pendingSessions = useRef<readonly SessionSummary[]>([]);
 	const lastCompactionError = useRef<string | undefined>(undefined);
 	const sequence = useRef(0);
 	const resumeToken = useRef<string | undefined>(undefined);
@@ -311,6 +313,9 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const refreshTimer = useRef<number | undefined>(undefined);
 	useEffect(() => {
 		workspaceRef.current = workspaceId;
+		// Never let a snapshot for the previous actor satisfy refreshes for the
+		// newly selected workspace. The workspace-row plus switches actors first.
+		refreshState.current = undefined;
 		sequence.current = 0;
 		resumeToken.current = undefined;
 		if (refreshTimer.current !== undefined) {
@@ -318,6 +323,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			refreshTimer.current = undefined;
 		}
 		setSessions([]);
+		pendingSessions.current = [];
 		setActiveSessionId(undefined);
 		setMessages([]);
 		setTools([]);
@@ -350,7 +356,10 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			callRpc<{ readonly tree: readonly SessionTreeNode[] }>("get_tree").catch(() => ({ tree: [] })),
 		]);
 		if (workspaceRef.current !== requestedWorkspace) return;
-		setSessions(sessionResult.sessions);
+		const serverSessionIds = new Set(sessionResult.sessions.map((session) => session.id));
+		const pending = pendingSessions.current.filter((item) => !serverSessionIds.has(item.id));
+		pendingSessions.current = pending;
+		setSessions([...pending, ...sessionResult.sessions]);
 		setActiveSessionId(stateResult.state.sessionId === "uninitialized" ? undefined : stateResult.state.sessionId);
 		sequence.current = Math.max(sequence.current, stateResult.state.sequence ?? 0);
 		setMessages(transcript.messages);
@@ -593,7 +602,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		const connect = async (): Promise<void> => {
 			while (!stopped.current) {
 				try {
-					const response = await fetch("/api/events", {
+					const response = await fetch(eventsPath(), {
 						credentials: "same-origin",
 						headers: eventHeaders(sequence.current, resumeToken.current),
 					});
@@ -791,13 +800,18 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			label: "New session",
 			modifiedAt: new Date().toISOString(),
 		};
+		pendingSessions.current = [placeholder, ...pendingSessions.current];
 		setSessions((current) => [placeholder, ...current]);
 		setActiveSessionId(placeholderId);
 		try {
 			const result = await callRpc<{ readonly session: SessionSummary }>("new_session");
+			pendingSessions.current = [result.session];
+			setSessions((current) => [result.session, ...current.filter((session) => session.id !== placeholderId)]);
 			await refresh();
+			pendingSessions.current = pendingSessions.current.filter((session) => session.id !== result.session.id);
 			setActiveSessionId(result.session.id);
 		} catch (cause) {
+			pendingSessions.current = pendingSessions.current.filter((session) => session.id !== placeholderId);
 			setSessions((current) => current.filter((session) => session.id !== placeholderId));
 			setActiveSessionId(undefined);
 			setError(cause instanceof Error ? cause.message : "Unable to create a new session.");

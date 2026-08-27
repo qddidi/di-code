@@ -9,7 +9,6 @@ import {
 	runtimeSelectionKey,
 	sessionStoreRegistryKey,
 	type ToolApprovalCapability,
-	workspaceCapabilityKey,
 } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
 import { SessionManager } from "../core/session/session-manager.ts";
@@ -472,7 +471,9 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 	};
 	const createAgent = async (manager: SessionManager, resources = bootstrap): Promise<AgentSession> => {
 		const created = await context.require(agentSessionKey).create({
-			allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,
+			// The host owns the workspace boundary. Reading the root from the shared
+			// composition context would pin every WebUI actor to the startup folder.
+			allowedRoot: resources.workspace,
 			provider: resources.provider,
 			model: resources.model,
 			systemPrompt: resources.systemPrompt,

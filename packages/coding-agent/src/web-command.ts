@@ -93,6 +93,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 			allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,
 			allowedWorkspaces: command.workspaces,
 			agentDir,
+			workspaceRegistryDir: resolve(join(homedir(), ".di-code")),
 			provider: runtime.provider,
 			model: runtime.model,
 			projectTrusted,

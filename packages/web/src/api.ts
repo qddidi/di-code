@@ -100,6 +100,10 @@ export function eventHeaders(lastSequence: number, resumeToken?: string): Header
 	return headers;
 }
 
+export function eventsPath(): string {
+	return apiPath("/api/events");
+}
+
 export async function loadSessions(): Promise<SessionsResult> {
 	return callRpc<SessionsResult>("list_sessions");
 }
@@ -125,16 +129,47 @@ export async function loadSessionsForWorkspace(selectedWorkspaceId: string): Pro
 	return envelope.result;
 }
 
-export async function addWorkspace(): Promise<WorkspaceSummary | undefined> {
-	const response = await fetch("/api/workspaces/pick", {
+export async function addWorkspace(path?: string): Promise<WorkspaceSummary | undefined> {
+	const response = await fetch(apiPath(path ? "/api/workspaces" : "/api/workspaces/pick"), {
 		method: "POST",
 		credentials: "same-origin",
 		headers: clientHeaders({ "content-type": "application/json" }),
+		...(path ? { body: JSON.stringify({ path }) } : {}),
 	});
 	rememberClient(response);
-	if (!response.ok) throw new Error("Unable to add workspace.");
+	if (!response.ok) {
+		let message = "Unable to add workspace.";
+		try {
+			const error = (await response.json()) as { readonly error?: unknown };
+			if (typeof error.error === "string" && error.error.trim()) message = error.error;
+		} catch {}
+		throw new Error(message);
+	}
 	const result = (await response.json()) as { readonly cancelled?: boolean; readonly workspace?: WorkspaceSummary };
 	return result.cancelled ? undefined : result.workspace;
+}
+
+export async function renameWorkspace(workspaceId: string, name: string): Promise<WorkspaceSummary> {
+	const response = await fetch(apiPath("/api/workspaces/rename"), {
+		method: "POST",
+		credentials: "same-origin",
+		headers: clientHeaders({ "content-type": "application/json" }),
+		body: JSON.stringify({ workspaceId, name }),
+	});
+	rememberClient(response);
+	if (!response.ok) throw new Error("Unable to rename workspace.");
+	const result = (await response.json()) as { readonly workspace: WorkspaceSummary };
+	return result.workspace;
+}
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
+	const response = await fetch(apiPath("/api/workspaces/delete"), {
+		method: "POST",
+		credentials: "same-origin",
+		headers: clientHeaders({ "content-type": "application/json" }),
+		body: JSON.stringify({ workspaceId }),
+	});
+	rememberClient(response);
+	if (!response.ok) throw new Error("Unable to delete workspace.");
 }
 
 export async function loadSettings(): Promise<SettingsSnapshot> {
