@@ -167,4 +167,43 @@ describe("OpenAI Chat Completions compatibility", () => {
 		expect(result.errorMessage).toContain("model is unavailable");
 		expect(result.errorMessage).not.toContain("secret-key");
 	});
+
+	it("projects image-capable user input as a Chat Completions image_url block", async () => {
+		const fetch = vi.fn(async () => sse({ choices: [{ delta: { content: "seen" }, finish_reason: "stop" }] }));
+		const imageModel: Model = { ...model, input: ["text", "image"] };
+		const provider = createOpenAIChatCompletionsProvider({
+			providerId: "custom-chat",
+			apiKey: "test-key",
+			models: [imageModel],
+			fetch,
+		});
+
+		await provider
+			.stream(imageModel, {
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "Describe this" },
+							{ type: "image", data: "AQI=", mimeType: "image/png" },
+						],
+						timestamp: 1,
+					},
+				],
+			})
+			.result();
+
+		const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect(JSON.parse(String(init.body))).toMatchObject({
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "Describe this" },
+						{ type: "image_url", image_url: { url: "data:image/png;base64,AQI=" } },
+					],
+				},
+			],
+		});
+	});
 });

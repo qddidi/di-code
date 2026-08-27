@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFauxProvider } from "@di-code/ai";
+import { type Context, createFauxProvider } from "@di-code/ai";
 import {
 	agentSession,
 	compactionBasic,
@@ -129,7 +129,12 @@ describe("WebUiServer", () => {
 		expect(cookie).toContain("HttpOnly");
 		const boot = await fetch(`${baseUrl}/api/boot`, { headers: { cookie: cookie?.split(";")[0] ?? "" } });
 		expect(boot.status).toBe(200);
-		expect(await boot.json()).toMatchObject({ protocolVersion: 1, capabilities: { methods: expect.any(Array) } });
+		const bootData = (await boot.json()) as {
+			readonly workspaceId: string;
+			readonly workspaces: readonly { readonly id: string }[];
+		};
+		expect(bootData).toMatchObject({ workspaceId: expect.any(String), workspaces: [{ id: expect.any(String) }] });
+		expect(bootData.workspaces[0]?.id).toBe(bootData.workspaceId);
 		await expect(fetch(`${baseUrl}/api/rpc`, { method: "POST", body: "{}" })).resolves.toMatchObject({ status: 401 });
 		const developmentSession = await fetch(`${baseUrl}/api/session`, { headers: { origin: developmentOrigin } });
 		expect(developmentSession.status).toBe(204);
@@ -469,6 +474,14 @@ describe("WebUiServer", () => {
 			ok: true,
 			result: { method: "create_attachment", attachment: { id: expect.any(String) } },
 		});
+		const fiveMiB = Buffer.alloc(5 * 1024 * 1024, 1).toString("base64");
+		const maximum = await fetch(`${baseUrl}/attachments`, {
+			method: "POST",
+			headers: headers(token, "attachment-client-id"),
+			body: JSON.stringify({ name: "maximum.png", contentType: "image/png", data: fiveMiB }),
+		});
+		const maximumResult = await maximum.json();
+		expect(maximumResult).toMatchObject({ ok: true, result: { method: "create_attachment" } });
 		const events = await fetch(`${baseUrl}/events`, { headers: headers(token, "attachment-client-id") });
 		expect(events.status).toBe(200);
 		const reader = events.body?.getReader();
@@ -485,6 +498,79 @@ describe("WebUiServer", () => {
 		});
 		expect(resumed.headers.get("x-di-code-client-id")).toBe("attachment-client-id");
 		await resumed.body?.cancel();
+	});
+
+	it("passes an uploaded image through the WebUI actor into the Provider context", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "seen" }] }] });
+		const contexts: Context[] = [];
+		const provider = {
+			...faux.provider,
+			stream: (model: typeof faux.model, context: Context, options?: Parameters<typeof faux.provider.stream>[2]) => {
+				contexts.push(structuredClone(context));
+				return faux.provider.stream(model, context, options);
+			},
+		};
+		const { baseUrl, token } = await createServer({ provider, model: faux.model });
+		const clientId = "image-context-client";
+		const upload = await fetch(`${baseUrl}/attachments`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ name: "image.png", contentType: "image/png", data: "AQI=" }),
+		});
+		const attachment = (await upload.json()) as { readonly result: { readonly attachment: { readonly id: string } } };
+		const prompt = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "image-context-prompt",
+				method: "prompt",
+				params: { message: "describe", attachmentIds: [attachment.result.attachment.id] },
+			}),
+		});
+		expect(await prompt.json()).toMatchObject({ ok: true, result: { method: "prompt" } });
+		expect(contexts.at(-1)?.messages.at(-1)).toMatchObject({
+			role: "user",
+			content: [
+				{ type: "text", text: "describe" },
+				{ type: "image", mimeType: "image/png", data: "AQI=" },
+			],
+		});
+		const transcript = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "image-context-transcript",
+				method: "get_transcript",
+				params: { maxBytes: 8 * 1024 * 1024 },
+			}),
+		});
+		const transcriptResult = (await transcript.json()) as {
+			readonly ok: boolean;
+			readonly result: { readonly method: string; readonly transcript: readonly unknown[] };
+		};
+		expect(transcriptResult).toMatchObject({ ok: true, result: { method: "get_transcript" } });
+		const persistedImageMessage = transcriptResult.result.transcript.find((entry) => {
+			if (typeof entry !== "object" || entry === null) return false;
+			const record = entry as Record<string, unknown>;
+			if (record.role !== "user" || !Array.isArray(record.content)) return false;
+			return (
+				record.content.some((block) => {
+					if (typeof block !== "object" || block === null) return false;
+					const content = block as Record<string, unknown>;
+					return content.type === "text" && content.text === "describe";
+				}) &&
+				record.content.some((block) => {
+					if (typeof block !== "object" || block === null) return false;
+					const content = block as Record<string, unknown>;
+					return content.type === "image" && content.mimeType === "image/png" && content.data === "AQI=";
+				})
+			);
+		});
+		expect(persistedImageMessage).toBeDefined();
 	});
 
 	it("keeps detached request state idempotent and removes actor attachments on use and shutdown", async () => {

@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { extname, relative, resolve, sep } from "node:path";
+import { basename, extname, relative, resolve, sep } from "node:path";
 import type { ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
@@ -59,6 +59,12 @@ interface ClientState {
 	readonly productHosts: Map<string, ProductHost>;
 	readonly connections: Set<Connection>;
 	readonly requestTimes: number[];
+}
+
+interface WebWorkspace {
+	readonly id: string;
+	readonly name: string;
+	readonly root: string;
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {
@@ -381,6 +387,7 @@ export class WebUiServer {
 	}
 	private async boot(res: ServerResponse, client: ClientState, url: URL): Promise<void> {
 		const { actor, dispatcher } = await this.actor(client, url);
+		const workspace = await this.resolveWorkspace(url);
 		const [capabilities, state, runtime] = await Promise.all([
 			dispatcher.dispatch({
 				version: RPC_PROTOCOL_VERSION,
@@ -409,22 +416,12 @@ export class WebUiServer {
 			capabilities: capabilities.ok ? capabilities.result : undefined,
 			state: state.ok ? state.result.state : actor.state(),
 			runtime: runtime.ok ? runtime.result : undefined,
+			workspaceId: workspace.id,
+			workspaces: (await this.authorizedWorkspaces()).map(({ id, name }) => ({ id, name })),
 		});
 	}
 	private async actor(client: ClientState, url: URL): Promise<{ actor: SessionActor; dispatcher: RpcDispatcher }> {
-		const requested = await realpath(resolve(url.searchParams.get("workspace") ?? this.options.allowedRoot));
-		const configuredRoots = [this.options.allowedRoot, ...(this.options.allowedWorkspaces ?? [])];
-		const authorized = new Map<string, string>();
-		for (const root of configuredRoots) {
-			const real = await realpath(resolve(root));
-			authorized.set(real.toLowerCase(), real);
-		}
-		const allowed = authorized.get(requested.toLowerCase());
-		if (!allowed) throw new Error("Workspace is not authorized for this WebUI token.");
-		if (allowed.toLowerCase() !== (await realpath(resolve(this.options.allowedRoot))).toLowerCase()) {
-			const trusted = await createProjectTrustStore(resolve(this.options.agentDir, "trust.json")).get(allowed);
-			if (!trusted) throw new Error("Workspace is not trusted for this WebUI token.");
-		}
+		const allowed = (await this.resolveWorkspace(url)).root;
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
 			const startupConfiguration = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
@@ -514,6 +511,48 @@ export class WebUiServer {
 		});
 		return { actor, dispatcher };
 	}
+	private async authorizedWorkspaces(): Promise<readonly WebWorkspace[]> {
+		const primary = await realpath(resolve(this.options.allowedRoot));
+		const candidates = [this.options.allowedRoot, ...(this.options.allowedWorkspaces ?? [])];
+		const seen = new Set<string>();
+		const result: WebWorkspace[] = [];
+		for (const candidate of candidates) {
+			const root = await realpath(resolve(candidate));
+			const key = root.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			if (key !== primary.toLowerCase()) {
+				const trusted = await createProjectTrustStore(resolve(this.options.agentDir, "trust.json")).get(root);
+				if (!trusted) continue;
+			}
+			result.push({
+				id: createHash("sha256").update(root).digest("hex").slice(0, 24),
+				name: basename(root) || "Workspace",
+				root,
+			});
+		}
+		return result;
+	}
+	private async resolveWorkspace(url: URL): Promise<WebWorkspace> {
+		const workspaces = await this.authorizedWorkspaces();
+		const id = url.searchParams.get("workspaceId");
+		if (id) {
+			const selected = workspaces.find((workspace) => workspace.id === id);
+			if (selected) return selected;
+			throw new Error("Workspace is not authorized for this WebUI token.");
+		}
+		// Preserve the embedding transport's existing path query while the SPA uses opaque workspace IDs.
+		const legacy = url.searchParams.get("workspace");
+		if (legacy) {
+			const requested = await realpath(resolve(legacy));
+			const selected = workspaces.find((workspace) => workspace.root.toLowerCase() === requested.toLowerCase());
+			if (selected) return selected;
+			throw new Error("Workspace is not authorized for this WebUI token.");
+		}
+		const primary = workspaces[0];
+		if (!primary) throw new Error("No trusted Workspace is available for this WebUI token.");
+		return primary;
+	}
 	private resolveActorRuntime(configuration: StartupConfiguration): StartupRuntime {
 		const initialProvider = this.options.provider;
 		const initialModel = this.options.model;
@@ -560,7 +599,8 @@ export class WebUiServer {
 		json(res, 200, response);
 	}
 	private async attachments(req: IncomingMessage, res: ServerResponse, client: ClientState, url: URL): Promise<void> {
-		const value = JSON.parse(await body(req, this.options.maxBodyBytes ?? 8 * 1024 * 1024));
+		// A 5 MiB binary attachment expands to nearly 7 MiB in base64 before JSON framing.
+		const value = JSON.parse(await body(req, this.options.maxBodyBytes ?? 10 * 1024 * 1024));
 		if (typeof value !== "object" || value === null) throw new Error("Attachment body must be an object.");
 		const request = requestFromValue({
 			version: RPC_PROTOCOL_VERSION,

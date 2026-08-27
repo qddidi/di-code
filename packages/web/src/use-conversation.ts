@@ -14,6 +14,7 @@ import type {
 	AttachmentInfo,
 	ContextFile,
 	ConversationActivity,
+	ConversationImage,
 	ConversationMessage,
 	OperationState,
 	SessionSummary,
@@ -54,7 +55,7 @@ export interface ConversationState {
 	readonly openSession: (id: string) => Promise<void>;
 	readonly renameSession: (id: string, label: string) => Promise<void>;
 	readonly deleteSession: (id: string) => Promise<void>;
-	readonly branchSession: (id: string) => Promise<void>;
+	readonly branchSession: (id: string, entryId?: string) => Promise<void>;
 	readonly inspectSession: (id: string) => Promise<unknown>;
 	readonly addFiles: (files: FileList | readonly File[]) => Promise<void>;
 	readonly removeAttachment: (id: string) => void;
@@ -75,6 +76,15 @@ function textFromContent(content: unknown): string {
 			return block?.type === "text" && typeof block.text === "string" ? block.text : "";
 		})
 		.join("");
+}
+
+function imagesFromContent(content: unknown): readonly ConversationImage[] {
+	if (!Array.isArray(content)) return [];
+	return content.flatMap((item) => {
+		const block = asRecord(item);
+		if (block?.type !== "image" || typeof block.data !== "string" || typeof block.mimeType !== "string") return [];
+		return [{ src: `data:${block.mimeType};base64,${block.data}`, mimeType: block.mimeType, alt: "Attached image" }];
+	});
 }
 
 function toolStatus(output: string, isError: boolean, details?: Record<string, unknown>): ToolTrace["status"] {
@@ -105,17 +115,21 @@ function updateActivityTool(
 		: [...activities, { id, kind: "tool", tool }];
 }
 
-function messagesFromTranscript(transcript: unknown): { messages: ConversationMessage[]; tools: ToolTrace[] } {
+function messagesFromTranscript(
+	transcript: unknown,
+	entryIds: readonly unknown[] = [],
+): { messages: ConversationMessage[]; tools: ToolTrace[] } {
 	if (!Array.isArray(transcript)) return { messages: [], tools: [] };
 	const tools: ToolTrace[] = [];
 	const messages: ConversationMessage[] = [];
-	let assistant: { text: string; activities: readonly ConversationActivity[] } | undefined;
+	let assistant: { text: string; activities: readonly ConversationActivity[]; entryId?: string } | undefined;
 	const flushAssistant = (): void => {
 		if (!assistant) return;
 		messages.push({
 			role: "assistant",
 			text: assistant.text,
 			...(assistant.activities.length ? { activities: assistant.activities } : {}),
+			...(assistant.entryId ? { entryId: assistant.entryId } : {}),
 		});
 		assistant = undefined;
 	};
@@ -123,13 +137,20 @@ function messagesFromTranscript(transcript: unknown): { messages: ConversationMe
 		if (!assistant) assistant = { text: "", activities: [] };
 		return assistant;
 	};
-	for (const value of transcript) {
+	for (const [index, value] of transcript.entries()) {
 		const message = asRecord(value);
+		const entryId = typeof entryIds[index] === "string" ? entryIds[index] : undefined;
 		if (!message || (message.role !== "user" && message.role !== "assistant" && message.role !== "tool_result"))
 			continue;
 		if (message.role === "user") {
 			flushAssistant();
-			messages.push({ role: "user", text: textFromContent(message.content) });
+			const images = imagesFromContent(message.content);
+			messages.push({
+				role: "user",
+				text: textFromContent(message.content),
+				...(images.length ? { images } : {}),
+				...(entryId ? { entryId } : {}),
+			});
 			continue;
 		}
 		if (message.role === "assistant") {
@@ -142,6 +163,7 @@ function messagesFromTranscript(transcript: unknown): { messages: ConversationMe
 							? message.errorMessage
 							: "The model request failed.",
 					status: "error",
+					...(entryId ? { entryId } : {}),
 				});
 				continue;
 			}
@@ -154,9 +176,13 @@ function messagesFromTranscript(transcript: unknown): { messages: ConversationMe
 				const current = ensureAssistant();
 				const block = asRecord(item);
 				if (block?.type === "text" && typeof block.text === "string")
-					assistant = { ...current, text: current.text + block.text };
+					assistant = { ...current, text: current.text + block.text, ...(entryId ? { entryId } : {}) };
 				if (block?.type === "thinking" && typeof block.thinking === "string")
-					assistant = { ...current, activities: appendThinking(current.activities, block.thinking) };
+					assistant = {
+						...current,
+						activities: appendThinking(current.activities, block.thinking),
+						...(entryId ? { entryId } : {}),
+					};
 				if (block?.type === "tool_call" && typeof block.id === "string" && typeof block.name === "string") {
 					const tool = {
 						id: block.id,
@@ -167,7 +193,11 @@ function messagesFromTranscript(transcript: unknown): { messages: ConversationMe
 					const previous = tools.findIndex((item) => item.id === tool.id);
 					if (previous === -1) tools.push(tool);
 					else tools[previous] = tool;
-					assistant = { ...current, activities: updateActivityTool(current.activities, tool.id, tool) };
+					assistant = {
+						...current,
+						activities: updateActivityTool(current.activities, tool.id, tool),
+						...(entryId ? { entryId } : {}),
+					};
 				}
 			}
 			continue;
@@ -189,7 +219,11 @@ function messagesFromTranscript(transcript: unknown): { messages: ConversationMe
 		if (previousIndex === -1) tools.push(tool);
 		else tools[previousIndex] = tool;
 		const current = ensureAssistant();
-		assistant = { ...current, activities: updateActivityTool(current.activities, id, tool) };
+		assistant = {
+			...current,
+			activities: updateActivityTool(current.activities, id, tool),
+			...(entryId ? { entryId } : {}),
+		};
 	}
 	flushAssistant();
 	return { messages, tools };
@@ -211,23 +245,26 @@ async function dataUrlFor(file: File): Promise<string> {
 
 async function readAllPages(): Promise<{ messages: ConversationMessage[]; tools: ToolTrace[] }> {
 	const transcript: unknown[] = [];
+	const entryIds: unknown[] = [];
 	let pageToken: string | undefined;
 	do {
-		const result = await callRpc<{ readonly transcript: unknown[]; readonly nextPageToken?: string }>(
-			"get_transcript",
-			{
-				pageSize: 200,
-				maxBytes: 4 * 1024 * 1024,
-				...(pageToken ? { pageToken } : {}),
-			},
-		);
+		const result = await callRpc<{
+			readonly transcript: unknown[];
+			readonly entryIds?: readonly unknown[];
+			readonly nextPageToken?: string;
+		}>("get_transcript", {
+			pageSize: 200,
+			maxBytes: 8 * 1024 * 1024,
+			...(pageToken ? { pageToken } : {}),
+		});
 		transcript.push(...result.transcript);
+		entryIds.push(...(result.entryIds ?? []));
 		pageToken = result.nextPageToken;
 	} while (pageToken);
-	return messagesFromTranscript(transcript);
+	return messagesFromTranscript(transcript, entryIds);
 }
 
-export function useConversation(ready: boolean): ConversationState {
+export function useConversation(ready: boolean, workspaceId: string | undefined): ConversationState {
 	const [sessions, setSessions] = useState<readonly SessionSummary[]>([]);
 	const [activeSessionId, setActiveSessionId] = useState<string>();
 	const [messages, setMessages] = useState<readonly ConversationMessage[]>([]);
@@ -244,8 +281,29 @@ export function useConversation(ready: boolean): ConversationState {
 	const sequence = useRef(0);
 	const resumeToken = useRef<string | undefined>(undefined);
 	const stopped = useRef(false);
+	const workspaceRef = useRef(workspaceId);
+	useEffect(() => {
+		workspaceRef.current = workspaceId;
+		sequence.current = 0;
+		resumeToken.current = undefined;
+		setSessions([]);
+		setActiveSessionId(undefined);
+		setMessages([]);
+		setTools([]);
+		setApprovals([]);
+		setContextFiles([]);
+		setCompaction(undefined);
+		setUsage(undefined);
+		setOperation(undefined);
+		setAttachments((current) => {
+			for (const attachment of current) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+			return [];
+		});
+	}, [workspaceId]);
 
 	const refresh = useCallback(async () => {
+		const requestedWorkspace = workspaceId;
+		if (workspaceRef.current !== requestedWorkspace) return;
 		// The first request establishes the actor identity before the parallel snapshot reads begin.
 		const stateResult = await callRpc<{ readonly state: { readonly sessionId: string; readonly sequence?: number } }>(
 			"get_state",
@@ -256,6 +314,7 @@ export function useConversation(ready: boolean): ConversationState {
 			callRpc<{ readonly usage: UsageSnapshot }>("get_usage"),
 			callRpc<{ readonly files: readonly ContextFile[] }>("list_context_files").catch(() => ({ files: [] })),
 		]);
+		if (workspaceRef.current !== requestedWorkspace) return;
 		setSessions(sessionResult.sessions);
 		setActiveSessionId(stateResult.state.sessionId === "uninitialized" ? undefined : stateResult.state.sessionId);
 		sequence.current = Math.max(sequence.current, stateResult.state.sequence ?? 0);
@@ -263,7 +322,7 @@ export function useConversation(ready: boolean): ConversationState {
 		setTools(transcript.tools);
 		setContextFiles(contextResult.files);
 		setUsage(usageResult.usage);
-	}, []);
+	}, [workspaceId]);
 
 	const handleEvent = useCallback(
 		(record: WireEvent) => {
@@ -446,7 +505,7 @@ export function useConversation(ready: boolean): ConversationState {
 	);
 
 	useEffect(() => {
-		if (!ready) return;
+		if (!ready || !workspaceId) return;
 		stopped.current = false;
 		void refresh().catch((cause: unknown) =>
 			setError(cause instanceof Error ? cause.message : "Unable to load conversation."),
@@ -495,14 +554,35 @@ export function useConversation(ready: boolean): ConversationState {
 		return () => {
 			stopped.current = true;
 		};
-	}, [handleEvent, ready, refresh]);
+	}, [handleEvent, ready, refresh, workspaceId]);
 
 	const send = useCallback(
 		async (text: string) => {
 			const requestId = crypto.randomUUID();
 			setError(undefined);
 			setOperation({ requestId, kind: "prompt", status: "queued" });
-			setMessages((current) => [...current, { role: "user", text }]);
+			setMessages((current) => [
+				...current,
+				{
+					role: "user",
+					text,
+					...(attachments.length
+						? {
+								images: attachments.flatMap((attachment) =>
+									attachment.previewUrl
+										? [
+												{
+													src: attachment.previewUrl,
+													mimeType: attachment.contentType,
+													alt: attachment.name,
+												},
+											]
+										: [],
+								),
+							}
+						: {}),
+				},
+			]);
 			try {
 				const result = await callRpc<{
 					readonly message?: { readonly stopReason?: string; readonly errorMessage?: string };
@@ -634,9 +714,10 @@ export function useConversation(ready: boolean): ConversationState {
 		[refresh],
 	);
 	const branch = useCallback(
-		async (id: string) => {
+		async (id: string, entryId?: string) => {
 			try {
-				await branchSession(id);
+				const session = await branchSession(id, entryId);
+				setActiveSessionId(session.id);
 				await refresh();
 			} catch (cause) {
 				setError(cause instanceof Error ? cause.message : "Unable to branch the session.");

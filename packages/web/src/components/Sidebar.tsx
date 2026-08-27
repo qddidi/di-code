@@ -1,10 +1,13 @@
 import { ChevronDown, MessageSquarePlus, PanelLeftClose, Settings, Sparkles } from "lucide-react";
-import type { SessionSummary } from "../types.ts";
+import type { SessionSummary, WorkspaceSummary } from "../types.ts";
 import { IconButton } from "./IconButton.tsx";
 import { SessionTree } from "./SessionTree.tsx";
 
 interface SidebarProps {
 	readonly sessions: readonly SessionSummary[];
+	readonly workspaces: readonly WorkspaceSummary[];
+	readonly activeWorkspaceId?: string;
+	readonly onSelectWorkspace: (id: string) => void;
 	readonly collapsed: boolean;
 	readonly onToggle: () => void;
 	readonly onNewSession: () => void;
@@ -19,7 +22,7 @@ interface SidebarProps {
 	readonly sessionWebSlot?: React.ReactNode;
 }
 
-export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession, onRenameSession, onDeleteSession, onBranchSession, onInspectSession, webSlot, sessionWebSlot }: SidebarProps): React.JSX.Element {
+export function Sidebar({ sessions, workspaces, activeWorkspaceId, onSelectWorkspace, collapsed, onToggle, onNewSession, onSettings, activeSessionId, onOpenSession, onRenameSession, onDeleteSession, onBranchSession, onInspectSession, webSlot, sessionWebSlot }: SidebarProps): React.JSX.Element {
 	return (
 		<aside className={`sidebar${collapsed ? " is-collapsed" : ""}`} aria-label="Workspace navigation">
 			<div className="sidebar-topline">
@@ -29,7 +32,7 @@ export function Sidebar({ sessions, collapsed, onToggle, onNewSession, onSetting
 			</div>
 			{!collapsed ? (
 				<>
-					<div className="workspace-switcher"><span className="workspace-avatar">W</span><span className="workspace-name">Workspace</span><ChevronDown size={16} /></div>
+					<label className="workspace-switcher"><span className="workspace-avatar">W</span><select aria-label="Select workspace" className="workspace-name" value={activeWorkspaceId} onChange={(event) => onSelectWorkspace(event.target.value)}>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select><ChevronDown size={16} aria-hidden="true" /></label>
 					<button className="new-session" type="button" onClick={onNewSession}><MessageSquarePlus size={17} />New session<span className="shortcut">⌘ K</span></button>
 					<div className="session-heading"><span>Sessions</span><span className="session-count">{sessions.length}</span></div>
 					<SessionTree sessions={sessions} activeSessionId={activeSessionId} onOpen={onOpenSession} onRename={onRenameSession} onDelete={onDeleteSession} onBranch={onBranchSession} onInspect={onInspectSession} />

@@ -7,6 +7,9 @@ export const RPC_MAX_ID_LENGTH = 128;
 export const RPC_MAX_PROMPT_LENGTH = 1_000_000;
 export const RPC_MAX_ATTACHMENTS_PER_REQUEST = 4;
 export const RPC_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+/** Allows one JSONL user entry containing a maximum-sized base64 image to be read in a single transcript page. */
+export const RPC_MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+const RPC_MAX_ATTACHMENT_BASE64_LENGTH = Math.ceil(RPC_MAX_ATTACHMENT_BYTES / 3) * 4;
 
 /** v1 grows only by methods and optional fields. Clients must negotiate extended events first. */
 export const RPC_METHODS = [
@@ -335,6 +338,11 @@ function attachmentIdsParam(params: Record<string, unknown>, id: string): void {
 			id,
 		);
 }
+function attachmentDataParam(params: Record<string, unknown>, id: string): void {
+	const data = params.data;
+	if (typeof data !== "string" || data.length === 0 || data.length > RPC_MAX_ATTACHMENT_BASE64_LENGTH)
+		throw new RpcProtocolError("INVALID_PARAMS", "Attachment data exceeds the permitted size.", id);
+}
 
 /** Parses every public v1 method before any dispatcher or transport observes it. */
 export function parseRpcRequest(line: string): RpcRequest {
@@ -476,7 +484,7 @@ export function parseRpcRequest(line: string): RpcRequest {
 		case "create_attachment":
 			stringParam(params, "name", id);
 			stringParam(params, "contentType", id);
-			stringParam(params, "data", id);
+			attachmentDataParam(params, id);
 			if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(params.contentType as string))
 				throw new RpcProtocolError("INVALID_PARAMS", "Attachment contentType is unsupported.", id);
 			break;
@@ -491,9 +499,13 @@ export function parseRpcRequest(line: string): RpcRequest {
 				params.maxBytes !== undefined &&
 				(!Number.isSafeInteger(params.maxBytes) ||
 					(params.maxBytes as number) < 1024 ||
-					(params.maxBytes as number) > 4 * 1024 * 1024)
+					(params.maxBytes as number) > RPC_MAX_TRANSCRIPT_BYTES)
 			)
-				throw new RpcProtocolError("INVALID_PARAMS", "maxBytes must be between 1024 and 4194304.", id);
+				throw new RpcProtocolError(
+					"INVALID_PARAMS",
+					`maxBytes must be between 1024 and ${RPC_MAX_TRANSCRIPT_BYTES}.`,
+					id,
+				);
 			break;
 		case "approve_tool":
 			stringParam(params, "approvalId", id);

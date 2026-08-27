@@ -613,7 +613,11 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				if (managerWorkspace.toLowerCase() !== bootstrap.workspace.toLowerCase()) continue;
 				result.push(infoFor(manager));
 			}
-			return result;
+			return result.sort((left, right) => {
+				const rightModified = right.modifiedAt ?? 0;
+				const leftModified = left.modifiedAt ?? 0;
+				return rightModified - leftModified || right.id.localeCompare(left.id);
+			});
 		},
 		createSession: async () => {
 			ensureOpen();

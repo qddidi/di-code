@@ -7,6 +7,7 @@ interface ComposerProps {
 	readonly disabled?: boolean;
 	readonly busy: boolean;
 	readonly attachments: readonly AttachmentInfo[];
+	readonly imageInputSupported: boolean;
 	readonly onAddFiles: (files: FileList) => Promise<void>;
 	readonly onRemoveAttachment: (id: string) => void;
 	readonly onSend: (text: string) => Promise<void>;
@@ -40,7 +41,7 @@ const permissionModes = [
 	{ id: "allow", label: "Allow tools" },
 	{ id: "deny", label: "Deny tools" },
 ] as const;
-export function Composer({ disabled = false, busy, attachments, onAddFiles, onRemoveAttachment, onSend, onSteer, onCancel, onCompact, onRetry, onNewSession, onOpenSettings, onSetRuntime, onSetPermissionMode, onSetThinkingLevel, hero = false, modelLabel = "Model", activeRuntime, permissionMode, thinkingLevel, reasoningEfforts, retryable = false, runtimeOptions, usage }: ComposerProps): React.JSX.Element {
+export function Composer({ disabled = false, busy, attachments, imageInputSupported, onAddFiles, onRemoveAttachment, onSend, onSteer, onCancel, onCompact, onRetry, onNewSession, onOpenSettings, onSetRuntime, onSetPermissionMode, onSetThinkingLevel, hero = false, modelLabel = "Model", activeRuntime, permissionMode, thinkingLevel, reasoningEfforts, retryable = false, runtimeOptions, usage }: ComposerProps): React.JSX.Element {
 	const [text, setText] = useState("");
 	const [composing, setComposing] = useState(false);
 	const [menu, setMenu] = useState<"commands" | "runtime" | "models" | "reasoning" | "access" | "context">();
@@ -68,13 +69,13 @@ export function Composer({ disabled = false, busy, attachments, onAddFiles, onRe
 		if (busy) await onSteer(value); else await onSend(value);
 	};
 	return <div className={`composer-wrap${hero ? " composer-hero" : ""}`}>
-		<div ref={composer} className="composer" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void onAddFiles(event.dataTransfer.files); }}>
+		<div ref={composer} className="composer" onDragOver={(event) => { if (imageInputSupported) event.preventDefault(); }} onDrop={(event) => { if (!imageInputSupported) return; event.preventDefault(); void onAddFiles(event.dataTransfer.files); }}>
 			<AttachmentTray attachments={attachments} onRemove={onRemoveAttachment} />
-			<textarea aria-label="Message di-code" placeholder={busy ? "Steer di-code while it works" : hero ? "Describe what you want to build" : "Message di-code"} rows={1} disabled={disabled} value={text} onChange={(event) => setText(event.target.value)} onPaste={(event) => { if (event.clipboardData.files.length) void onAddFiles(event.clipboardData.files); }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !composing) { event.preventDefault(); void submit(); } }} />
+			<textarea aria-label="Message di-code" placeholder={busy ? "Steer di-code while it works" : hero ? "Describe what you want to build" : "Message di-code"} rows={1} disabled={disabled} value={text} onChange={(event) => setText(event.target.value)} onPaste={(event) => { if (imageInputSupported && event.clipboardData.files.length) void onAddFiles(event.clipboardData.files); }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !composing) { event.preventDefault(); void submit(); } }} />
 			<input className="attachment-input" ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={(event) => { if (event.currentTarget.files) void onAddFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
 			<div className="composer-toolbar">
 				<div className="composer-menu-anchor"><button className="composer-tool" type="button" aria-label="Commands" title="Commands" aria-expanded={menu === "commands"} onClick={() => setMenu((value) => value === "commands" ? undefined : "commands")}><Command size={16} /></button>{menu === "commands" ? <div className="composer-menu" role="menu"><button type="button" role="menuitem" onClick={() => { setMenu(undefined); onNewSession(); }}><FileClock size={15} />New session</button><button type="button" role="menuitem" onClick={() => { setMenu(undefined); void onCompact(); }}><Gauge size={15} />Compact context</button><button type="button" role="menuitem" onClick={() => { setMenu(undefined); onOpenSettings(); }}><Settings2 size={15} />Open settings</button></div> : null}</div>
-				<button className="composer-tool" type="button" aria-label="Add attachment" title="Add attachment" onClick={() => input.current?.click()} disabled={disabled || attachments.length >= 4}><Paperclip size={16} /></button>
+				<button className="composer-tool" type="button" aria-label={imageInputSupported ? "Add attachment" : "Current model does not support image input"} title={imageInputSupported ? "Add attachment" : "Current model does not support image input"} onClick={() => input.current?.click()} disabled={disabled || !imageInputSupported || attachments.length >= 4}><Paperclip size={16} /></button>
 				<div className="composer-menu-anchor"><button className="access-mode" type="button" aria-label={`Permission mode, current: ${permissionModes.find((option) => option.id === permissionMode)?.label}`} aria-expanded={menu === "access"} onClick={() => setMenu((value) => value === "access" ? undefined : "access")}><SlidersHorizontal size={14} />{permissionModes.find((option) => option.id === permissionMode)?.label}<ChevronDown size={13} /></button>{menu === "access" ? <div className="composer-menu" role="menu" aria-label="Permission mode">{permissionModes.map((option) => <button type="button" role="menuitemradio" aria-checked={option.id === permissionMode} key={option.id} onClick={() => { setMenu(undefined); void onSetPermissionMode(option.id); }}><span>{option.label}</span>{option.id === permissionMode ? <Check size={14} aria-label="Selected" /> : null}</button>)}</div> : null}</div>
 				<span className="composer-spacer" />
 				<div className="composer-menu-anchor">

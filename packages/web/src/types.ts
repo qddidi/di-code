@@ -3,6 +3,13 @@ export interface BootData {
 	readonly capabilities: { readonly methods: readonly string[]; readonly events: readonly string[] };
 	readonly state: { readonly modelId: string; readonly messageCount: number };
 	readonly runtime: { readonly providerId: string; readonly modelId: string };
+	readonly workspaceId: string;
+	readonly workspaces: readonly WorkspaceSummary[];
+}
+
+export interface WorkspaceSummary {
+	readonly id: string;
+	readonly name: string;
 }
 
 export interface SessionSummary {
@@ -37,9 +44,18 @@ export type ConversationActivity =
 export interface ConversationMessage {
 	readonly role: "user" | "assistant" | "tool";
 	readonly text: string;
+	readonly images?: readonly ConversationImage[];
 	readonly thinking?: string;
 	readonly activities?: readonly ConversationActivity[];
 	readonly status?: string;
+	/** Durable Session record used to branch exactly at this message. */
+	readonly entryId?: string;
+}
+
+export interface ConversationImage {
+	readonly src: string;
+	readonly mimeType: string;
+	readonly alt: string;
 }
 
 export interface ToolApproval {

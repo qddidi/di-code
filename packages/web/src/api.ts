@@ -4,6 +4,7 @@ import type {
 	McpServerSummary,
 	PluginSummary,
 	RpcEnvelope,
+	SessionSummary,
 	SessionsResult,
 	SettingsSnapshot,
 	SkillSummary,
@@ -11,6 +12,19 @@ import type {
 } from "./types.ts";
 
 const CLIENT_ID_KEY = "di-code-web-client-id";
+let workspaceId: string | undefined;
+
+/** Selects the opaque workspace handle used for all subsequent WebUI requests. */
+export function selectWorkspace(id: string | undefined): void {
+	workspaceId = id;
+}
+
+function apiPath(path: string): string {
+	if (!workspaceId) return path;
+	const url = new URL(path, window.location.origin);
+	url.searchParams.set("workspaceId", workspaceId);
+	return `${url.pathname}${url.search}`;
+}
 
 function clientHeaders(headers: HeadersInit = {}): Headers {
 	const result = new Headers(headers);
@@ -26,12 +40,12 @@ export function rememberClient(response: Response): void {
 }
 
 async function fetchBoot(): Promise<Response> {
-	const response = await fetch("/api/boot", { credentials: "same-origin" });
+	const response = await fetch(apiPath("/api/boot"), { credentials: "same-origin" });
 	if (response.status !== 401) return response;
 
 	const session = await fetch("/api/session", { credentials: "same-origin" });
 	if (!session.ok) return response;
-	return await fetch("/api/boot", { credentials: "same-origin" });
+	return await fetch(apiPath("/api/boot"), { credentials: "same-origin" });
 }
 
 export async function loadBootData(): Promise<BootData> {
@@ -46,7 +60,7 @@ export async function callRpc<T>(
 	params: Record<string, unknown> = {},
 	requestId = crypto.randomUUID(),
 ): Promise<T> {
-	const response = await fetch("/api/rpc", {
+	const response = await fetch(apiPath("/api/rpc"), {
 		method: "POST",
 		credentials: "same-origin",
 		headers: clientHeaders({ "content-type": "application/json" }),
@@ -64,7 +78,7 @@ export async function uploadAttachment(input: {
 	readonly contentType: AttachmentInfo["contentType"];
 	readonly data: string;
 }): Promise<AttachmentInfo> {
-	const response = await fetch("/api/attachments", {
+	const response = await fetch(apiPath("/api/attachments"), {
 		method: "POST",
 		credentials: "same-origin",
 		headers: clientHeaders({ "content-type": "application/json" }),
@@ -102,8 +116,12 @@ export async function renameSession(sessionId: string, label: string): Promise<v
 export async function deleteSession(sessionId: string): Promise<void> {
 	await callRpc("delete_session", { sessionId, confirmation: sessionId });
 }
-export async function branchSession(sessionId: string, entryId?: string): Promise<void> {
-	await callRpc("branch_session", { sessionId, ...(entryId ? { entryId } : {}) });
+export async function branchSession(sessionId: string, entryId?: string): Promise<SessionSummary> {
+	const result = await callRpc<{ readonly session: SessionSummary }>("branch_session", {
+		sessionId,
+		...(entryId ? { entryId } : {}),
+	});
+	return result.session;
 }
 export async function inspectSession(sessionId: string): Promise<unknown> {
 	const result = await callRpc<{ readonly snapshot: unknown }>("inspect_session", { sessionId });

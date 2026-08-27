@@ -28,8 +28,13 @@ export interface ChatCompletionsRequest {
 	readonly tool_stream?: true;
 }
 
+type ChatUserContent =
+	| { readonly type: "text"; readonly text: string }
+	| { readonly type: "image_url"; readonly image_url: { readonly url: string } };
+
 type ChatMessage =
-	| { readonly role: "system" | "user"; readonly content: string }
+	| { readonly role: "system"; readonly content: string }
+	| { readonly role: "user"; readonly content: string | readonly ChatUserContent[] }
 	| { readonly role: "assistant"; readonly content: string | null; readonly tool_calls?: readonly ChatToolCall[] }
 	| { readonly role: "tool"; readonly tool_call_id: string; readonly content: string };
 
@@ -74,8 +79,22 @@ function zeroUsage(): Usage {
 	};
 }
 
-function projectImage(model: Model, _block: ImageContent): never {
-	throw new Error(`model ${model.id} does not support image input`);
+function projectImage(model: Model, block: ImageContent): Extract<ChatUserContent, { type: "image_url" }> {
+	if (!model.input.includes("image")) throw new Error(`model ${model.id} does not support image input`);
+	if (!/^image\/[A-Za-z0-9.+-]+$/.test(block.mimeType))
+		throw new Error("Chat Completions image mimeType must be an image media type");
+	if (block.data.length === 0) throw new Error("Chat Completions image data must not be empty");
+	return { type: "image_url", image_url: { url: `data:${block.mimeType};base64,${block.data}` } };
+}
+
+function projectUserContent(
+	model: Model,
+	content: readonly ({ readonly type: "text"; readonly text: string } | ImageContent)[],
+): string | readonly ChatUserContent[] {
+	if (content.every((block) => block.type === "text")) return content.map((block) => block.text).join("\n");
+	return content.map((block) =>
+		block.type === "image" ? projectImage(model, block) : { type: "text", text: block.text },
+	);
 }
 
 function projectMessages(model: Model, context: Context): ChatMessage[] {
@@ -85,17 +104,20 @@ function projectMessages(model: Model, context: Context): ChatMessage[] {
 		if (message.role === "user") {
 			messages.push({
 				role: "user",
-				content: message.content
-					.map((block) => (block.type === "image" ? projectImage(model, block) : block.text))
-					.join("\n"),
+				content: projectUserContent(model, message.content),
 			});
 		} else if (message.role === "tool_result") {
+			if (message.content.some((block) => block.type === "image"))
+				throw new Error("Chat Completions tool results do not support image content");
 			messages.push({
 				role: "tool",
 				tool_call_id: message.toolCallId,
 				content:
 					message.content
-						.map((block) => (block.type === "image" ? projectImage(model, block) : block.text))
+						.filter(
+							(block): block is Extract<(typeof message.content)[number], { type: "text" }> => block.type === "text",
+						)
+						.map((block) => block.text)
 						.join("\n") || "(no tool output)",
 			});
 		} else {

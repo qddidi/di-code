@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AssistantMessage, ImageContent, Message } from "@di-code/ai";
+import type { SessionTreeNode } from "../core/session/types.ts";
 import type { AgentSessionEvent, AgentSessionListener } from "../core/session.ts";
 import type { ProductHost } from "../runtime/product-host.ts";
 import type { SessionHost, SessionHostEvent } from "../runtime/session-host.ts";
@@ -78,6 +79,23 @@ interface StoredOperation {
 	message?: AssistantMessage;
 	error?: { readonly code: RpcErrorCode; readonly message: string };
 	completedAt?: number;
+}
+
+function transcriptEntryIds(tree: readonly SessionTreeNode[], leafId: string | undefined): readonly string[] {
+	if (!leafId) return [];
+	const visit = (
+		nodes: readonly SessionTreeNode[],
+		parents: readonly SessionTreeNode[],
+	): readonly SessionTreeNode[] | undefined => {
+		for (const node of nodes) {
+			const branch = [...parents, node];
+			if (node.entry.id === leafId) return branch;
+			const found = visit(node.children, branch);
+			if (found) return found;
+		}
+		return undefined;
+	};
+	return (visit(tree, []) ?? []).filter((node) => node.entry.type === "message").map((node) => node.entry.id);
 }
 
 class MemoryAttachmentStore implements RpcAttachmentStore {
@@ -676,12 +694,16 @@ export class RpcDispatcher {
 	}
 	private transcript(request: RpcRequest): RpcResponse {
 		const all = this.host().transcript();
+		const entryIds = transcriptEntryIds(this.host().tree(), this.host().ui().sessionLeafId);
+		if (entryIds.length !== all.length)
+			throw new RpcProtocolError("INTERNAL_ERROR", "Session transcript entries are inconsistent.");
 		const start = request.params.pageToken === undefined ? 0 : Number.parseInt(request.params.pageToken as string, 10);
 		if (!Number.isSafeInteger(start) || start < 0 || start > all.length)
 			return this.failure(request.id, "INVALID_PARAMS", "Invalid transcript page token.");
 		const pageSize = (request.params.pageSize as number | undefined) ?? 100;
 		const maxBytes = (request.params.maxBytes as number | undefined) ?? 1_000_000;
 		const transcript = [] as (typeof all)[number][];
+		const pageEntryIds: string[] = [];
 		let bytes = 2;
 		for (let index = start; index < all.length && transcript.length < pageSize; index++) {
 			const value = all[index];
@@ -691,10 +713,16 @@ export class RpcDispatcher {
 				return this.failure(request.id, "INVALID_PARAMS", "Transcript entry exceeds maxBytes.");
 			if (bytes + size > maxBytes) break;
 			transcript.push(value);
+			pageEntryIds.push(entryIds[index] ?? "");
 			bytes += size;
 		}
 		const next = start + transcript.length < all.length ? String(start + transcript.length) : undefined;
-		return this.success(request.id, { method: "get_transcript", transcript, ...(next ? { nextPageToken: next } : {}) });
+		return this.success(request.id, {
+			method: "get_transcript",
+			transcript,
+			entryIds: pageEntryIds,
+			...(next ? { nextPageToken: next } : {}),
+		});
 	}
 	private requireProduct(): ProductHost {
 		if (!this.productHost) throw new RpcProtocolError("METHOD_NOT_FOUND", "ProductHost is unavailable.");
@@ -725,7 +753,7 @@ export class RpcDispatcher {
 	}
 	private async createAttachment(request: RpcRequest): Promise<RpcResponse> {
 		const data = request.params.data as string;
-		if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data))
+		if (Buffer.from(data, "base64").toString("base64") !== data)
 			return this.failure(request.id, "INVALID_PARAMS", "Attachment data must be canonical base64.");
 		const bytes = Buffer.byteLength(data, "base64");
 		if (bytes === 0 || bytes > 5 * 1024 * 1024)

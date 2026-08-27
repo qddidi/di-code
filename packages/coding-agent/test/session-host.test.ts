@@ -267,17 +267,30 @@ describe("SessionHost", () => {
 	it("supports opaque session inspection, rename, branch, and confirmed deletion", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-host-depth-"));
 		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-depth-agent-"));
-		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "answer" }] }] });
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "first answer" }] },
+				{ type: "success", content: [{ type: "text", text: "later answer" }] },
+			],
+		});
 		const runtime = await setup(root, agentDir, faux);
 		try {
 			const created = await runtime.host.createSession();
 			await runtime.host.prompt("hello");
+			const firstAssistantEntryId = runtime.host.tree()[0]?.children[0]?.entry.id;
+			if (!firstAssistantEntryId) throw new Error("Expected the first assistant Session entry.");
+			await runtime.host.prompt("continue");
 			const inspected = await runtime.host.inspectSession(created.id);
 			expect(inspected.readOnly).toBe(true);
-			expect(inspected.stats.messageCount).toBe(2);
+			expect(inspected.stats.messageCount).toBe(4);
 			await expect(runtime.host.renameSession(created.id, "Renamed")).resolves.toMatchObject({ label: "Renamed" });
-			const branch = await runtime.host.branchSession(created.id);
+			const branch = await runtime.host.branchSession(created.id, firstAssistantEntryId);
 			expect(branch.id).not.toBe(created.id);
+			expect(runtime.host.state().activeSession?.id).toBe(branch.id);
+			expect(runtime.host.transcript().map((message) => JSON.stringify(message))).toEqual([
+				expect.stringContaining("hello"),
+				expect.stringContaining("first answer"),
+			]);
 			await expect(runtime.host.deleteSession(created.id, "wrong")).rejects.toMatchObject({ code: "INVALID_INPUT" });
 			await runtime.host.closeSession();
 			await runtime.host.deleteSession(created.id, created.id);
