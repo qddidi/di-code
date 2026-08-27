@@ -54,6 +54,16 @@ describe("StdioMcpClient", () => {
 });
 
 describe("McpManager", () => {
+	it("allows a stdio server enough time for cold startup", async () => {
+		const client = new StdioMcpClient({
+			id: "slow-fixture",
+			connectTimeoutMs: 30_000,
+			transport: { type: "stdio", command: process.execPath, args: [fixture] },
+		});
+		await expect(client.connect()).resolves.toBeUndefined();
+		await client.close();
+	});
+
 	it("reports loading and capability counts while connecting a Server", async () => {
 		const statuses: unknown[] = [];
 		const manager = new McpManager({ onServerConnectionStatus: (status) => statuses.push(status) });

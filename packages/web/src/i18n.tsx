@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 export type WebLocale = "en" | "zh-CN";
 
 const zh: Readonly<Record<string, string>> = {
-	"Connected": "已连接", "Unavailable": "不可用", "Connecting": "连接中",
+	"Connected": "已连接", "Unavailable": "不可用", "Connecting": "连接中", "Connecting...": "连接中...", "Removing...": "移除中...",
 	"Workspace navigation": "工作区导航", "Open sidebar": "打开侧栏", "Collapse sidebar": "收起侧栏", "Workspace actions": "工作区操作", "New session in workspace": "在工作区中新建会话", "Rename": "重命名", "Delete this workspace?": "删除此工作区？", "Drop a folder here": "将文件夹拖到这里", "or choose a folder": "或选择文件夹", "Drag a folder from your file manager.": "请从文件管理器拖入文件夹。",
 	"Select workspace": "选择工作区", "New session": "新建会话", "Sessions": "会话", "Workspaces": "工作区", "Search sessions": "搜索会话", "Close search": "关闭搜索", "Workspace display options": "工作区显示选项", "Add workspace": "添加工作区", "Choose a folder": "选择文件夹", "Choose a local folder to add it to this WebUI.": "选择一个本地文件夹，将其添加到此 WebUI。", "Cancel": "取消", "Adding...": "添加中...", "Unable to add workspace.": "无法添加工作区。", "Settings": "设置",
 	"Open navigation": "打开导航", "Session": "会话", "Standard mode": "标准模式", "Session log": "会话日志",

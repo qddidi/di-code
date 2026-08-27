@@ -195,6 +195,8 @@ export function importCompositionModule(name: string): Promise<PluginModule> {
 			return import("./mcp-transport-entry.ts") as Promise<PluginModule>;
 		case "@di-code/coding-agent/mcp-tools-entry":
 			return import("./mcp-tools-entry.ts") as Promise<PluginModule>;
+		case "@di-code/coding-agent/mcp-command-entry":
+			return import("./mcp-command-entry.ts") as Promise<PluginModule>;
 		case "@di-code/coding-agent/session-factory-entry":
 			return import("./session-factory-entry.ts") as Promise<PluginModule>;
 		case "@di-code/coding-agent/session-store-jsonl-entry":

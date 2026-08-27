@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LoaderCircle } from "lucide-react";
 import { callRpc, loadMcpServers, loadPlugins, loadSkills, setPluginEnabled, setProjectTrust } from "../api.ts";
 import type { McpServerSummary, PluginSummary, SettingsSnapshot, SkillSummary } from "../types.ts";
 import { useI18n } from "../i18n.tsx";
@@ -27,10 +28,26 @@ function McpPanel({ onError, onSettingsChange }: Pick<AdvancedSettingsProps, "on
 	const [serverId, setServerId] = useState("");
 	const [command, setCommand] = useState("");
 	const [scope, setScope] = useState<"project" | "local" | "user">("project");
-	const refresh = (): void => { void loadMcpServers().then(setServers).catch((cause) => onError(cause instanceof Error ? cause.message : "Unable to load MCP servers.")); };
-	useEffect(refresh, [onError]);
-	const add = async (): Promise<void> => { try { await callRpc("configure_mcp_server", { serverId, scope, config: { type: "stdio", command, args: [] } }); setServerId(""); setCommand(""); refresh(); await onSettingsChange(); } catch (cause) { onError(cause instanceof Error ? cause.message : "MCP configuration failed."); } };
-	return <section className="settings-section"><h3>{t("MCP servers")}</h3><p className="settings-section-note">{t("Connections are external processes or services. Calls are cancellable and server output remains untrusted.")}</p><div className="advanced-list">{servers.length === 0 ? <p className="readonly-note">{t("No configured servers.")}</p> : servers.map((server) => <article className="advanced-row" key={`${server.scope}:${server.id}`}><div><strong>{server.id}</strong><span>{server.state} · {server.tools} {t("tools")} · {server.resources} {t("resources")}</span></div><div className="advanced-actions"><button type="button" onClick={() => { void callRpc("reconnect_mcp_server", { serverId: server.id }).then(refresh).catch((cause) => onError(cause instanceof Error ? cause.message : t("MCP reconnect failed."))); }}>{t("Reconnect")}</button><button type="button" onClick={() => { void callRpc("remove_mcp_server", { serverId: server.id, scope: server.scope ?? "project" }).then(refresh).catch((cause) => onError(cause instanceof Error ? cause.message : t("MCP remove failed."))); }}>{t("Remove")}</button></div></article>)}</div><div className="inline-form"><input aria-label={t("MCP server id")} placeholder="server-id" value={serverId} onChange={(event) => setServerId(event.target.value)} /><input aria-label={t("MCP command")} placeholder="command" value={command} onChange={(event) => setCommand(event.target.value)} /><select aria-label={t("MCP scope")} value={scope} onChange={(event) => setScope(event.target.value as typeof scope)}><option value="project">{t("Project")}</option><option value="local">{t("Local")}</option><option value="user">{t("User")}</option></select><button type="button" disabled={!serverId.trim() || !command.trim()} onClick={() => void add()}>{t("Add stdio")}</button></div></section>;
+	const [pendingAction, setPendingAction] = useState<string>();
+	const refresh = async (): Promise<void> => { try { setServers(await loadMcpServers()); } catch (cause) { onError(cause instanceof Error ? cause.message : "Unable to load MCP servers."); } };
+	useEffect(() => { void refresh(); }, [onError]);
+	const runServerAction = async (action: "reconnect_mcp_server" | "remove_mcp_server", server: McpServerSummary): Promise<void> => {
+		if (pendingAction) return;
+		setPendingAction(`${action}:${server.id}`);
+		try {
+			await callRpc(action, action === "remove_mcp_server" ? { serverId: server.id, scope: server.scope ?? "project" } : { serverId: server.id });
+			await refresh();
+		} catch (cause) { onError(cause instanceof Error ? cause.message : t(action === "remove_mcp_server" ? "MCP remove failed." : "MCP reconnect failed.")); }
+		finally { setPendingAction(undefined); }
+	};
+	const add = async (): Promise<void> => {
+		if (pendingAction) return;
+		setPendingAction("add");
+		try { await callRpc("configure_mcp_server", { serverId, scope, config: { type: "stdio", command, args: [] } }); setServerId(""); setCommand(""); await refresh(); await onSettingsChange(); }
+		catch (cause) { onError(cause instanceof Error ? cause.message : "MCP configuration failed."); }
+		finally { setPendingAction(undefined); }
+	};
+	return <section className="settings-section"><h3>{t("MCP servers")}</h3><p className="settings-section-note">{t("Connections are external processes or services. Calls are cancellable and server output remains untrusted.")}</p><div className="advanced-list">{servers.length === 0 ? <p className="readonly-note">{t("No configured servers.")}</p> : servers.map((server) => { const reconnecting = pendingAction === `reconnect_mcp_server:${server.id}`; const removing = pendingAction === `remove_mcp_server:${server.id}`; return <article className="advanced-row" key={`${server.scope}:${server.id}`}><div><strong>{server.id}</strong><span>{server.state} · {server.tools} {t("tools")} · {server.resources} {t("resources")}</span></div><div className="advanced-actions"><button type="button" disabled={Boolean(pendingAction)} aria-busy={reconnecting} onClick={() => void runServerAction("reconnect_mcp_server", server)}>{reconnecting ? <><LoaderCircle className="spin" size={13} />{t("Connecting...")}</> : t("Reconnect")}</button><button type="button" disabled={Boolean(pendingAction)} aria-busy={removing} onClick={() => void runServerAction("remove_mcp_server", server)}>{removing ? <><LoaderCircle className="spin" size={13} />{t("Removing...")}</> : t("Remove")}</button></div></article>; })}</div><div className="inline-form"><input aria-label={t("MCP server id")} placeholder="server-id" value={serverId} onChange={(event) => setServerId(event.target.value)} disabled={Boolean(pendingAction)} /><input aria-label={t("MCP command")} placeholder="command" value={command} onChange={(event) => setCommand(event.target.value)} disabled={Boolean(pendingAction)} /><select aria-label={t("MCP scope")} value={scope} onChange={(event) => setScope(event.target.value as typeof scope)} disabled={Boolean(pendingAction)}><option value="project">{t("Project")}</option><option value="local">{t("Local")}</option><option value="user">{t("User")}</option></select><button type="button" disabled={Boolean(pendingAction) || !serverId.trim() || !command.trim()} aria-busy={pendingAction === "add"} onClick={() => void add()}>{pendingAction === "add" ? <><LoaderCircle className="spin" size={13} />{t("Adding...")}</> : t("Add stdio")}</button></div></section>;
 }
 
 function PluginsPanel({ onError }: Pick<AdvancedSettingsProps, "onError">): React.JSX.Element {

@@ -4,6 +4,8 @@
 
 `@di-code/mcp` 支持 MCP `stdio` 和 Streamable HTTP transport，以及分页的 `tools/list`、`resources/list`、`resources/read`、`prompts/list`、`prompts/get`、进度、变更通知、超时和取消。OAuth、URL elicitation、SSE fallback 和自动安装 Server 当前未启用。
 
+stdio Server 初始化默认最多等待 30 秒；工具和能力列表请求默认最多等待 30 秒。使用 `npx` 的 Server 首次下载或冷启动可能较慢，WebUI 的“重新连接”会重新执行初始化并受此上限约束。
+
 MCP tool 会加入现有 Agent ToolRegistry，名称为 `mcp__<server-id>__<tool-name>`；不会创建第二套 Agent loop。resources/prompts 只有显式调用才会读取，不会自动注入上下文。
 
 ## 配置命令

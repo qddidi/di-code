@@ -18,7 +18,8 @@ import type {
 	McpToolResult,
 } from "./types.ts";
 
-const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+// stdio servers launched through npx may need to resolve packages before initialize responds.
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 const MAX_STDERR_BYTES = 4 * 1024;
 

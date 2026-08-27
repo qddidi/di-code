@@ -1,0 +1,20 @@
+- generic [ref=e3]:
+  - complementary "Workspace navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic "di-code" [ref=e6]
+      - generic [ref=e10]: di-code
+      - button "Collapse sidebar" [ref=e11] [cursor=pointer]
+    - button "New session ⌘ K" [ref=e15] [cursor=pointer]:
+      - text: New session
+      - generic [ref=e18]: ⌘ K
+    - generic [ref=e19]:
+      - generic [ref=e20]: Workspaces
+      - generic [ref=e21]:
+        - button "Search sessions" [ref=e22] [cursor=pointer]
+        - button "Workspace display options" [ref=e26] [cursor=pointer]
+        - button "Add workspace" [ref=e28] [cursor=pointer]
+    - tree "Workspaces" [ref=e31]
+    - button "Settings" [ref=e33] [cursor=pointer]
+  - main [ref=e38]:
+    - status [ref=e39]: Reconnecting to session events...
+    - region "Loading conversation" [ref=e40]

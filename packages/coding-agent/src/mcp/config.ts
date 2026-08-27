@@ -19,6 +19,13 @@ function requiredString(value: unknown, path: string): string {
 	return value.trim();
 }
 
+function optionalTimeout(value: unknown, path: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > 300_000)
+		throw new Error(`${PROJECT_CONFIG_FILE_NAME}: ${path} must be a positive integer no greater than 300000`);
+	return value as number;
+}
+
 function resolveEnvironmentValue(value: string, path: string, environment: Environment): string {
 	return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_whole, name: string) => {
 		const resolved = environment[name];
@@ -82,6 +89,12 @@ function parseServer(id: string, value: unknown, cwd: string, environment: Envir
 				cwd,
 				env: { ...inheritedEnvironment(), ...env },
 			},
+			...(optionalTimeout(entry.connectTimeoutMs, `mcpServers.${id}.connectTimeoutMs`) === undefined
+				? {}
+				: { connectTimeoutMs: optionalTimeout(entry.connectTimeoutMs, `mcpServers.${id}.connectTimeoutMs`) }),
+			...(optionalTimeout(entry.callTimeoutMs, `mcpServers.${id}.callTimeoutMs`) === undefined
+				? {}
+				: { callTimeoutMs: optionalTimeout(entry.callTimeoutMs, `mcpServers.${id}.callTimeoutMs`) }),
 		};
 	}
 	if (entry.type !== "http")
@@ -109,6 +122,12 @@ function parseServer(id: string, value: unknown, cwd: string, environment: Envir
 			url: parsedUrl.toString(),
 			...(headers ? { headers } : {}),
 		},
+		...(optionalTimeout(entry.connectTimeoutMs, `mcpServers.${id}.connectTimeoutMs`) === undefined
+			? {}
+			: { connectTimeoutMs: optionalTimeout(entry.connectTimeoutMs, `mcpServers.${id}.connectTimeoutMs`) }),
+		...(optionalTimeout(entry.callTimeoutMs, `mcpServers.${id}.callTimeoutMs`) === undefined
+			? {}
+			: { callTimeoutMs: optionalTimeout(entry.callTimeoutMs, `mcpServers.${id}.callTimeoutMs`) }),
 	};
 }
 

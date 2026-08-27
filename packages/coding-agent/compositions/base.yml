@@ -52,3 +52,4 @@ entries:
   - { id: mcp-transport, name: "@di-code/coding-agent/mcp-transport-entry", dependsOn: [mcp-config] }
   - { id: mcp-client, name: "@di-code/coding-agent/mcp-client-entry", dependsOn: [mcp-config, mcp-transport] }
   - { id: mcp-tools, name: "@di-code/coding-agent/mcp-tools-entry", dependsOn: [mcp-config, mcp-client] }
+  - { id: mcp-command, name: "@di-code/coding-agent/mcp-command-entry", dependsOn: [command-core, mcp-config] }

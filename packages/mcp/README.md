@@ -4,7 +4,7 @@
 
 项目主页：[github.com/qddidi/di-code](https://github.com/qddidi/di-code)
 
-该包负责连接初始化、分页的 `tools/list`、`resources/list`、`resources/read`、`prompts/list`、`prompts/get`、进度传播、列表和资源通知、有界超时、取消传播以及幂等清理。它不实现 Agent 循环，也不做工具授权决策。宿主在构造 manager 之前必须校验项目配置和信任关系。
+该包负责连接初始化、分页的 `tools/list`、`resources/list`、`resources/read`、`prompts/list`、`prompts/get`、进度传播、列表和资源通知、有界超时、取消传播以及幂等清理。stdio Server 的默认连接初始化超时为 30 秒（适配 `npx` 等冷启动），工具和能力列表请求默认超时为 30 秒；宿主可通过 `connectTimeoutMs`/`callTimeoutMs` 为单个 Server 调整。它不实现 Agent 循环，也不做工具授权决策。宿主在构造 manager 之前必须校验项目配置和信任关系。
 
 在默认 composition 中，MCP 配置、client 和 tools 分别由 `@di-code/coding-agent/mcp-config-entry`、`mcp-client-entry` 和 `mcp-tools-entry` 装配；它们只把可用 MCP tools 贡献给既有 ToolRegistry，不创建第二个 Agent loop。
 

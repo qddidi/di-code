@@ -37,8 +37,10 @@ function isRun(command: CliCommand): command is Extract<CliCommand, { kind: "run
 	return command.kind === "run";
 }
 
-function isMinimalCommand(command: CliCommand): command is Extract<CliCommand, { kind: "run" | "plugin" | "observe" }> {
-	return command.kind === "run" || command.kind === "plugin" || command.kind === "observe";
+function isMinimalCommand(
+	command: CliCommand,
+): command is Extract<CliCommand, { kind: "run" | "plugin" | "observe" | "mcp" }> {
+	return command.kind === "run" || command.kind === "plugin" || command.kind === "observe" || command.kind === "mcp";
 }
 
 async function hasTrustedProjectContent(cwd: string): Promise<boolean> {
@@ -134,6 +136,9 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 		} else if (command.kind === "plugin") {
 			name = "plugin";
 			input = { ...command, stdout: options.stdout, stderr: options.stderr };
+		} else if (command.kind === "mcp") {
+			name = "mcp";
+			input = { ...command, cwd: allowedRoot, stdout: options.stdout, stderr: options.stderr };
 		} else if (command.mode === "interactive") {
 			name = "interactive";
 			input = {
