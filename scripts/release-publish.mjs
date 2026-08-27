@@ -2,10 +2,9 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { releaseWorkspaces, versionWorkspaceDirectories } from "./release-packages.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workspaces = ["@di-code/ai", "@di-code/agent", "@di-code/tui", "@di-code/skills", "@di-code/mcp", "@di-code/coding-agent", "@di-code/orchestrator"];
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "web", "orchestrator"];
 const stableVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 function npmCommand(args) {
@@ -69,7 +68,7 @@ async function main() {
 	if (typeof version !== "string" || !stableVersionPattern.test(version)) {
 		throw new Error("Root package.json must declare a stable semantic version before publishing.");
 	}
-	for (const directory of workspaceDirectories) {
+	for (const directory of versionWorkspaceDirectories) {
 		const packagePath = resolve(repositoryRoot, "packages", directory, "package.json");
 		const metadata = JSON.parse(await readFile(packagePath, "utf8"));
 		if (metadata?.version !== version) {
@@ -89,11 +88,11 @@ async function main() {
 	const dryRun = npmCommand(["run", "release:dry-run"]);
 	await run(dryRun.command, dryRun.args);
 
-	for (const workspace of workspaces) {
+	for (const workspace of releaseWorkspaces) {
 		const publish = npmCommand(["publish", "--workspace", workspace, "--access", "public", "--ignore-scripts"]);
 		await run(publish.command, publish.args);
 	}
-	process.stdout.write(`Published ${workspaces.length} packages at version ${version}\n`);
+	process.stdout.write(`Published ${releaseWorkspaces.length} packages at version ${version}\n`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

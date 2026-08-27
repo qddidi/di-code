@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { versionWorkspaceDirectories } from "./release-packages.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "web", "orchestrator"];
 const dependencyFields = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 const stableVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -73,7 +73,7 @@ async function main() {
 	const { dryRun, version: targetVersion } = parseArguments();
 	const packagePaths = [
 		resolve(repositoryRoot, "package.json"),
-		...workspaceDirectories.map((directory) => resolve(repositoryRoot, "packages", directory, "package.json")),
+		...versionWorkspaceDirectories.map((directory) => resolve(repositoryRoot, "packages", directory, "package.json")),
 	];
 	const packages = await Promise.all(packagePaths.map(readPackage));
 	const currentVersion = packages[0].metadata.version;
@@ -85,7 +85,7 @@ async function main() {
 	}
 
 	if (dryRun) {
-		process.stdout.write(`Version dry-run passed: ${currentVersion} -> ${targetVersion} for ${workspaceDirectories.length} packages\n`);
+		process.stdout.write(`Version dry-run passed: ${currentVersion} -> ${targetVersion} for ${versionWorkspaceDirectories.length} packages\n`);
 		return;
 	}
 
@@ -104,7 +104,7 @@ async function main() {
 		throw cause;
 	}
 
-	process.stdout.write(`Version prepared: ${currentVersion} -> ${targetVersion} for ${workspaceDirectories.length} packages\n`);
+	process.stdout.write(`Version prepared: ${currentVersion} -> ${targetVersion} for ${versionWorkspaceDirectories.length} packages\n`);
 }
 
 await main();

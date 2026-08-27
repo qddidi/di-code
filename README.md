@@ -687,7 +687,7 @@ npm run dev     # 从源码运行 coding-agent
 npm run release:dry-run
 ```
 
-该命令构建六个 workspace，检查并生成 npm tarball，在系统临时目录创建仓库外项目，以 `npm install --ignore-scripts` 安装所有 tarball，然后验证 help、version、Faux 对话和 orchestrator RPC 链路。成功或失败后都会清理临时目录；它不会运行 `npm publish`、创建 Git tag 或调用真实 Provider。
+该命令构建全部 11 个公开 workspace，检查并生成 npm tarball，在系统临时目录创建仓库外项目，以 `npm install --ignore-scripts` 安装所有 tarball，然后验证 help、version、Faux 对话和 orchestrator RPC 链路。成功或失败后都会清理临时目录；它不会运行 `npm publish`、创建 Git tag 或调用真实 Provider。
 
 准备新版本时，不要逐个修改 package manifest。传入一个高于当前版本的稳定语义版本号（`major.minor.patch`）：
 
@@ -695,7 +695,7 @@ npm run release:dry-run
 npm run version:prepare -- 0.1.2
 ```
 
-该命令同步根包和五个 public workspace 的 `version`、所有 `@di-code/*` 内部依赖版本，并用 `npm install --package-lock-only --ignore-scripts` 更新 lockfile。可先用 `--dry-run` 只检查目标版本，不写入文件：
+该命令同步根包、全部公开 workspace 和私有 `web` workspace 的 `version`，更新所有 `@di-code/*` 内部依赖版本，并用 `npm install --package-lock-only --ignore-scripts` 更新 lockfile。可先用 `--dry-run` 只检查目标版本，不写入文件：
 
 ```powershell
 npm run version:prepare -- 0.1.2 --dry-run
@@ -712,7 +712,7 @@ git commit -am "chore: release 0.1.2"
 npm run release:publish -- --confirm
 ```
 
-`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖；缺少 `## [0.1.2]` CHANGELOG 标题时只会输出 warning，仍可继续。随后重跑 release dry-run，再按 ai、agent、tui、skills、coding-agent、orchestrator 的顺序调用 `npm publish --ignore-scripts`。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
+`release:publish` 会拒绝脏工作区、不同步的 workspace 版本或内部依赖；缺少 `## [0.1.2]` CHANGELOG 标题时只会输出 warning，仍可继续。随后重跑 release dry-run，再按 plugin-runtime、plugin-loader、plugin-sdk、ai、agent、skills、builtins、tui、mcp、coding-agent、orchestrator 的依赖顺序调用 `npm publish --ignore-scripts`。私有 `web` workspace 会参与版本一致性检查，但不会发布。npm 不提供多包原子发布：某个包失败时，脚本会停止，但先前已成功的包不会自动撤回。此时先检查 registry 状态和失败原因，不能直接重跑整条命令。该脚本不会创建 Git tag、commit 或 push。
 
 每个包也可单独执行构建或测试：
 

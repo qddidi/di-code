@@ -3,21 +3,9 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { releaseWorkspaces } from "./release-packages.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workspaces = [
-	"@di-code/plugin-runtime",
-	"@di-code/plugin-loader",
-	"@di-code/plugin-sdk",
-	"@di-code/ai",
-	"@di-code/agent",
-	"@di-code/builtins",
-	"@di-code/tui",
-	"@di-code/skills",
-	"@di-code/mcp",
-	"@di-code/coding-agent",
-	"@di-code/orchestrator",
-];
 
 function npmCommand(args) {
 	const npmEntry = process.env.npm_execpath;
@@ -107,7 +95,7 @@ async function main() {
 		await runNpm(["run", "build"]);
 
 		const tarballs = [];
-		for (const workspace of workspaces) {
+		for (const workspace of releaseWorkspaces) {
 			const dryRun = await runNpm(["pack", "--workspace", workspace, "--dry-run", "--json", "--ignore-scripts"]);
 			parsePackOutput(dryRun.stdout, workspace);
 			const packed = await runNpm([
@@ -169,7 +157,7 @@ await supervisor.stop();
 		await webSmoke(binPath, installDirectory, smokeEnvironment);
 
 		process.stdout.write(
-			`release dry-run passed: ${workspaces.length} packages, version ${installedMetadata.version}, outside install, RPC, and web smoke passed\n`,
+			`release dry-run passed: ${releaseWorkspaces.length} packages, version ${installedMetadata.version}, outside install, RPC, and web smoke passed\n`,
 		);
 	} finally {
 		await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });

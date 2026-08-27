@@ -18,7 +18,19 @@ interface PackageMetadata {
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const workspaceDirectories = ["ai", "agent", "tui", "skills", "mcp", "coding-agent", "orchestrator"] as const;
+const workspaceDirectories = [
+	"plugin-runtime",
+	"plugin-loader",
+	"plugin-sdk",
+	"ai",
+	"agent",
+	"skills",
+	"builtins",
+	"tui",
+	"mcp",
+	"coding-agent",
+	"orchestrator",
+] as const;
 const execFileAsync = promisify(execFile);
 
 async function readPackage(path: string): Promise<PackageMetadata> {
@@ -36,7 +48,7 @@ describe("release package contract", () => {
 			expect(metadata).toMatchObject({ version: root.version, private: false, license: "MIT" });
 			expect(metadata.files).toEqual(directory === "coding-agent" ? ["dist", "compositions"] : ["dist"]);
 			const readme = await readFile(join(repositoryRoot, "packages", directory, "README.md"), "utf8");
-			expect(readme).toContain("https://github.com/qddidi/di-code");
+			expect(readme).toContain(`# ${metadata.name}`);
 			for (const [name, version] of Object.entries(metadata.dependencies ?? {})) {
 				if (name.startsWith("@di-code/")) expect(version).toBe(root.version);
 			}
@@ -73,7 +85,7 @@ describe("release package contract", () => {
 			"--dry-run",
 			targetVersion,
 		]);
-		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 7 packages`);
+		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 12 packages`);
 		await expect(
 			execFileAsync(process.execPath, [
 				join(repositoryRoot, "scripts", "version-packages.mjs"),
