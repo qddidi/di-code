@@ -152,8 +152,9 @@ function App(): React.JSX.Element {
 			setWorkspaceId(targetWorkspaceId);
 		}
 	};
-	const handleAddWorkspace = async (path: string): Promise<WorkspaceSummary> => {
-		const workspace = await addWorkspace(path);
+	const handleAddWorkspace = async (): Promise<WorkspaceSummary | undefined> => {
+		const workspace = await addWorkspace();
+		if (!workspace) return undefined;
 		setAddedWorkspaces((current) => current.some((item) => item.id === workspace.id) ? current : [...current, workspace]);
 		try {
 			const result = await loadSessionsForWorkspace(workspace.id);

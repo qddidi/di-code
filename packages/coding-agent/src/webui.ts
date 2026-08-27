@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, extname, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { commandRegistryKey, type ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
@@ -100,6 +102,7 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
 	".svg": "image/svg+xml",
 	".woff2": "font/woff2",
 };
+const execFileAsync = promisify(execFile);
 
 async function body(req: IncomingMessage, maxBytes: number): Promise<string> {
 	const chunks: Buffer[] = [];
@@ -214,6 +217,7 @@ export class WebUiServer {
 			if (!this.rateAllowed(client)) return json(res, 429, { error: "Rate limit exceeded." });
 			if (req.method === "GET" && url.pathname === "/api/boot") return await this.boot(res, client, url);
 			if (req.method === "POST" && url.pathname === "/api/workspaces") return await this.addWorkspaceRoute(req, res);
+			if (req.method === "POST" && url.pathname === "/api/workspaces/pick") return await this.pickWorkspaceRoute(res);
 			if (req.method === "POST" && url.pathname === "/api/rpc") return await this.rpc(req, res, client, url);
 			if (req.method === "GET" && url.pathname === "/api/events") return await this.events(req, res, client, url);
 			if (req.method === "POST" && url.pathname === "/api/attachments")
@@ -561,6 +565,31 @@ export class WebUiServer {
 			throw new Error("Workspace path is required.");
 		const workspace = await this.addWorkspace((value as { readonly path: string }).path);
 		json(res, 200, { workspace });
+	}
+	private async pickWorkspaceRoute(res: ServerResponse): Promise<void> {
+		const requestedPath = await this.pickWorkspacePath();
+		if (!requestedPath) return json(res, 200, { cancelled: true });
+		const workspace = await this.addWorkspace(requestedPath);
+		json(res, 200, { cancelled: false, workspace });
+	}
+	private async pickWorkspacePath(): Promise<string | undefined> {
+		if (process.platform === "win32") {
+			const script =
+				"Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }";
+			const result = await execFileAsync("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
+				windowsHide: true,
+			});
+			return result.stdout.trim() || undefined;
+		}
+		if (process.platform === "darwin") {
+			const result = await execFileAsync("osascript", [
+				"-e",
+				'POSIX path of (choose folder with prompt "Choose a workspace")',
+			]);
+			return result.stdout.trim() || undefined;
+		}
+		const result = await execFileAsync("zenity", ["--file-selection", "--directory", "--title=Choose a workspace"]);
+		return result.stdout.trim() || undefined;
 	}
 	/** Adds a validated local directory to this server's explicitly authorized workspace set. */
 	private async addWorkspace(requestedPath: string): Promise<Pick<WebWorkspace, "id" | "name">> {

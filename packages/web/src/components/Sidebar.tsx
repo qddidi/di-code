@@ -10,7 +10,7 @@ interface SidebarProps {
 	readonly workspaces: readonly WorkspaceSummary[];
 	readonly activeWorkspaceId?: string;
 	readonly onSelectWorkspace: (id: string) => void;
-	readonly onAddWorkspace: (path: string) => Promise<WorkspaceSummary>;
+	readonly onAddWorkspace: () => Promise<WorkspaceSummary | undefined>;
 	readonly collapsed: boolean;
 	readonly onToggle: () => void;
 	readonly onNewSession: (workspaceId?: string) => void;
@@ -31,11 +31,14 @@ export function Sidebar({ sessionsByWorkspace, workspaces, activeWorkspaceId, on
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [expanded, setExpanded] = useState<Readonly<Record<string, boolean>>>({});
 	const [addOpen, setAddOpen] = useState(false);
-	const [workspacePath, setWorkspacePath] = useState("");
 	const [addError, setAddError] = useState<string>();
 	const [adding, setAdding] = useState(false);
 	const searchInput = useRef<HTMLInputElement>(null);
 	const directoryInput = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		directoryInput.current?.setAttribute("webkitdirectory", "");
+		directoryInput.current?.setAttribute("directory", "");
+	}, []);
 
 	useEffect(() => {
 		if (!activeWorkspaceId) return;
@@ -52,36 +55,19 @@ export function Sidebar({ sessionsByWorkspace, workspaces, activeWorkspaceId, on
 			return normalized ? sessions.filter((session) => session.label.toLowerCase().includes(normalized)) : sessions;
 		};
 	}, [query, sessionsByWorkspace]);
-	const submitWorkspace = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
-		event.preventDefault();
-		if (!workspacePath.trim() || adding) return;
-		setAdding(true);
+	const pickWorkspace = async (): Promise<void> => {
+		if (adding) return;
 		setAddError(undefined);
+		setAdding(true);
 		try {
-			await onAddWorkspace(workspacePath.trim());
-			setWorkspacePath("");
+			await onAddWorkspace();
 			setAddOpen(false);
 		} catch (cause) {
+			if (cause instanceof DOMException && cause.name === "AbortError") return;
 			setAddError(cause instanceof Error ? cause.message : t("Unable to add workspace."));
 		} finally {
 			setAdding(false);
 		}
-	};
-	const pickWorkspace = async (): Promise<void> => {
-		setAddError(undefined);
-		if ("showDirectoryPicker" in window) {
-			try {
-				const picker = (window as Window & { showDirectoryPicker?: () => Promise<{ readonly name: string }> }).showDirectoryPicker;
-				if (picker) {
-					const directory = await picker();
-					setWorkspacePath(directory.name);
-					return;
-				}
-			} catch (cause) {
-				if (cause instanceof DOMException && cause.name === "AbortError") return;
-			}
-		}
-		directoryInput.current?.click();
 	};
 
 	return (
@@ -93,7 +79,7 @@ export function Sidebar({ sessionsByWorkspace, workspaces, activeWorkspaceId, on
 			</div>
 			{!collapsed ? (
 				<>
-					<button className="new-session" type="button" onClick={onNewSession}><MessageSquarePlus size={17} />{t("New session")}<span className="shortcut">⌘ K</span></button>
+						<button className="new-session" type="button" onClick={() => onNewSession()}><MessageSquarePlus size={17} />{t("New session")}<span className="shortcut">⌘ K</span></button>
 					<div className="workspace-heading"><span>{t("Workspaces")}</span><span className="session-count">{workspaces.length}</span><span className="workspace-heading-actions"><IconButton label={searchOpen ? t("Close search") : t("Search sessions")} icon={searchOpen ? X : Search} onClick={() => { setSearchOpen((value) => !value); if (searchOpen) setQuery(""); }} /><IconButton label={t("Workspace display options")} icon={SlidersHorizontal} onClick={() => { const shouldExpand = workspaces.some((workspace) => !(expanded[workspace.id] ?? true)); setExpanded(Object.fromEntries(workspaces.map((workspace) => [workspace.id, shouldExpand]))); }} /><IconButton label={t("Add workspace")} icon={FolderPlus} onClick={() => { setAddError(undefined); setAddOpen(true); }} /></span></div>
 					{searchOpen ? <label className="session-search workspace-search"><Search size={15} aria-hidden="true" /><input ref={searchInput} aria-label={t("Search sessions")} placeholder={t("Search sessions")} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); setQuery(""); } }} /></label> : null}
 					<div className="workspace-list" role="tree" aria-label={t("Workspaces")}>
@@ -115,8 +101,7 @@ export function Sidebar({ sessionsByWorkspace, workspaces, activeWorkspaceId, on
 					<div className="sidebar-footer"><button className="footer-button" type="button" onClick={onSettings}><Settings size={17} />{t("Settings")}</button></div>
 				</>
 			) : <div className="collapsed-actions"><IconButton label={t("New session")} icon={MessageSquarePlus} onClick={onNewSession} /><IconButton label={t("Settings")} icon={Settings} onClick={onSettings} /></div>}
-			<input ref={directoryInput} className="attachment-input" type="file" multiple onChange={(event) => { const first = event.currentTarget.files?.[0]; const root = first?.webkitRelativePath.split("/")[0]; if (root) setWorkspacePath(root); event.currentTarget.value = ""; }} />
-			{addOpen ? <div className="workspace-add-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !adding) setAddOpen(false); }}><form className="workspace-add-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-add-title" onSubmit={(event) => void submitWorkspace(event)}><div className="workspace-add-header"><div><p className="eyebrow">{t("Workspaces")}</p><h2 id="workspace-add-title">{t("Add workspace")}</h2></div><IconButton label={t("Close")} icon={X} onClick={() => { if (!adding) setAddOpen(false); }} /></div><button type="button" className="workspace-pick-button" onClick={() => void pickWorkspace()}><FolderPlus size={17} />{t("Choose a folder")}</button><label className="workspace-add-field"><span>{t("Workspace path")}</span><input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder={t("Choose a local folder")} /></label>{addError ? <p className="workspace-add-error" role="alert">{addError}</p> : null}<div className="workspace-add-actions"><button type="button" onClick={() => setAddOpen(false)} disabled={adding}>{t("Cancel")}</button><button type="submit" className="workspace-add-submit" disabled={!workspacePath.trim() || adding}>{adding ? t("Adding...") : t("Add workspace")}</button></div></form></div> : null}
+			{addOpen ? <div className="workspace-add-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !adding) setAddOpen(false); }}><div className="workspace-add-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-add-title"><div className="workspace-add-header"><div><p className="eyebrow">{t("Workspaces")}</p><h2 id="workspace-add-title">{t("Add workspace")}</h2></div><IconButton label={t("Close")} icon={X} onClick={() => { if (!adding) setAddOpen(false); }} /></div><p className="workspace-add-note">{t("Choose a local folder to add it to this WebUI.")}</p><button type="button" className="workspace-pick-button" onClick={() => void pickWorkspace()} disabled={adding}><FolderPlus size={17} />{adding ? t("Adding...") : t("Choose a folder")}</button>{addError ? <p className="workspace-add-error" role="alert">{addError}</p> : null}<div className="workspace-add-actions"><button type="button" onClick={() => setAddOpen(false)} disabled={adding}>{t("Cancel")}</button></div></div></div> : null}
 		</aside>
 	);
 }

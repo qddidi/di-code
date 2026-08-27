@@ -125,18 +125,16 @@ export async function loadSessionsForWorkspace(selectedWorkspaceId: string): Pro
 	return envelope.result;
 }
 
-export async function addWorkspace(path: string): Promise<WorkspaceSummary> {
-	const response = await fetch("/api/workspaces", {
+export async function addWorkspace(): Promise<WorkspaceSummary | undefined> {
+	const response = await fetch("/api/workspaces/pick", {
 		method: "POST",
 		credentials: "same-origin",
 		headers: clientHeaders({ "content-type": "application/json" }),
-		body: JSON.stringify({ path }),
 	});
 	rememberClient(response);
 	if (!response.ok) throw new Error("Unable to add workspace.");
-	const result = (await response.json()) as { readonly workspace?: WorkspaceSummary };
-	if (!result.workspace) throw new Error("Unable to add workspace.");
-	return result.workspace;
+	const result = (await response.json()) as { readonly cancelled?: boolean; readonly workspace?: WorkspaceSummary };
+	return result.cancelled ? undefined : result.workspace;
 }
 
 export async function loadSettings(): Promise<SettingsSnapshot> {

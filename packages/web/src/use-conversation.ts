@@ -786,7 +786,11 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	}, []);
 	const newSession = useCallback(async () => {
 		const placeholderId = `pending-${crypto.randomUUID()}`;
-		const placeholder: SessionSummary = { id: placeholderId, label: "New session", modifiedAt: new Date().toISOString() };
+		const placeholder: SessionSummary = {
+			id: placeholderId,
+			label: "New session",
+			modifiedAt: new Date().toISOString(),
+		};
 		setSessions((current) => [placeholder, ...current]);
 		setActiveSessionId(placeholderId);
 		try {

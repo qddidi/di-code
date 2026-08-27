@@ -15,8 +15,11 @@
 .workspace-heading-actions .icon-button { width: 28px; height: 28px; }
 .workspace-add-overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: rgba(25,31,38,.25); }
 .workspace-add-dialog { width: min(420px, 100%); padding: 18px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 16px 48px rgba(18,25,33,.2); }
+.workspace-pick-button { display: inline-flex; align-items: center; gap: 7px; width: 100%; margin-top: 18px; padding: 10px 12px; color: var(--ink); background: #f0f2f4; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; }
+.workspace-pick-button:hover { background: #e7eaed; }
 .workspace-add-header { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .workspace-add-header h2 { margin: 0; font-size: 18px; }
+.workspace-add-note { margin: 16px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .workspace-add-field { display: grid; gap: 7px; margin-top: 18px; color: var(--muted); font-size: 12px; }
 .workspace-add-field input { width: 100%; padding: 9px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; font-size: 13px; }
 .workspace-add-error { margin: 10px 0 0; color: #9b453e; font-size: 12px; }
@@ -28,14 +31,20 @@
 .workspace-search { margin-top: 0; }
 .workspace-list { flex: 1; min-height: 90px; overflow: auto; padding: 2px 0 10px; }
 .workspace-section { margin: 2px 0; }
-.workspace-section-header { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 8px; color: #5f6975; background: transparent; border-radius: 6px; text-align: left; font-size: 13px; }
-.workspace-section-header:hover, .workspace-section.is-active > .workspace-section-header { color: var(--ink); background: #e4e7ea; }
-.workspace-section-header svg:first-child { color: #65717e; }
-.workspace-section.is-active > .workspace-section-header svg:first-child { color: #376fda; }
+.workspace-section-header-wrap { position: relative; display: flex; align-items: center; min-width: 0; border-radius: 6px; }
+.workspace-section-header-wrap:hover, .workspace-section.is-active > .workspace-section-header-wrap { background: #e4e7ea; }
+.workspace-section-header { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px; color: #5f6975; background: transparent; border-radius: 6px; text-align: left; font-size: 13px; }
+.workspace-section-header-wrap:hover .workspace-section-header, .workspace-section.is-active > .workspace-section-header-wrap .workspace-section-header { color: var(--ink); }
+.workspace-folder-icon { position: relative; width: 17px; height: 17px; display: grid; place-items: center; flex: 0 0 auto; color: #65717e; }
+.workspace-folder-icon > svg:last-child { position: absolute; display: none; }
+.workspace-section-header-wrap:hover .workspace-folder-icon > svg:first-child { display: none; }
+.workspace-section-header-wrap:hover .workspace-folder-icon > svg:last-child { display: block; }
+.workspace-section.is-active > .workspace-section-header-wrap .workspace-folder-icon { color: #376fda; }
 .workspace-section-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .workspace-session-count { color: #929aa5; font-size: 11px; }
-.workspace-section-header > svg:last-child { transition: transform .15s ease; }
-.workspace-section-header > svg:last-child.is-collapsed { transform: rotate(-90deg); }
+.workspace-row-actions { display: inline-flex; align-items: center; gap: 1px; padding-right: 4px; opacity: 0; }
+.workspace-section-header-wrap:hover .workspace-row-actions, .workspace-section.is-active > .workspace-section-header-wrap .workspace-row-actions, .workspace-row-actions:focus-within { opacity: 1; }
+.workspace-row-actions .icon-button { width: 26px; height: 26px; }
 .workspace-section-sessions { padding: 0 0 4px 17px; }
 .workspace-section-sessions .session-tree { min-height: 0; overflow: visible; }
 .workspace-section-sessions .session-item { padding-top: 7px; padding-bottom: 7px; }
