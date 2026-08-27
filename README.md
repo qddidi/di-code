@@ -524,6 +524,8 @@ $request | node packages/coding-agent/dist/rpc-entry.js
 
 ### 本地 Web 应用
 
+助手回复使用 GitHub Flavored Markdown 渲染，支持标题、列表、任务列表、表格、引用、链接和代码块。嵌入的原生 HTML 会作为文本显示而不会执行。
+
 构建后的 `di-code web [--port <0-65535>]` 会启动一个只绑定 `127.0.0.1` 的 Node 进程。它同时提供 React SPA、`/api/boot`、`/api/rpc`、`/api/events`、`/api/attachments` 和无认证的 `GET /healthz`；`--port` 省略或为 `0` 时选择可用端口。页面首次加载会建立仅同源可用的 HttpOnly cookie，浏览器不需要、也不会获得 `DI_CODE_WEBUI_TOKEN`。
 
 ```powershell

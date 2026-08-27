@@ -5,7 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"build": "vite build",
-		"dev": "node --experimental-strip-types scripts/dev.ts"
+		"dev": "node --experimental-strip-types scripts/dev.ts",
+		"test": "vitest run"
 	},
 	"devDependencies": {
 		"@types/react": "19.2.14",
@@ -17,6 +18,8 @@
 	},
 	"dependencies": {
 		"@di-code/plugin-runtime": "0.1.7",
-		"lucide-react": "1.34.0"
+		"lucide-react": "1.34.0",
+		"react-markdown": "10.1.0",
+		"remark-gfm": "4.0.1"
 	}
 }

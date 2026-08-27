@@ -608,6 +608,8 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 
 ### WebUI HTTP/SSE
 
+`di-code web` 将助手回复渲染为 GitHub Flavored Markdown；嵌入 HTML 不解析，也不会执行。
+
 `di-code web [--port <0-65535>]` 是面向浏览器的同源入口，默认使用随机可用端口并且始终只绑定 `127.0.0.1`。同一个 Node 进程拥有静态 SPA、`GET /healthz`、`GET /api/boot` 和现有 HTTP/SSE RPC adapter 的 `/api` 路由；页面只读取 boot/capabilities，实际 prompt、Session 和工具调用仍由 `RpcDispatcher`/`SessionHost` 执行。静态资源来自已安装包的 `dist/web`，API 路由与 SPA fallback 隔离，路径穿越和 symlink 逃逸会被拒绝。首次静态页面响应建立 HttpOnly、SameSite cookie，浏览器不需要知道 transport token。
 
 `npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；若当前 Provider 尚未配置 API key，则 backend 使用 Faux runtime 启动页面，供用户在 Settings 中完成登录，内置 Provider（包括 Zhipu）仍会显示为未配置状态，settings 文件本身的格式或安全校验错误仍会失败。端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。

@@ -1,5 +1,6 @@
 import { Check, Copy, GitBranch, RotateCcw, Wand2 } from "lucide-react";
 import { ActivityTimeline } from "./ActivityTimeline.tsx";
+import { MarkdownContent } from "./MarkdownContent.tsx";
 import type { ConversationMessage } from "../types.ts";
 
 interface TranscriptProps {
@@ -19,7 +20,7 @@ export function Transcript({ messages, onRetry, canRetry, onBranch, webSlot, wai
 			<div className="message-label">{message.role === "user" ? "You" : message.role === "assistant" ? "di-code" : "Tool"}</div>
 			{message.role === "assistant" ? <ActivityTimeline activities={message.activities} streaming={message.status === "streaming"} /> : null}
 			{message.skillName ? <div className="message-skill"><Wand2 size={14} />Used skill <code>/{`skill:${message.skillName}`}</code></div> : null}
-			{message.text ? <div className="message-body">{message.text}</div> : null}
+			{message.text ? <div className="message-body">{message.role === "assistant" ? <MarkdownContent>{message.text}</MarkdownContent> : message.text}</div> : null}
 			{message.images?.length ? <div className="message-images">{message.images.map((image, imageIndex) => <img key={`${image.src.slice(-32)}-${imageIndex}`} src={image.src} alt={image.alt} />)}</div> : null}
 			{message.status === "streaming" && !message.text && !message.activities?.length ? <span className="streaming-status" role="status" aria-label="Streaming response"><span className="streaming-dots"><i /><i /><i /></span></span> : null}
 			{message.role === "assistant" && message.status !== "streaming" && message.status !== "error" ? <div className="message-actions"><button type="button" aria-label="Copy" title="Copy" onClick={() => copyMessage(message.text)}><Copy size={15} /></button><button type="button" aria-label="Branch into a new conversation" title="Branch into a new conversation" onClick={() => onBranch(message.entryId)}><GitBranch size={15} /></button><span className="message-complete"><Check size={13} />Completed</span></div> : null}

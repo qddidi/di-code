@@ -49,7 +49,19 @@
 .message { display: grid; gap: 7px; }
 .message-user { justify-self: end; max-width: min(88%, 620px); padding: 12px 14px; background: #edf1f5; border-radius: 7px; }
 .message-label { color: var(--muted); font-size: 11px; font-weight: 700; }
-.message-body { white-space: pre-wrap; font-size: 14px; line-height: 1.65; }
+.message-body { font-size: 14px; line-height: 1.65; }
+.message-user .message-body { white-space: pre-wrap; }
+.message-body > :first-child { margin-top: 0; }
+.message-body > :last-child { margin-bottom: 0; }
+.message-body p, .message-body ul, .message-body ol, .message-body blockquote, .message-body pre, .message-body table { margin: 0 0 12px; }
+.message-body h1, .message-body h2, .message-body h3, .message-body h4, .message-body h5, .message-body h6 { margin: 18px 0 8px; color: var(--ink); line-height: 1.3; }
+.message-body h1 { font-size: 22px; }.message-body h2 { font-size: 19px; }.message-body h3 { font-size: 16px; }.message-body h4, .message-body h5, .message-body h6 { font-size: 14px; }
+.message-body ul, .message-body ol { padding-left: 24px; }.message-body li + li { margin-top: 4px; }.message-body input[type="checkbox"] { margin: 0 6px 0 0; accent-color: var(--accent); }
+.message-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }.message-body a:hover { color: #1d45b5; }
+.message-body :not(pre) > code { padding: 2px 4px; color: #4d5d70; background: #edf0f3; border: 1px solid #e0e4e8; border-radius: 4px; font: .9em ui-monospace, SFMono-Regular, Consolas, monospace; }
+.message-body pre { overflow: auto; padding: 12px; color: #dce5ee; background: #202a35; border-radius: 6px; }.message-body pre code { font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.message-body blockquote { padding: 2px 0 2px 12px; color: #566575; border-left: 3px solid #aebdce; }.message-body hr { height: 1px; margin: 16px 0; border: 0; background: var(--line); }
+.message-body table { display: block; max-width: 100%; overflow-x: auto; border-spacing: 0; border-collapse: collapse; }.message-body th, .message-body td { padding: 7px 9px; border: 1px solid var(--line); text-align: left; vertical-align: top; }.message-body th { background: #f2f4f6; font-weight: 650; }
 .message-skill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: #536e9d; font-size: 12px; }
 .message-skill code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
 .message-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
