@@ -1,6 +1,7 @@
 import {
 	agentSessionKey,
 	compactionRegistryKey,
+	imageGenerationCapabilityKey,
 	networkCapabilityKey,
 	processCapabilityKey,
 	type ToolApprovalCapability,
@@ -65,6 +66,7 @@ export function installAgentSessionFactory(context: Context): Disposer {
 				policy: context.require(toolPolicyKey),
 				approval: options.toolApproval ?? context.require(toolApprovalKey),
 				output: context.require(toolOutputKey),
+				imageGeneration: context.get(imageGenerationCapabilityKey),
 				skills: skillCatalog,
 			}),
 			...(options.externalTools ?? []),

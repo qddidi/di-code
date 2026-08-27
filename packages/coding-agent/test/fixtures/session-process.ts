@@ -5,10 +5,7 @@ import { AgentSession } from "../test-agent-session.ts";
 
 function messageText(message: ReturnType<SessionManager["messages"]["at"]>): string {
 	if (!message) return "";
-	return message.content
-		.filter((content): content is Extract<typeof content, { type: "text" }> => content.type === "text")
-		.map((content) => content.text)
-		.join("");
+	return message.content.map((content) => (content.type === "text" ? content.text : "")).join("");
 }
 
 function userMessage(text: string, timestamp: number): Extract<Message, { role: "user" }> {

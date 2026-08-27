@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRootContext } from "@di-code/plugin-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	createDefaultToolCapabilities,
+	createGenerateImageTool,
 	toolApproval,
 	toolApprovalKey,
 	toolEdit,
@@ -113,5 +114,23 @@ describe("tool composition entries", () => {
 		} finally {
 			await context.dispose();
 		}
+	});
+
+	it("returns generated images and stores them outside the workspace", async () => {
+		const root = await createWorkspace();
+		const artifacts = await createWorkspace();
+		const tool = createGenerateImageTool({
+			provider: {
+				id: "test-images",
+				name: "Test Images",
+				generate: async () => [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
+			},
+			artifactDirectory: artifacts,
+		});
+		const result = await tool.execute("call-1", { prompt: "draw" });
+		expect(result[0]).toEqual({ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" });
+		expect(result.at(-1)).toMatchObject({ type: "text" });
+		expect(await readdir(artifacts)).toHaveLength(1);
+		expect(await readdir(root)).toHaveLength(0);
 	});
 });

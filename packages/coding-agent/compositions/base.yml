@@ -15,6 +15,7 @@ entries:
   - { id: credential-env, name: "@di-code/builtins/credential-env", dependsOn: [provider-registry] }
   - { id: runtime-selection, name: "@di-code/builtins/runtime-selection", dependsOn: [provider-registry] }
   - { id: provider-faux, name: "@di-code/builtins/provider-faux", dependsOn: [provider-registry] }
+  - { id: image-generation, name: "@di-code/builtins/image-generation", dependsOn: [runtime], required: false }
   - { id: provider-openai, name: "@di-code/builtins/provider-openai", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
   - { id: provider-anthropic, name: "@di-code/builtins/provider-anthropic", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
   - { id: provider-deepseek, name: "@di-code/builtins/provider-deepseek", dependsOn: [provider-registry, runtime-selection, credential-env], required: false }
@@ -31,6 +32,7 @@ entries:
   - { id: tool-output, name: "@di-code/builtins/tool-output", dependsOn: [tool-registry] }
   - { id: tool-read, name: "@di-code/builtins/tool-read", dependsOn: [tool-registry, workspace] }
   - { id: tool-write, name: "@di-code/builtins/tool-write", dependsOn: [tool-registry, workspace] }
+  - { id: tool-generate-image, name: "@di-code/builtins/tool-generate-image", dependsOn: [tool-registry, image-generation], required: false }
   - { id: tool-edit, name: "@di-code/builtins/tool-edit", dependsOn: [tool-registry, workspace] }
   - { id: tool-bash, name: "@di-code/builtins/tool-bash", dependsOn: [tool-registry, workspace] }
   - { id: tool-glob, name: "@di-code/builtins/tool-glob", dependsOn: [tool-registry, workspace] }

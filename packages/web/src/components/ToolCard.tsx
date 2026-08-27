@@ -12,6 +12,7 @@ export function ToolCard({ tool }: { readonly tool: ToolTrace }): React.JSX.Elem
 		<header className="tool-card-header"><span className="tool-icon">{icon}</span><strong>{tool.name}</strong><span className="tool-status">{label}</span></header>
 		<details className="tool-card-details"><summary><ChevronDown size={14} />Details</summary><pre>{displayArguments(tool.arguments)}</pre></details>
 		{tool.output ? <details className="tool-output"><summary><ChevronDown size={14} />Output{tool.status === "truncated" ? " (truncated)" : ""}</summary><pre>{tool.output}</pre></details> : null}
+		{tool.images?.length ? <div className="tool-images" aria-label="Tool images">{tool.images.map((image, index) => <img key={`${image.src.slice(-32)}-${index}`} src={image.src} alt={image.alt} />)}</div> : null}
 		{typeof tool.details?.diff === "string" || typeof tool.details?.patch === "string" ? <details className="tool-diff"><summary><ChevronDown size={14} />Diff</summary><pre>{String(tool.details.diff ?? tool.details.patch)}</pre></details> : null}
 	</article>;
 }

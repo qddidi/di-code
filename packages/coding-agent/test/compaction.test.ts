@@ -35,10 +35,7 @@ function smallModel(model: Model): Model {
 }
 
 function messageText(message: Message): string {
-	return message.content
-		.filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
-		.map((block) => block.text)
-		.join("");
+	return message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 }
 
 interface CapturedRequest {

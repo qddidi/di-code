@@ -19,6 +19,14 @@
 			"types": "./dist/provider-faux.d.ts",
 			"import": "./dist/provider-faux.js"
 		},
+		"./image-generation": {
+			"types": "./dist/image-generation.d.ts",
+			"import": "./dist/image-generation.js"
+		},
+		"./tool-generate-image": {
+			"types": "./dist/tool-generate-image.d.ts",
+			"import": "./dist/tool-generate-image.js"
+		},
 		"./provider-openai": {
 			"types": "./dist/provider-openai.d.ts",
 			"import": "./dist/provider-openai.js"

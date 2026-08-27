@@ -7,6 +7,8 @@
 - `di-code-webui`：供自定义客户端使用的 HTTP/SSE WebUI 传输层；
 - `di-code-rpc`：供 Node.js 宿主程序管理 Agent 的 JSONL RPC 入口。
 
+助手消息可以包含 Provider 返回的图片内容。WebUI 会把图片和文本一起渲染在助手聊天气泡中，并通过 Session/RPC transcript 持久化；插件可注册支持 `image` 输出的 Provider 以接入生图模型。
+
 需要 Node.js `>=22.19.0`。已发布版本可直接安装：
 
 ```powershell

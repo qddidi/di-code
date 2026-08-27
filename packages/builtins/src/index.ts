@@ -9,6 +9,7 @@ import {
 	createDeepSeekProvider,
 	createFauxProvider,
 	createKimiProvider,
+	createOpenAIImagesProvider,
 	createOpenAIProvider,
 	createZhipuProvider,
 	MODELS,
@@ -16,6 +17,7 @@ import {
 import { createServiceKey, type PluginDefinition, type RegistryOwner } from "@di-code/plugin-runtime";
 import { createBashTool, createLocalBashOperations } from "./tool-bash-implementation.ts";
 import type {
+	ImageGenerationCapability,
 	NetworkCapability,
 	ProcessCapability,
 	RuntimeAgentTool,
@@ -27,6 +29,7 @@ import type {
 	WorkspaceCapability,
 } from "./tool-capabilities.ts";
 import { createEditTool } from "./tool-edit-implementation.ts";
+import { createGenerateImageTool } from "./tool-generate-image-implementation.ts";
 import { createGlobTool } from "./tool-glob-implementation.ts";
 import { createGrepTool } from "./tool-grep-implementation.ts";
 import { createLoadSkillTool } from "./tool-load-skill-implementation.ts";
@@ -42,6 +45,7 @@ export * from "./path-boundary.ts";
 export * from "./tool-bash-implementation.ts";
 export * from "./tool-capabilities.ts";
 export * from "./tool-edit-implementation.ts";
+export * from "./tool-generate-image-implementation.ts";
 export * from "./tool-glob-implementation.ts";
 export * from "./tool-grep-implementation.ts";
 export * from "./tool-load-skill-implementation.ts";
@@ -173,6 +177,8 @@ export const providerRegistryKey = createServiceKey<ProviderRegistry>("provider-
 export const workspaceCapabilityKey = createServiceKey<WorkspaceCapability>("workspace-capability");
 export const processCapabilityKey = createServiceKey<ProcessCapability>("process-capability");
 export const networkCapabilityKey = createServiceKey<NetworkCapability>("network-capability");
+export const imageGenerationCapabilityKey =
+	createServiceKey<import("./tool-capabilities.ts").ImageGenerationCapability>("image-generation-capability");
 export const toolApprovalKey = createServiceKey<ToolApprovalCapability>("tool-approval");
 export const toolPolicyKey = createServiceKey<ToolPolicyCapability>("tool-policy");
 export const toolOutputKey = createServiceKey<ToolOutputCapability>("tool-output");
@@ -394,6 +400,8 @@ export function createBuiltinToolSnapshot(
 }
 
 const defaultToolFactories: Readonly<Record<string, ToolFactory>> = {
+	generate_image: (capabilities) =>
+		capabilities.imageGeneration === undefined ? undefined : createGenerateImageTool(capabilities.imageGeneration),
 	read: (capabilities) => createReadTool(capabilities.workspace.allowedRoot),
 	write: (capabilities) => createWriteTool(capabilities.workspace.allowedRoot),
 	edit: (capabilities) => createEditTool(capabilities.workspace.allowedRoot),
@@ -638,6 +646,27 @@ export const networkCapability: PluginDefinition = {
 	},
 };
 
+export const imageGeneration: PluginDefinition = {
+	apiVersion: 1,
+	name: "image-generation",
+	version: "0.1.7",
+	apply(context) {
+		const apiKey = process.env.DI_CODE_IMAGE_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim();
+		if (!apiKey) return;
+		const provider = createOpenAIImagesProvider({
+			apiKey,
+			baseUrl: process.env.DI_CODE_IMAGE_BASE_URL?.trim() || process.env.OPENAI_BASE_URL?.trim(),
+			model: process.env.DI_CODE_IMAGE_MODEL?.trim() || process.env.OPENAI_IMAGE_MODEL?.trim(),
+			providerId: process.env.DI_CODE_IMAGE_PROVIDER?.trim() || "openai-images",
+		});
+		const capability: ImageGenerationCapability = {
+			provider,
+			artifactDirectory: join(homedir(), ".di-code", "artifacts"),
+		};
+		context.set(imageGenerationCapabilityKey, capability);
+	},
+};
+
 export const toolApproval: PluginDefinition = {
 	apiVersion: 1,
 	name: "tool-approval",
@@ -671,6 +700,15 @@ export const toolWrite: PluginDefinition = {
 	version: "0.1.7",
 	apply(context, _config, fiber) {
 		registerToolFactory(context, fiber, "write", defaultToolFactories.write);
+	},
+};
+
+export const toolGenerateImage: PluginDefinition = {
+	apiVersion: 1,
+	name: "tool-generate-image",
+	version: "0.1.7",
+	apply(context, _config, fiber) {
+		registerToolFactory(context, fiber, "generate_image", defaultToolFactories.generate_image);
 	},
 };
 
@@ -1666,6 +1704,7 @@ export const agentLoop: PluginDefinition = {
 			policy: context.require(toolPolicyKey),
 			approval: context.require(toolApprovalKey),
 			output: context.require(toolOutputKey),
+			imageGeneration: context.get(imageGenerationCapabilityKey),
 		});
 		const agent = new AgentImpl({ provider: selected.provider, model: selected.model, tools });
 		const unsubscribe = agent.subscribe((event: AgentEvent) => memory.append(event));
@@ -1732,6 +1771,7 @@ export const minimalProfile = {
 		{ id: "model-catalog", name: "@di-code/builtins/model-catalog", dependsOn: ["provider-registry"] },
 		{ id: "credential-env", name: "@di-code/builtins/credential-env", dependsOn: ["provider-registry"] },
 		{ id: "provider-faux", name: "@di-code/builtins/provider-faux", dependsOn: ["provider-registry"] },
+		{ id: "image-generation", name: "@di-code/builtins/image-generation", dependsOn: ["runtime"], required: false },
 		{
 			id: "provider-openai",
 			name: "@di-code/builtins/provider-openai",
@@ -1779,6 +1819,12 @@ export const minimalProfile = {
 		{ id: "tool-output", name: "@di-code/builtins/tool-output", dependsOn: ["tool-registry"] },
 		{ id: "tool-read", name: "@di-code/builtins/tool-read", dependsOn: ["tool-registry", "workspace"] },
 		{ id: "tool-write", name: "@di-code/builtins/tool-write", dependsOn: ["tool-registry", "workspace"] },
+		{
+			id: "tool-generate-image",
+			name: "@di-code/builtins/tool-generate-image",
+			dependsOn: ["tool-registry", "image-generation"],
+			required: false,
+		},
 		{ id: "tool-edit", name: "@di-code/builtins/tool-edit", dependsOn: ["tool-registry", "workspace"] },
 		{ id: "tool-bash", name: "@di-code/builtins/tool-bash", dependsOn: ["tool-registry", "workspace"] },
 		{ id: "tool-glob", name: "@di-code/builtins/tool-glob", dependsOn: ["tool-registry", "workspace"] },
@@ -1807,6 +1853,8 @@ export const minimalProfile = {
 				"tool-approval",
 				"tool-policy",
 				"tool-output",
+				"image-generation",
+				"tool-generate-image",
 			],
 		},
 		{
@@ -1843,6 +1891,8 @@ export const pluginModules = {
 	processExit,
 	providerRegistry,
 	providerFaux,
+	imageGeneration,
+	toolGenerateImage,
 	providerOpenai,
 	providerAnthropic,
 	providerDeepseek,

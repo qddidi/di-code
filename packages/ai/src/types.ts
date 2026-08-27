@@ -53,7 +53,7 @@ export interface ProviderReplay {
 export type UserContent = TextContent | ImageContent;
 
 /** 助手消息允许包含的内容块。 */
-export type AssistantContent = TextContent | ThinkingContent | ToolCallContent;
+export type AssistantContent = TextContent | ThinkingContent | ImageContent | ToolCallContent;
 
 /** 工具结果消息允许返回的内容块。 */
 export type ToolResultContent = TextContent | ImageContent;
@@ -278,6 +278,8 @@ export type StreamEvent =
 	| { type: "thinking_delta"; contentIndex: number; delta: string }
 	/** 当前思考块结束，并给出拼接后的完整思考文本。 */
 	| { type: "thinking_end"; contentIndex: number; content: string }
+	/** A complete generated image. Providers buffer image bytes before emitting this atomic event. */
+	| { type: "image"; contentIndex: number; image: ImageContent }
 	/** 开始生成工具调用，并给出调用标识和工具名称。 */
 	| { type: "tool_call_start"; contentIndex: number; id: string; name: string }
 	/** 向当前工具调用追加一段尚未解析的 JSON 参数文本。 */

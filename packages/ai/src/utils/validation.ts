@@ -1,9 +1,10 @@
 import type { Static, TSchema } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
-import type { AssistantContent, StreamEvent, ToolDefinition } from "../types.ts";
+import type { AssistantContent, ImageContent, StreamEvent, ToolDefinition } from "../types.ts";
 
 type StreamPhase = "idle" | "streaming" | "terminal";
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 // 同一时刻只允许一个活动内容块。文本/思考累积可展示字符串，工具调用累积尚未完成的 JSON。
 type ActiveBlock =
@@ -78,6 +79,24 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function isJsonObject(value: unknown): value is Record<string, JsonValue> {
 	return value !== null && typeof value === "object" && !Array.isArray(value) && isJsonValue(value);
+}
+
+function isImageContent(value: unknown): value is ImageContent {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+	const image = value as Record<string, unknown>;
+	const data = typeof image.data === "string" ? image.data : "";
+	const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+	const decodedBytes = Math.floor((data.length * 3) / 4) - padding;
+	return (
+		image.type === "image" &&
+		data.length > 0 &&
+		data.length % 4 === 0 &&
+		/^[A-Za-z0-9+/]*={0,2}$/.test(data) &&
+		decodedBytes > 0 &&
+		decodedBytes <= MAX_IMAGE_BYTES &&
+		typeof image.mimeType === "string" &&
+		/^image\/[A-Za-z0-9.+-]+$/.test(image.mimeType)
+	);
 }
 
 // JSON.parse 会创建新对象，因此这里比较结构和值，不能使用 === 比较对象引用。
@@ -192,6 +211,17 @@ export function createStreamEventValidator(): StreamEventValidator {
 							: { type: "thinking", thinking: active.value },
 					);
 					state.activeBlock = undefined;
+					state.nextContentIndex += 1;
+					return;
+				}
+				case "image": {
+					// Images are deliberately atomic: an incomplete binary payload must never enter the message history.
+					if (state.activeBlock) {
+						reject(event, state, `cannot emit an image while ${state.activeBlock.kind} is active`);
+					}
+					assertStartIndex(event, state, event.contentIndex);
+					if (!isImageContent(event.image)) reject(event, state, "image content is invalid");
+					state.completedContent.push(event.image);
 					state.nextContentIndex += 1;
 					return;
 				}

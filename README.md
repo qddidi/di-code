@@ -44,7 +44,7 @@ npm run dev -- --print "检查当前项目的主要模块"
 ## 功能
 
 - OpenAI Responses API 与 DeepSeek、智谱 GLM 等 OpenAI Chat Completions 兼容 API 流式适配，包含文本、推理、工具调用和用量信息。
-- Provider 无关的消息、模型、工具与事件协议。
+- Provider 无关的消息、模型、工具与事件协议；Provider 也可以通过原子图片事件返回助手生成图片。
 - Agent 工具循环：模型请求工具后，执行工具并将结果回传给模型，直至任务结束。
 - 内置 `read`、`write`、`edit`、`glob`、`grep`、`bash` 编码工具。
 - 全屏交互终端 UI：多行编辑、补全、Markdown、工具状态、取消、重试、模型和主题选择。
@@ -162,6 +162,10 @@ npm run dev
 | `DI_CODE_LOCALE` | 选择内置 CLI 和交互终端文案语言：`en` 或 `zh-CN` | 可选；优先于用户全局 settings 中的 `locale` |
 | `OPENAI_API_KEY` | OpenAI 凭据 | 使用 OpenAI 时必需，向导临时输入除外 |
 | `OPENAI_BASE_URL` | 覆盖内建 OpenAI endpoint | 可选，默认 `https://api.openai.com/v1` |
+| `DI_CODE_IMAGE_MODEL` | 生图工具使用的图片模型 ID | 可选，默认 `gpt-image-1` |
+| `DI_CODE_IMAGE_BASE_URL` | OpenAI Images 兼容 endpoint 根地址 | 可选，默认使用 `OPENAI_BASE_URL` 或 `https://api.openai.com/v1` |
+| `DI_CODE_IMAGE_API_KEY` | 生图 API 凭据 | 可选，未设置时复用 `OPENAI_API_KEY` |
+| `DI_CODE_IMAGE_PROVIDER` | 生图 Provider 的显示/追踪 ID | 可选，默认 `openai-images` |
 | `ANTHROPIC_API_KEY` | Anthropic 凭据 | 使用 Anthropic 时必需，向导临时输入除外 |
 | `ANTHROPIC_BASE_URL` | 覆盖内建 Anthropic endpoint | 可选，默认 `https://api.anthropic.com` |
 | `DEEPSEEK_API_KEY` | DeepSeek 凭据 | 使用 DeepSeek 时必需，向导临时输入除外 |
@@ -257,6 +261,20 @@ Custom 向导的模型目录还包含 `qwen3.7-plus` 与 `MiniMax-M3` 的已验�
 ### 使用 `.di-code/settings.json`
 
 `settings.json` 用于声明自定义 Provider、兼容网关和自定义模型。文件位置固定为项目工作目录下的 `.di-code/settings.json`，根节点必须包含 `providers` 对象。
+
+### 生图模型
+
+配置了 `DI_CODE_IMAGE_API_KEY`（或 `OPENAI_API_KEY`）后，Agent 会自动获得 `generate_image` 工具。工具调用 OpenAI Images 兼容的 `/images/generations` endpoint，支持 `b64_json` 和 URL 返回；`DI_CODE_IMAGE_BASE_URL` 可指向第三方兼容网关，`DI_CODE_IMAGE_MODEL` 可填写该网关的任意图片模型 ID。生成的 PNG/JPEG/WebP/GIF 会作为图片消息显示在助手气泡中，并复制到用户级 `~/.di-code/artifacts`，不会写入当前工作区。
+
+示例：
+
+```powershell
+$env:DI_CODE_IMAGE_API_KEY = "your-image-api-key"
+$env:DI_CODE_IMAGE_MODEL = "gpt-image-1"
+# 第三方 OpenAI Images 兼容网关：
+# $env:DI_CODE_IMAGE_BASE_URL = "https://gateway.example.com/v1"
+npm run dev -- --print "生成一张极简风格的应用架构图"
+```
 
 在 interactive TTY 的首次向导或 `/login` 中选择 `Custom`，可以不手写 JSON 完成同样的配置。向导支持 `openai-responses`、`openai-chat-completions` 和 `anthropic-messages`；Base URL 必须是绝对 `http`/`https` 地址，不能带凭据、query、hash 或尾随 `/`。模型 ID 可以是目录外的任意非空值：精确匹配内置目录时复用能力元数据，否则使用文本输入、128000 上下文和 16384 输出 token 的保守默认值。再次配置会覆盖用户级 `custom` Provider，但保留其他 Provider 和语言偏好。
 

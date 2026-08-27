@@ -1,0 +1,68 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - banner [ref=e7]:
+      - generic [ref=e8]:
+        - img "稀土掘金" [ref=e10] [cursor=pointer]
+        - navigation [ref=e11]:
+          - list [ref=e12]:
+            - listitem [ref=e13]:
+              - generic [ref=e14] [cursor=pointer]: 首页
+            - list [ref=e16]:
+              - listitem [ref=e17]:
+                - list [ref=e18]:
+                  - listitem [ref=e19]:
+                    - search [ref=e20]:
+                      - searchbox "探索稀土掘金" [ref=e21]
+                  - listitem [ref=e25]:
+                    - button "创作者中心" [ref=e27] [cursor=pointer]
+              - listitem [ref=e31] [cursor=pointer]:
+                - link [ref=e32]:
+                  - /url: /notification
+              - listitem [ref=e36] [cursor=pointer]:
+                - img "东方小月的头像" [ref=e39]
+    - main [ref=e41]:
+      - generic [ref=e42]:
+        - navigation [ref=e43]:
+          - generic [ref=e44]:
+            - link "关注" [ref=e45] [cursor=pointer]:
+              - /url: /following
+            - link "综合" [ref=e47] [cursor=pointer]:
+              - /url: /recommended
+            - link "排行榜" [ref=e49] [cursor=pointer]:
+              - /url: /hot/articles
+            - link "后端" [ref=e51] [cursor=pointer]:
+              - /url: /backend
+            - link "前端" [ref=e53] [cursor=pointer]:
+              - /url: /frontend
+            - link "Android" [ref=e55] [cursor=pointer]:
+              - /url: /android
+            - link "iOS" [ref=e57] [cursor=pointer]:
+              - /url: /ios
+            - link "人工智能" [ref=e59] [cursor=pointer]:
+              - /url: /ai
+            - link "开发工具" [ref=e61] [cursor=pointer]:
+              - /url: /freebie
+            - link "代码人生" [ref=e63] [cursor=pointer]:
+              - /url: /career
+            - link "阅读" [ref=e65] [cursor=pointer]:
+              - /url: /article
+            - link "标签管理" [ref=e67] [cursor=pointer]:
+              - /url: /subscribe/subscribed
+        - generic [ref=e68]:
+          - navigation:
+            - list
+          - navigation [ref=e73]:
+            - list [ref=e74]:
+              - listitem [ref=e75] [cursor=pointer]:
+                - link "推荐" [ref=e76]:
+                  - /url: /
+              - listitem [ref=e77] [cursor=pointer]:
+                - link "最新" [ref=e78]:
+                  - /url: /?sort=newest
+              - listitem [ref=e79] [cursor=pointer]:
+                - link "关注" [ref=e80]:
+                  - /url: /following
+  - generic [ref=e89]:
+    - text: AI 助 手
+    - button "建议反馈" [ref=e90] [cursor=pointer]
+    - button "更多" [ref=e95] [cursor=pointer]

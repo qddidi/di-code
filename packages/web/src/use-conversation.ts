@@ -97,6 +97,17 @@ function imagesFromContent(content: unknown): readonly ConversationImage[] {
 	return content.flatMap((item) => {
 		const block = asRecord(item);
 		if (block?.type !== "image" || typeof block.data !== "string" || typeof block.mimeType !== "string") return [];
+		const padding = block.data.endsWith("==") ? 2 : block.data.endsWith("=") ? 1 : 0;
+		const decodedBytes = Math.floor((block.data.length * 3) / 4) - padding;
+		if (
+			!/^image\/[A-Za-z0-9.+-]+$/.test(block.mimeType) ||
+			block.data.length === 0 ||
+			block.data.length % 4 !== 0 ||
+			!/^[A-Za-z0-9+/]*={0,2}$/.test(block.data) ||
+			decodedBytes <= 0 ||
+			decodedBytes > 5 * 1024 * 1024
+		)
+			return [];
 		return [{ src: `data:${block.mimeType};base64,${block.data}`, mimeType: block.mimeType, alt: "Attached image" }];
 	});
 }
@@ -136,19 +147,27 @@ function messagesFromTranscript(
 	if (!Array.isArray(transcript)) return { messages: [], tools: [] };
 	const tools: ToolTrace[] = [];
 	const messages: ConversationMessage[] = [];
-	let assistant: { text: string; activities: readonly ConversationActivity[]; entryId?: string } | undefined;
+	let assistant:
+		| {
+				text: string;
+				activities: readonly ConversationActivity[];
+				images: readonly ConversationImage[];
+				entryId?: string;
+		  }
+		| undefined;
 	const flushAssistant = (): void => {
 		if (!assistant) return;
 		messages.push({
 			role: "assistant",
 			text: assistant.text,
 			...(assistant.activities.length ? { activities: assistant.activities } : {}),
+			...(assistant.images.length ? { images: assistant.images } : {}),
 			...(assistant.entryId ? { entryId: assistant.entryId } : {}),
 		});
 		assistant = undefined;
 	};
 	const ensureAssistant = (): NonNullable<typeof assistant> => {
-		if (!assistant) assistant = { text: "", activities: [] };
+		if (!assistant) assistant = { text: "", activities: [], images: [] };
 		return assistant;
 	};
 	for (const [index, value] of transcript.entries()) {
@@ -200,6 +219,11 @@ function messagesFromTranscript(
 						activities: appendThinking(current.activities, block.thinking),
 						...(entryId ? { entryId } : {}),
 					};
+				if (block?.type === "image") {
+					const images = imagesFromContent([block]);
+					if (images.length > 0)
+						assistant = { ...current, images: [...current.images, ...images], ...(entryId ? { entryId } : {}) };
+				}
 				if (block?.type === "tool_call" && typeof block.id === "string" && typeof block.name === "string") {
 					const tool = {
 						id: block.id,
@@ -221,6 +245,7 @@ function messagesFromTranscript(
 		}
 		const id = typeof message.toolCallId === "string" ? message.toolCallId : crypto.randomUUID();
 		const output = textFromContent(message.content);
+		const images = imagesFromContent(message.content);
 		const details = asRecord(message.details);
 		const previous = tools.find((item) => item.id === id);
 		const tool = {
@@ -228,6 +253,7 @@ function messagesFromTranscript(
 			name: typeof message.toolName === "string" ? message.toolName : (previous?.name ?? "tool"),
 			arguments: previous?.arguments ?? {},
 			output,
+			...(images.length ? { images } : {}),
 			...(details ? { details } : {}),
 			status: toolStatus(output, message.isError === true, details),
 			...(message.isError === true ? { error: output } : {}),
@@ -239,6 +265,7 @@ function messagesFromTranscript(
 		assistant = {
 			...current,
 			activities: updateActivityTool(current.activities, id, tool),
+			...(images.length ? { images: [...current.images, ...images] } : {}),
 			...(entryId ? { entryId } : {}),
 		};
 	}
@@ -512,6 +539,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				const id = typeof record.event.toolCallId === "string" ? record.event.toolCallId : undefined;
 				if (id) {
 					const output = textFromContent(result?.content);
+					const images = imagesFromContent(result?.content);
 					const details = asRecord(result?.details);
 					const isError = result?.isError === true;
 					setTools((current) =>
@@ -520,6 +548,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 								? {
 										...item,
 										output,
+										...(images.length ? { images } : {}),
 										...(details ? { details } : {}),
 										status: toolStatus(output, isError, details),
 										...(isError ? { error: output } : {}),
@@ -535,11 +564,16 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 							const completedTool: ToolTrace = {
 								...activity.tool,
 								output,
+								...(images.length ? { images } : {}),
 								...(details ? { details } : {}),
 								status: toolStatus(output, isError, details),
 								...(isError ? { error: output } : {}),
 							};
-							return { ...message, activities: updateActivityTool(message.activities, id, completedTool) };
+							return {
+								...message,
+								activities: updateActivityTool(message.activities, id, completedTool),
+								...(images.length ? { images: [...(message.images ?? []), ...images] } : {}),
+							};
 						}),
 					);
 				}
@@ -585,6 +619,16 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 							},
 						];
 					});
+				}
+				if (update?.type === "image") {
+					const images = imagesFromContent([update.image]);
+					if (images.length > 0)
+						setMessages((current) => {
+							const last = current.at(-1);
+							if (last?.role === "assistant" && last.status === "streaming")
+								return [...current.slice(0, -1), { ...last, images: [...(last.images ?? []), ...images] }];
+							return [...current, { role: "assistant", text: "", images, status: "streaming" }];
+						});
 				}
 				return;
 			}

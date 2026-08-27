@@ -209,6 +209,13 @@ async function produceSuccessResponse(
 				progress.activePartial = undefined;
 				break;
 			}
+			case "image": {
+				// Keep binary output atomic so cancellation cannot persist a corrupt image.
+				stream.push({ type: "image", contentIndex, image: block });
+				progress.completedContent.push(block);
+				await yieldToConsumer();
+				break;
+			}
 			case "tool_call": {
 				stream.push({
 					type: "tool_call_start",

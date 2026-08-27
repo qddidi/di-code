@@ -226,6 +226,22 @@ describe("StreamEventValidator", () => {
 			validator.accept({ type: "thinking_end", contentIndex: 1, content: "hmm" });
 		}).not.toThrow();
 	});
+	it("accepts an atomic generated image block", () => {
+		const validator = createStreamEventValidator();
+		validator.accept({ type: "start" });
+		validator.accept({
+			type: "image",
+			contentIndex: 0,
+			image: { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+		});
+		expect(() =>
+			validator.accept({
+				type: "done",
+				reason: "stop",
+				message: createSuccessMessage([{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]),
+			}),
+		).not.toThrow();
+	});
 	it("accepts done after all blocks have ended", () => {
 		const validator = createStreamEventValidator();
 		validator.accept({ type: "start" });

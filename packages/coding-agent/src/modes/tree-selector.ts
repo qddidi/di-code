@@ -50,12 +50,7 @@ function singleLine(value: string): string {
 function textContent(entry: SessionEntry): string {
 	if (entry.type === "summary") return singleLine(entry.summary);
 	if (entry.type === "plugin") return singleLine(`plugin:${entry.pluginId}`);
-	return singleLine(
-		entry.message.content
-			.filter((content) => content.type === "text")
-			.map((content) => content.text)
-			.join(" "),
-	);
+	return singleLine(entry.message.content.map((content) => (content.type === "text" ? content.text : "")).join(" "));
 }
 
 function flattenTree(nodes: readonly SessionTreeNode[], leafId: string | undefined): FlatTreeNode[] {

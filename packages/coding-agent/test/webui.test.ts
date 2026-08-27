@@ -337,6 +337,53 @@ describe("WebUiServer", () => {
 		expect(await denied.text()).not.toContain(rootPath(baseUrl));
 	});
 
+	it("persists and returns generated assistant images through the WebUI RPC", async () => {
+		const generated = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }] }],
+		});
+		const { baseUrl, token } = await createServer({ provider: generated.provider, model: generated.model });
+		const clientId = "generated-image-client";
+		const prompt = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "generated-image",
+				method: "prompt",
+				params: { message: "generate an image" },
+			}),
+		});
+		expect(prompt.status).toBe(200);
+		expect(await prompt.json()).toMatchObject({
+			ok: true,
+			result: {
+				method: "prompt",
+				message: { content: [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }] },
+			},
+		});
+		const transcript = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "generated-image-transcript",
+				method: "get_transcript",
+				params: {},
+			}),
+		});
+		expect(await transcript.json()).toMatchObject({
+			ok: true,
+			result: {
+				method: "get_transcript",
+				transcript: expect.arrayContaining([
+					expect.objectContaining({ role: "assistant", content: [expect.objectContaining({ type: "image" })] }),
+				]),
+			},
+		});
+	});
+
 	it("adds a validated workspace through the authenticated WebUI route", async () => {
 		const { baseUrl, token } = await createServer();
 		const addedRoot = await mkdtemp(join(tmpdir(), "di-code-webui-added-"));

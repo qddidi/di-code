@@ -7,6 +7,7 @@ export const RPC_MAX_ID_LENGTH = 128;
 export const RPC_MAX_PROMPT_LENGTH = 1_000_000;
 export const RPC_MAX_ATTACHMENTS_PER_REQUEST = 4;
 export const RPC_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const RPC_MAX_ASSISTANT_IMAGE_BYTES = 5 * 1024 * 1024;
 /** Allows one JSONL user entry containing a maximum-sized base64 image to be read in a single transcript page. */
 export const RPC_MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 const RPC_MAX_ATTACHMENT_BASE64_LENGTH = Math.ceil(RPC_MAX_ATTACHMENT_BYTES / 3) * 4;
@@ -876,6 +877,25 @@ function assertAssistantMessage(value: unknown): void {
 		!message ||
 		message.role !== "assistant" ||
 		!Array.isArray(message.content) ||
+		!message.content.every((content) => {
+			const block = objectRecord(content);
+			if (!block || typeof block.type !== "string") return false;
+			if (block.type === "text") return typeof block.text === "string";
+			if (block.type === "thinking") return typeof block.thinking === "string";
+			if (block.type === "tool_call")
+				return typeof block.id === "string" && typeof block.name === "string" && objectRecord(block.arguments);
+			if (block.type !== "image" || typeof block.data !== "string" || typeof block.mimeType !== "string") return false;
+			const padding = block.data.endsWith("==") ? 2 : block.data.endsWith("=") ? 1 : 0;
+			const decodedBytes = Math.floor((block.data.length * 3) / 4) - padding;
+			return (
+				/^image\/[A-Za-z0-9.+-]+$/.test(block.mimeType) &&
+				block.data.length > 0 &&
+				block.data.length % 4 === 0 &&
+				/^[A-Za-z0-9+/]*={0,2}$/.test(block.data) &&
+				decodedBytes > 0 &&
+				decodedBytes <= RPC_MAX_ASSISTANT_IMAGE_BYTES
+			);
+		}) ||
 		typeof message.provider !== "string" ||
 		typeof message.model !== "string" ||
 		!Number.isFinite(message.timestamp) ||

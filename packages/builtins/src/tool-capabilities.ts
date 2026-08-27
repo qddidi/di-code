@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from "@di-code/agent";
-import type { TSchema } from "@di-code/ai";
+import type { ImageGenerationProvider, TSchema } from "@di-code/ai";
 import type { SkillCatalog } from "@di-code/skills";
 import type { BashOperations } from "./tool-bash-implementation.ts";
 
@@ -16,6 +16,11 @@ export interface ProcessCapability {
 /** Reserved for tools that need a network client in a later composition stage. */
 export interface NetworkCapability {
 	readonly available: boolean;
+}
+
+export interface ImageGenerationCapability {
+	readonly provider: ImageGenerationProvider;
+	readonly artifactDirectory: string;
 }
 
 export interface ToolPolicyCapability {
@@ -38,6 +43,7 @@ export interface ToolCapabilitySnapshot {
 	readonly approval: ToolApprovalCapability;
 	readonly output: ToolOutputCapability;
 	readonly skills?: SkillCatalog;
+	readonly imageGeneration?: ImageGenerationCapability;
 }
 
 export type RuntimeAgentTool = AgentTool<TSchema, AgentToolResult>;

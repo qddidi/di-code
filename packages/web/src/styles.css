@@ -109,6 +109,8 @@
 .message-skill code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
 .message-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .message-images img { display: block; max-width: 100%; max-height: 360px; border: 1px solid #d8dde2; border-radius: 5px; object-fit: contain; background: #fff; }
+.tool-images { display: grid; gap: 8px; margin-top: 8px; }
+.tool-images img { display: block; max-width: 100%; max-height: 360px; border: 1px solid #d8dde2; border-radius: 5px; object-fit: contain; background: #fff; }
 .message-error { padding: 10px 12px; color: #8f3833; background: #fff2f0; border: 1px solid #efcbc7; border-radius: 6px; }
 .message-error .message-label { color: #9b453e; }
 .thinking { padding: 8px 10px; color: #586574; background: #f3f5f7; border: 1px solid #e1e5e8; border-radius: 6px; font-size: 12px; }

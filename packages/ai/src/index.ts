@@ -18,6 +18,14 @@ export type {
 } from "./api/openai-chat-completions.ts";
 export { buildOpenAIChatCompletionsRequest, streamOpenAIChatCompletions } from "./api/openai-chat-completions.ts";
 export type {
+	OpenAIImagesOptions,
+	OpenAIImagesRequest,
+	OpenAIImagesResponse,
+	OpenAIImagesResponseData,
+	OpenAIImagesResult,
+} from "./api/openai-images.ts";
+export { generateOpenAIImages, OPENAI_IMAGES_MAX_BYTES } from "./api/openai-images.ts";
+export type {
 	OpenAIProviderErrorKind,
 	OpenAIProviderErrorOptions,
 	OpenAIResponsesDependencies,
@@ -46,6 +54,8 @@ export type { OpenAIProviderOptions } from "./providers/openai.ts";
 export { createOpenAIProvider } from "./providers/openai.ts";
 export type { OpenAIChatCompletionsProviderOptions } from "./providers/openai-chat-completions.ts";
 export { createOpenAIChatCompletionsProvider } from "./providers/openai-chat-completions.ts";
+export type { ImageGenerationProvider, OpenAIImagesProviderOptions } from "./providers/openai-images.ts";
+export { createOpenAIImagesProvider } from "./providers/openai-images.ts";
 export type { ZhipuProviderOptions } from "./providers/zhipu.ts";
 export { createZhipuProvider } from "./providers/zhipu.ts";
 export type {

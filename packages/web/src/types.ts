@@ -32,6 +32,7 @@ export interface ToolTrace {
 	readonly name: "read" | "write" | "edit" | "bash" | "glob" | "grep" | string;
 	readonly arguments: Record<string, unknown>;
 	readonly output?: string;
+	readonly images?: readonly ConversationImage[];
 	readonly details?: Record<string, unknown>;
 	readonly status: ToolStatus;
 	readonly error?: string;

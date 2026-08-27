@@ -86,6 +86,19 @@ describe("createFauxProvider", () => {
 			content: [{ type: "text", text: "second" }],
 		});
 	});
+	it("emits generated images as atomic assistant content", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }] }],
+		});
+		const events = await collectEvents(faux.provider.stream(faux.model, { messages: [] }));
+		expect(events.map((event) => event.type)).toEqual(["start", "image", "done"]);
+		expect(events.find((event) => event.type === "image")).toMatchObject({
+			type: "image",
+			contentIndex: 0,
+			image: { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+		});
+		expect(events.at(-1)).toMatchObject({ message: { content: [{ type: "image", mimeType: "image/png" }] } });
+	});
 	it("streams thinking and tool argument JSON in content order", async () => {
 		const faux = createFauxProvider({
 			responses: [

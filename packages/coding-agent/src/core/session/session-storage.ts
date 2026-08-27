@@ -14,6 +14,7 @@ import {
 } from "./types.ts";
 
 type JsonObject = Record<string, unknown>;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function isObject(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -57,8 +58,16 @@ function isProviderReplay(value: unknown): boolean {
 }
 
 function isImageContent(value: unknown): value is Extract<UserContent | ToolResultContent, { type: "image" }> {
+	if (!isObject(value) || value.type !== "image" || typeof value.data !== "string" || !isNonEmptyString(value.mimeType))
+		return false;
+	const padding = value.data.endsWith("==") ? 2 : value.data.endsWith("=") ? 1 : 0;
+	const decodedBytes = Math.floor((value.data.length * 3) / 4) - padding;
 	return (
-		isObject(value) && value.type === "image" && typeof value.data === "string" && isNonEmptyString(value.mimeType)
+		value.data.length % 4 === 0 &&
+		/^[A-Za-z0-9+/]*={0,2}$/.test(value.data) &&
+		decodedBytes > 0 &&
+		decodedBytes <= MAX_IMAGE_BYTES &&
+		/^image\/[A-Za-z0-9.+-]+$/.test(value.mimeType)
 	);
 }
 
@@ -77,6 +86,8 @@ function isAssistantContent(value: unknown): value is AssistantContent {
 			return typeof value.text === "string";
 		case "thinking":
 			return typeof value.thinking === "string";
+		case "image":
+			return isImageContent(value);
 		case "tool_call":
 			return (
 				isNonEmptyString(value.id) &&

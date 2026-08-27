@@ -152,7 +152,11 @@ function serializeContent(message: Message): string[] {
 				break;
 			case "image":
 				lines.push(
-					message.role === "user" ? `[User image: ${block.mimeType}]` : `[Tool result image: ${block.mimeType}]`,
+					message.role === "user"
+						? `[User image: ${block.mimeType}]`
+						: message.role === "assistant"
+							? `[Assistant image: ${block.mimeType}]`
+							: `[Tool result image: ${block.mimeType}]`,
 				);
 				break;
 			case "thinking":

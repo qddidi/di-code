@@ -466,6 +466,10 @@ function projectMessages(model: Model, context: Context): OpenAIResponsesInputIt
 			if (block.type === "thinking") {
 				throw new Error("OpenAI Responses thinking replay requires provider replay metadata");
 			}
+			if (block.type === "image") {
+				// Generated assistant images are product output; this API has no assistant-image replay input.
+				continue;
+			}
 			if (block.type === "tool_call") {
 				input.push({
 					type: "function_call",

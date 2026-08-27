@@ -43,11 +43,7 @@ export interface InteractiveState {
 }
 
 function textOf(message: Message): string {
-	type TextBlock = Extract<Message["content"][number], { type: "text" }>;
-	return message.content
-		.filter((content): content is TextBlock => content.type === "text")
-		.map((content) => content.text)
-		.join("");
+	return message.content.map((content) => (content.type === "text" ? content.text : "")).join("");
 }
 
 export class InteractiveProjection {

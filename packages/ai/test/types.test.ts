@@ -78,6 +78,7 @@ function eventName(event: StreamEvent): string {
 		case "thinking_start":
 		case "thinking_delta":
 		case "thinking_end":
+		case "image":
 		case "tool_call_start":
 		case "tool_call_delta":
 		case "tool_call_end":
