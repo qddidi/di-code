@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/coding-agent",
-	"version": "0.1.8",
+	"version": "0.1.9",
 	"description": "Coding agent product layer for di-code",
 	"keywords": [
 		"ai-coding-agent",
@@ -130,14 +130,14 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.1.8",
-		"@di-code/ai": "0.1.8",
-		"@di-code/builtins": "0.1.8",
-		"@di-code/mcp": "0.1.8",
-		"@di-code/plugin-loader": "0.1.8",
-		"@di-code/plugin-runtime": "0.1.8",
-		"@di-code/skills": "0.1.8",
-		"@di-code/tui": "0.1.8",
+		"@di-code/agent": "0.1.9",
+		"@di-code/ai": "0.1.9",
+		"@di-code/builtins": "0.1.9",
+		"@di-code/mcp": "0.1.9",
+		"@di-code/plugin-loader": "0.1.9",
+		"@di-code/plugin-runtime": "0.1.9",
+		"@di-code/skills": "0.1.9",
+		"@di-code/tui": "0.1.9",
 		"diff": "8.0.4",
 		"highlight.js": "^10.7.3",
 		"jiti": "^2.5.1"

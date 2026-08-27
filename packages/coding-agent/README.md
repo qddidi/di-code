@@ -97,6 +97,7 @@ README 只保留最短启动路径，其他功能请按主题阅读 GitHub `docs
 - [会话、Skills 与图片](https://github.com/qddidi/di-code/tree/master/docs/用户指南/会话与Skills.md)
 - [MCP 使用指南](https://github.com/qddidi/di-code/tree/master/docs/用户指南/MCP.md)
 - [WebUI 自定义 UI](https://github.com/qddidi/di-code/tree/master/docs/webui/自定义UI.md)
+- [自定义 Web 前端开发](https://github.com/qddidi/di-code/tree/master/docs/webui/自定义前端.md)
 - [TUI 使用指南](https://github.com/qddidi/di-code/tree/master/docs/tui/使用指南.md)
 - [插件使用指南](https://github.com/qddidi/di-code/tree/master/docs/插件使用指南.md)
 - [开发教程](https://github.com/qddidi/di-code/tree/master/docs/开发教程.md)
