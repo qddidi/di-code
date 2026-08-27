@@ -4,9 +4,18 @@ import { join } from "node:path";
 import { type Context, createFauxProvider } from "@di-code/ai";
 import {
 	agentSession,
+	bootstrap,
+	commandCompact,
+	commandCore,
+	commandInteractiveCore,
+	commandModel,
+	commandRegistryKey,
+	commandSession,
+	commandSettings,
 	compactionBasic,
 	compactionToolResult,
 	contextBudget,
+	modelCatalog,
 	networkCapability,
 	processCapability,
 	providerRegistry,
@@ -42,6 +51,7 @@ async function createServer(overrides: Partial<ConstructorParameters<typeof WebU
 	readonly token: string;
 	readonly agentDir: string;
 	readonly root: string;
+	readonly context: ReturnType<typeof createRootContext>;
 }> {
 	const root = await mkdtemp(join(tmpdir(), "di-code-webui-root-"));
 	const agentDir = await mkdtemp(join(tmpdir(), "di-code-webui-agent-"));
@@ -49,7 +59,12 @@ async function createServer(overrides: Partial<ConstructorParameters<typeof WebU
 		responses: [{ type: "success", content: [{ type: "text", text: "web answer" }] }],
 	});
 	const context = createRootContext({ id: "webui-test", mode: "test", trustedProject: true });
+	await context.plugin(bootstrap, undefined);
+	await context.plugin(commandCore, undefined);
+	for (const definition of [commandSession, commandModel, commandSettings, commandCompact, commandInteractiveCore])
+		await context.plugin(definition, undefined);
 	for (const definition of [providerRegistry, toolRegistry]) await context.plugin(definition, undefined);
+	await context.plugin(modelCatalog, undefined);
 	await context.plugin(workspace, { allowedRoot: root });
 	for (const definition of [
 		processCapability,
@@ -101,6 +116,7 @@ async function createServer(overrides: Partial<ConstructorParameters<typeof WebU
 		token: "test-webui-token-which-is-at-least-32-characters",
 		agentDir,
 		root,
+		context,
 	};
 }
 
@@ -111,6 +127,114 @@ function headers(token: string, clientId?: string): Headers {
 }
 
 describe("WebUiServer", () => {
+	it("projects built-in and custom commands through the HTTP RPC transport", async () => {
+		const { baseUrl, context, token } = await createServer();
+		let customArgs: string | undefined;
+		context.require(commandRegistryKey).register({
+			name: "custom-check",
+			description: "Run a custom check",
+			run: (input) => {
+				customArgs = (input as { readonly args: string }).args;
+				return 0;
+			},
+		});
+		const clientId = "command-http-client";
+		const listed = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ version: 1, kind: "request", id: "command-list", method: "list_commands", params: {} }),
+		});
+		expect(listed.status).toBe(200);
+		const listedResult = (await listed.json()) as {
+			readonly ok: boolean;
+			readonly result: { readonly method: string; readonly commands: readonly { readonly name: string }[] };
+		};
+		expect(listedResult).toMatchObject({
+			ok: true,
+			result: { method: "list_commands" },
+		});
+		expect(listedResult.result.commands.map((command) => command.name)).toEqual(
+			expect.arrayContaining(["help", "compact", "custom-check"]),
+		);
+		const builtin = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "command-help",
+				method: "run_command",
+				params: { name: "help", args: "" },
+			}),
+		});
+		expect(builtin.status).toBe(200);
+		expect(await builtin.json()).toMatchObject({
+			ok: true,
+			result: { method: "run_command", command: "help", action: { command: "help", args: "" } },
+		});
+		const custom = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "command-custom",
+				method: "run_command",
+				params: { name: "custom-check", args: "from web" },
+			}),
+		});
+		expect(custom.status).toBe(200);
+		expect(await custom.json()).toMatchObject({ ok: true, result: { method: "run_command", command: "custom-check" } });
+		expect(customArgs).toBe("from web");
+	});
+
+	it("returns and navigates the active Session tree through WebUI RPC", async () => {
+		const { baseUrl, token } = await createServer();
+		const clientId = "tree-http-client";
+		const prompted = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "tree-prompt",
+				method: "prompt",
+				params: { message: "return to this request" },
+			}),
+		});
+		expect(prompted.status).toBe(200);
+		const listed = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({ version: 1, kind: "request", id: "tree-list", method: "get_tree", params: {} }),
+		});
+		expect(listed.status).toBe(200);
+		const tree = (await listed.json()) as {
+			readonly result: { readonly tree: readonly { readonly entry: { readonly id: string } }[] };
+		};
+		const entryId = tree.result.tree[0]?.entry.id;
+		expect(entryId).toBeTruthy();
+		const navigated = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token, clientId),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "tree-navigate",
+				method: "navigate_tree",
+				params: { entryId },
+			}),
+		});
+		expect(navigated.status).toBe(200);
+		expect(await navigated.json()).toMatchObject({
+			ok: true,
+			result: {
+				method: "navigate_tree",
+				navigation: { selectedEntryId: entryId, editorText: "return to this request" },
+			},
+		});
+	});
+
 	it("serves a same-origin SPA with isolated API, boot data, and health checks", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-webui-static-"));
 		await writeFile(join(root, "index.html"), "<main>di-code web</main>", "utf8");
@@ -181,7 +305,10 @@ describe("WebUiServer", () => {
 		});
 		expect(await providers.json()).toMatchObject({
 			ok: true,
-			result: { method: "list_providers", providers: [{ id: "faux" }] },
+			result: {
+				method: "list_providers",
+				providers: expect.arrayContaining([expect.objectContaining({ id: "faux" })]),
+			},
 		});
 		const trust = await fetch(`${baseUrl}/rpc`, {
 			method: "POST",
@@ -260,10 +387,147 @@ describe("WebUiServer", () => {
 			result: {
 				method: "get_settings",
 				settings: {
-					providers: [{ id: "zhipu", models: [{ id: "glm-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
+					providers: expect.arrayContaining([
+						expect.objectContaining({
+							id: "zhipu",
+							models: expect.arrayContaining([
+								expect.objectContaining({ id: "glm-5.3", reasoningEfforts: ["low", "high", "max"] }),
+							]),
+						}),
+					]),
 				},
 			},
 		});
+	});
+
+	it("keeps Zhipu available for Web login when the initial runtime falls back to Faux", async () => {
+		const { baseUrl, token } = await createServer();
+		const settings = await fetch(`${baseUrl}/rpc`, {
+			headers: headers(token),
+			method: "POST",
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "fallback-settings",
+				method: "get_settings",
+				params: {},
+			}),
+		});
+		expect(await settings.json()).toMatchObject({
+			ok: true,
+			result: {
+				settings: {
+					providers: expect.arrayContaining([
+						expect.objectContaining({ id: "zhipu", configured: false, models: expect.any(Array) }),
+					]),
+				},
+			},
+		});
+		const login = await fetch(`${baseUrl}/rpc`, {
+			headers: headers(token),
+			method: "POST",
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "fallback-zhipu-login",
+				method: "login",
+				params: { providerId: "zhipu", modelId: "glm-5.3", apiKey: "test-zhipu-key" },
+			}),
+		});
+		expect(await login.json()).toMatchObject({ ok: true, result: { method: "login", provider: { id: "zhipu" } } });
+	});
+
+	it("activates Zhipu after Web login when startup explicitly selects it without a key", async () => {
+		const previousProvider = process.env.DI_CODE_PROVIDER;
+		const previousApiKey = process.env.ZAI_API_KEY;
+		process.env.DI_CODE_PROVIDER = "zhipu";
+		delete process.env.ZAI_API_KEY;
+		try {
+			const { baseUrl, token } = await createServer();
+			const response = await fetch(`${baseUrl}/rpc`, {
+				headers: headers(token),
+				method: "POST",
+				body: JSON.stringify({
+					version: 1,
+					kind: "request",
+					id: "explicit-zhipu-login",
+					method: "login",
+					params: { providerId: "zhipu", modelId: "glm-5.3", apiKey: "test-zhipu-key" },
+				}),
+			});
+			expect(await response.json()).toMatchObject({ ok: true, result: { method: "login", provider: { id: "zhipu" } } });
+		} finally {
+			if (previousProvider === undefined) delete process.env.DI_CODE_PROVIDER;
+			else process.env.DI_CODE_PROVIDER = previousProvider;
+			if (previousApiKey === undefined) delete process.env.ZAI_API_KEY;
+			else process.env.ZAI_API_KEY = previousApiKey;
+		}
+	});
+
+	it("saves a Zhipu key when an incomplete Zhipu entry already exists", async () => {
+		const { agentDir, baseUrl, token } = await createServer();
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				providers: { zhipu: { api: "openai-chat-completions" } },
+				defaultProvider: "zhipu",
+				defaultModel: "glm-5.3",
+			}),
+			"utf8",
+		);
+		const response = await fetch(`${baseUrl}/rpc`, {
+			headers: headers(token),
+			method: "POST",
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "incomplete-zhipu-login",
+				method: "login",
+				params: { providerId: "zhipu", modelId: "glm-5.3", apiKey: "test-zhipu-key" },
+			}),
+		});
+		expect(await response.json()).toMatchObject({ ok: true, result: { method: "login", provider: { id: "zhipu" } } });
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({
+			providers: { zhipu: { apiKey: "test-zhipu-key" } },
+		});
+	});
+
+	it("falls back to Faux after logout leaves several configured Providers without a default", async () => {
+		const { agentDir, baseUrl, token } = await createServer();
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				providers: {
+					openai: { api: "openai-responses", apiKey: "test-openai-key" },
+					deepseek: { api: "openai-chat-completions", apiKey: "test-deepseek-key" },
+				},
+			}),
+			"utf8",
+		);
+		const response = await fetch(`${baseUrl}/rpc`, {
+			headers: headers(token),
+			method: "POST",
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "logout-without-default",
+				method: "logout",
+				params: { providerId: "deepseek" },
+			}),
+		});
+		expect(await response.json()).toMatchObject({ ok: true, result: { method: "logout" } });
+		const runtime = await fetch(`${baseUrl}/rpc`, {
+			headers: headers(token),
+			method: "POST",
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "runtime-after-logout",
+				method: "get_runtime",
+				params: {},
+			}),
+		});
+		expect(await runtime.json()).toMatchObject({ ok: true, result: { providerId: "faux", modelId: "faux-model" } });
 	});
 
 	it("persists a WebUI runtime change for new Sessions and terminal startup", async () => {

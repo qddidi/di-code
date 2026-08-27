@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, extname, relative, resolve, sep } from "node:path";
-import type { ToolApprovalCapability } from "@di-code/builtins";
+import { commandRegistryKey, type ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
@@ -463,7 +463,12 @@ export class WebUiServer {
 				startupConfiguration,
 				reloadRuntime: async () => {
 					const refreshed = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
-					const runtime = resolveStartupRuntime(refreshed.environment, refreshed.providers, refreshed.defaults);
+					let runtime: StartupRuntime;
+					try {
+						runtime = resolveStartupRuntime(refreshed.environment, refreshed.providers, refreshed.defaults);
+					} catch {
+						runtime = resolveStartupRuntime({ DI_CODE_PROVIDER: "faux" }, []);
+					}
 					actor.setRuntimeValue(runtime.provider, runtime.model);
 					return refreshed;
 				},
@@ -478,6 +483,7 @@ export class WebUiServer {
 			});
 			dispatcher = new RpcDispatcher({
 				session: actor,
+				commandRegistry: this.options.context.get(commandRegistryKey),
 				productState: { projectTrusted: this.options.projectTrusted ?? false },
 				productHost: product,
 				attachmentStore: attachments,

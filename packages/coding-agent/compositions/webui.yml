@@ -1,4 +1,9 @@
 entries:
+  - { id: command-session, name: "@di-code/builtins/command-session", dependsOn: [command-core] }
+  - { id: command-model, name: "@di-code/builtins/command-model", dependsOn: [command-core] }
+  - { id: command-settings, name: "@di-code/builtins/command-settings", dependsOn: [command-core] }
+  - { id: command-compact, name: "@di-code/builtins/command-compact", dependsOn: [command-core] }
+  - { id: command-interactive-core, name: "@di-code/builtins/command-interactive-core", dependsOn: [command-core] }
   - { id: agent-session, name: "@di-code/builtins/agent-session", dependsOn: [provider-registry, tool-registry, system-prompt, compaction-basic, compaction-tool-result] }
   - { id: session-factory, name: "@di-code/coding-agent/session-factory-entry", dependsOn: [agent-session] }
   - { id: interactive-resources, name: "@di-code/coding-agent/interactive-resources-entry", dependsOn: [system-prompt, resource-loader, skills] }

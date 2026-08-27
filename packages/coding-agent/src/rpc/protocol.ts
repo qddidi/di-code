@@ -60,6 +60,8 @@ export const RPC_METHODS = [
 	"reconnect_mcp_server",
 	"list_plugins",
 	"list_web_contributions",
+	"list_commands",
+	"run_command",
 	"set_plugin_enabled",
 	"create_attachment",
 	"approve_tool",
@@ -138,6 +140,19 @@ export interface RpcContextFileInfo {
 	readonly path: string;
 	readonly scope: string;
 	readonly bytes: number;
+}
+
+/** A user-invocable command projected from the active composition or Skill catalog. */
+export interface RpcCommandInfo {
+	readonly name: string;
+	readonly description: string;
+	readonly kind: "command" | "skill";
+}
+
+/** A WebUI operation requested by a registered command. */
+export interface RpcCommandAction {
+	readonly command: string;
+	readonly args: string;
 }
 
 export interface RpcMcpServerInfo {
@@ -401,6 +416,13 @@ export function parseRpcRequest(line: string): RpcRequest {
 			stringParam(params, "providerId", id);
 			stringParam(params, "modelId", id);
 			break;
+		case "run_command":
+			stringParam(params, "name", id);
+			if (!/^[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?$/.test(params.name as string))
+				throw new RpcProtocolError("INVALID_PARAMS", "run_command.name is invalid.", id);
+			if (params.args !== undefined && (typeof params.args !== "string" || params.args.length > RPC_MAX_PROMPT_LENGTH))
+				throw new RpcProtocolError("INVALID_PARAMS", "args must be a string of at most 1,000,000 characters.", id);
+			break;
 		case "set_default_provider":
 		case "set_default_model":
 		case "set_locale":
@@ -621,6 +643,16 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 					throw new RpcProtocolError("INVALID_REQUEST", "RPC Web contribution manifest is invalid.");
 			}
 			return;
+		case "list_commands":
+			if (!Array.isArray(result.commands))
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC commands result is invalid.");
+			for (const command of result.commands) assertCommandInfo(command);
+			return;
+		case "run_command":
+			if (typeof result.command !== "string" || !result.command)
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC command result is invalid.");
+			if (result.action !== undefined) assertCommandAction(result.action);
+			return;
 		case "configure_mcp_server":
 		case "reconnect_mcp_server":
 			if (!objectRecord(result.server)) throw new RpcProtocolError("INVALID_REQUEST", "RPC MCP result is invalid.");
@@ -666,6 +698,22 @@ function assertSessionInfo(value: unknown): void {
 		throw new RpcProtocolError("INVALID_REQUEST", "RPC Session result is invalid.");
 	if (session.modifiedAt !== undefined && !Number.isFinite(session.modifiedAt))
 		throw new RpcProtocolError("INVALID_REQUEST", "RPC Session modifiedAt is invalid.");
+}
+function assertCommandInfo(value: unknown): void {
+	const command = objectRecord(value);
+	if (
+		!command ||
+		typeof command.name !== "string" ||
+		!command.name ||
+		typeof command.description !== "string" ||
+		(command.kind !== "command" && command.kind !== "skill")
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC command info is invalid.");
+}
+function assertCommandAction(value: unknown): void {
+	const action = objectRecord(value);
+	if (!action || typeof action.command !== "string" || !action.command || typeof action.args !== "string")
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC command action is invalid.");
 }
 function assertOperationState(value: unknown): void {
 	const operation = objectRecord(value);

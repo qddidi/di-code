@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ModelApi, Provider } from "@di-code/ai";
-import { providerRegistryKey } from "@di-code/builtins";
+import { modelCatalogKey, providerRegistryKey } from "@di-code/builtins";
 import type { McpManager } from "@di-code/mcp";
 import { ProjectTrustStore } from "@di-code/plugin-loader";
 import type { Context, WebContribution, WebManifest } from "@di-code/plugin-runtime";
@@ -187,6 +187,22 @@ const API_BY_PROVIDER: Readonly<Record<string, Exclude<ModelApi, "faux">>> = {
 	anthropic: "anthropic-messages",
 };
 
+const BUILTIN_PROVIDER_NAMES: Readonly<Record<string, string>> = {
+	openai: "OpenAI",
+	anthropic: "Anthropic",
+	deepseek: "DeepSeek",
+	kimi: "Kimi",
+	zhipu: "Zhipu AI",
+};
+
+const API_KEY_ENV_BY_PROVIDER: Readonly<Record<string, string>> = {
+	openai: "OPENAI_API_KEY",
+	anthropic: "ANTHROPIC_API_KEY",
+	deepseek: "DEEPSEEK_API_KEY",
+	kimi: "KIMI_API_KEY",
+	zhipu: "ZAI_API_KEY",
+};
+
 export function createProductHost(options: ProductHostOptions): ProductHost {
 	let projectTrusted = options.projectTrusted;
 	let manager: McpManager | undefined;
@@ -196,20 +212,58 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	const listeners = new Set<ProductHostListener>();
 	const trustStore = new ProjectTrustStore(join(options.agentDir, "trust.json"));
 	const registry = options.context.require(providerRegistryKey);
+	const modelCatalog = options.context.require(modelCatalogKey);
+	type ProviderSnapshot = Pick<Provider, "id" | "name" | "models">;
+	const availableProviders = (): ProviderSnapshot[] => {
+		const providers: ProviderSnapshot[] = registry.snapshot().map(({ provider }) => provider);
+		for (const [id, name] of Object.entries(BUILTIN_PROVIDER_NAMES)) {
+			if (providers.some((provider) => provider.id === id)) continue;
+			const models = modelCatalog.list(id);
+			if (models.length) providers.push({ id, name, models });
+		}
+		for (const configured of startupConfiguration?.providers ?? []) {
+			if (!providers.some((provider) => provider.id === configured.id) && configured.models) {
+				providers.push({ id: configured.id, name: configured.name ?? configured.id, models: configured.models });
+			}
+		}
+		if (options.provider && !providers.some((provider) => provider.id === options.provider?.id)) {
+			providers.push(options.provider);
+		}
+		return providers;
+	};
 	const selectRuntime = (
 		providerId: string,
-		modelId: string,
+		modelId?: string,
 	): { readonly provider: Provider; readonly model: import("@di-code/ai").Model } => {
 		try {
 			return registry.select(providerId, modelId);
 		} catch (cause) {
 			const provider = options.provider;
 			const model =
-				provider?.id === providerId ? provider.models.find((candidate) => candidate.id === modelId) : undefined;
+				provider?.id === providerId
+					? modelId === undefined
+						? provider.models[0]
+						: provider.models.find((candidate) => candidate.id === modelId)
+					: undefined;
 			if (provider && model) return { provider, model };
 			const configured = startupConfiguration?.providers.find((candidate) => candidate.id === providerId);
 			if (configured) {
-				return resolveStartupRuntime({}, [configured], { providerId, modelId });
+				try {
+					return resolveStartupRuntime({}, [configured], { providerId, modelId });
+				} catch {
+					// Login supplies a credential after model selection, so an incomplete saved entry must not block it.
+				}
+			}
+			const apiKeyEnvironmentVariable = API_KEY_ENV_BY_PROVIDER[providerId];
+			if (apiKeyEnvironmentVariable) {
+				return resolveStartupRuntime(
+					{
+						DI_CODE_PROVIDER: providerId,
+						...(modelId ? { DI_CODE_MODEL: modelId } : {}),
+						[apiKeyEnvironmentVariable]: "pending-web-provider-configuration",
+					},
+					[],
+				);
 			}
 			throw cause;
 		}
@@ -257,13 +311,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			(options.provider
 				? { providerId: options.provider.id, modelId: options.model?.id ?? options.provider.models[0]?.id ?? "" }
 				: undefined);
-		const providers = registry.snapshot().map(({ provider }) => provider);
-		if (options.provider && !providers.some((provider) => provider.id === options.provider?.id))
-			providers.push(options.provider);
-		const customProviders = (configuration?.providers ?? [])
-			.filter((provider) => !providers.some((item) => item.id === provider.id) && provider.models)
-			.map((provider) => ({ id: provider.id, name: provider.name ?? provider.id, models: provider.models ?? [] }));
-		const allProviders = [...providers, ...customProviders];
+		const allProviders = availableProviders();
 		return {
 			providers: allProviders.map((provider) => {
 				const configured = configuration?.providers.find((item) => item.id === provider.id);
@@ -389,19 +437,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	return {
 		state: () => ({ projectTrusted }),
 		listProviders: () => {
-			const providers = registry.snapshot().map(({ provider }) => provider);
-			for (const configured of startupConfiguration?.providers ?? []) {
-				if (!providers.some((provider) => provider.id === configured.id) && configured.models)
-					providers.push({
-						id: configured.id,
-						name: configured.name ?? configured.id,
-						models: configured.models,
-					} as Provider);
-			}
-			const selectedProvider = options.provider;
-			if (selectedProvider && !providers.some((provider) => provider.id === selectedProvider.id))
-				providers.push(selectedProvider);
-			return providers.map(providerSummary);
+			return availableProviders().map(providerSummary);
 		},
 		configureCustomProvider: async (input, signal) => {
 			ensureOpen();
@@ -444,7 +480,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 				options.cwd,
 				options.agentDir,
 				providerId,
-				current ?? registry.select(providerId).model.id,
+				current ?? selectRuntime(providerId).model.id,
 			);
 			const refreshed = await options.reloadConfiguration?.();
 			if (refreshed) startupConfiguration = refreshed;
@@ -470,7 +506,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		login: async (input, signal) => {
 			ensureOpen();
 			throwIfAborted(signal);
-			const selection = registry.select(input.providerId, input.modelId);
+			const selection = selectRuntime(input.providerId, input.modelId);
 			const api = (input.api ?? API_BY_PROVIDER[input.providerId]) as Exclude<ModelApi, "faux"> | undefined;
 			if (!api) throw new Error("Provider login API is unavailable.");
 			await saveGlobalProviderApiKey(options.agentDir, input.providerId, api, input.apiKey, selection.model.id);

@@ -14,10 +14,24 @@ import {
 } from "./compositions.ts";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { disposeRpcComposition } from "./rpc/lifecycle.ts";
-import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
+import {
+	loadStartupConfiguration,
+	resolveStartupRuntime,
+	type StartupConfiguration,
+	type StartupRuntime,
+} from "./startup.ts";
 import { WebUiServer } from "./webui.ts";
 
 type WebCommand = Extract<CliCommand, { readonly kind: "web" }>;
+
+/** Starts the Web settings flow with Faux when no configured runtime can be created yet. */
+export function resolveWebRuntime(configuration: StartupConfiguration): StartupRuntime {
+	try {
+		return resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
+	} catch {
+		return resolveStartupRuntime({ DI_CODE_PROVIDER: "faux" }, []);
+	}
+}
 
 async function webAssetRoot(): Promise<string> {
 	if (process.env.DI_CODE_WEB_STATIC_ROOT) return await existingDirectory(process.env.DI_CODE_WEB_STATIC_ROOT);
@@ -73,7 +87,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 	try {
 		await loader.load();
 		const configuration = await loadStartupConfiguration(allowedRoot, process.env, agentDir);
-		const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
+		const runtime = resolveWebRuntime(configuration);
 		server = new WebUiServer({
 			context,
 			allowedRoot: context.require(workspaceCapabilityKey).allowedRoot,

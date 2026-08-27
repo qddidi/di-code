@@ -12,14 +12,18 @@ import {
 } from "./api.ts";
 import type {
 	AttachmentInfo,
+	CommandAction,
+	CommandSummary,
 	ContextFile,
 	ConversationActivity,
 	ConversationImage,
 	ConversationMessage,
 	OperationState,
 	SessionSummary,
+	SessionTreeNode,
 	ToolApproval,
 	ToolTrace,
+	TreeNavigation,
 	UsageSnapshot,
 } from "./types.ts";
 
@@ -36,6 +40,8 @@ export interface ConversationState {
 	readonly tools: readonly ToolTrace[];
 	readonly approvals: readonly ToolApproval[];
 	readonly contextFiles: readonly ContextFile[];
+	readonly commands: readonly CommandSummary[];
+	readonly tree: readonly SessionTreeNode[];
 	readonly compaction?: {
 		readonly state: "running" | "success" | "error";
 		readonly reason: string;
@@ -50,6 +56,9 @@ export interface ConversationState {
 	readonly steer: (text: string) => Promise<void>;
 	readonly cancel: () => Promise<void>;
 	readonly compact: () => Promise<void>;
+	readonly runCommand: (name: string, args: string) => Promise<CommandAction | undefined>;
+	readonly navigateTree: (entryId: string) => Promise<TreeNavigation | undefined>;
+	readonly clearVisibleMessages: () => void;
 	readonly retry: () => Promise<void>;
 	readonly newSession: () => Promise<void>;
 	readonly openSession: (id: string) => Promise<void>;
@@ -76,6 +85,10 @@ function textFromContent(content: unknown): string {
 			return block?.type === "text" && typeof block.text === "string" ? block.text : "";
 		})
 		.join("");
+}
+
+function expandedSkillName(text: string): string | undefined {
+	return /^<explicit_skill name="([a-z0-9]+(?:-[a-z0-9]+)*)" path="[^"]+">/.exec(text)?.[1];
 }
 
 function imagesFromContent(content: unknown): readonly ConversationImage[] {
@@ -145,9 +158,12 @@ function messagesFromTranscript(
 		if (message.role === "user") {
 			flushAssistant();
 			const images = imagesFromContent(message.content);
+			const text = textFromContent(message.content);
+			const skillName = expandedSkillName(text);
 			messages.push({
 				role: "user",
-				text: textFromContent(message.content),
+				text: skillName ? "" : text,
+				...(skillName ? { skillName } : {}),
 				...(images.length ? { images } : {}),
 				...(entryId ? { entryId } : {}),
 			});
@@ -271,6 +287,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const [tools, setTools] = useState<readonly ToolTrace[]>([]);
 	const [approvals, setApprovals] = useState<readonly ToolApproval[]>([]);
 	const [contextFiles, setContextFiles] = useState<readonly ContextFile[]>([]);
+	const [commands, setCommands] = useState<readonly CommandSummary[]>([]);
+	const [tree, setTree] = useState<readonly SessionTreeNode[]>([]);
 	const [compaction, setCompaction] = useState<ConversationState["compaction"]>();
 	const [usage, setUsage] = useState<UsageSnapshot>();
 	const [operation, setOperation] = useState<OperationState>();
@@ -282,16 +300,31 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const resumeToken = useRef<string | undefined>(undefined);
 	const stopped = useRef(false);
 	const workspaceRef = useRef(workspaceId);
+	const refreshState = useRef<
+		| {
+				workspaceId: string | undefined;
+				queued: boolean;
+				promise?: Promise<void>;
+		  }
+		| undefined
+	>(undefined);
+	const refreshTimer = useRef<number | undefined>(undefined);
 	useEffect(() => {
 		workspaceRef.current = workspaceId;
 		sequence.current = 0;
 		resumeToken.current = undefined;
+		if (refreshTimer.current !== undefined) {
+			window.clearTimeout(refreshTimer.current);
+			refreshTimer.current = undefined;
+		}
 		setSessions([]);
 		setActiveSessionId(undefined);
 		setMessages([]);
 		setTools([]);
 		setApprovals([]);
 		setContextFiles([]);
+		setCommands([]);
+		setTree([]);
 		setCompaction(undefined);
 		setUsage(undefined);
 		setOperation(undefined);
@@ -301,18 +334,20 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		});
 	}, [workspaceId]);
 
-	const refresh = useCallback(async () => {
+	const performRefresh = useCallback(async () => {
 		const requestedWorkspace = workspaceId;
 		if (workspaceRef.current !== requestedWorkspace) return;
 		// The first request establishes the actor identity before the parallel snapshot reads begin.
 		const stateResult = await callRpc<{ readonly state: { readonly sessionId: string; readonly sequence?: number } }>(
 			"get_state",
 		);
-		const [sessionResult, transcript, usageResult, contextResult] = await Promise.all([
+		const [sessionResult, transcript, usageResult, contextResult, commandResult, treeResult] = await Promise.all([
 			loadSessions(),
 			readAllPages(),
 			callRpc<{ readonly usage: UsageSnapshot }>("get_usage"),
 			callRpc<{ readonly files: readonly ContextFile[] }>("list_context_files").catch(() => ({ files: [] })),
+			callRpc<{ readonly commands: readonly CommandSummary[] }>("list_commands").catch(() => ({ commands: [] })),
+			callRpc<{ readonly tree: readonly SessionTreeNode[] }>("get_tree").catch(() => ({ tree: [] })),
 		]);
 		if (workspaceRef.current !== requestedWorkspace) return;
 		setSessions(sessionResult.sessions);
@@ -321,8 +356,55 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		setMessages(transcript.messages);
 		setTools(transcript.tools);
 		setContextFiles(contextResult.files);
+		setCommands(commandResult.commands);
+		setTree(treeResult.tree);
 		setUsage(usageResult.usage);
 	}, [workspaceId]);
+
+	// Snapshot reads are relatively expensive. Coalesce concurrent callers and allow
+	// at most one follow-up refresh for events received while a read is in flight.
+	const refresh = useCallback((): Promise<void> => {
+		if (refreshTimer.current !== undefined) {
+			window.clearTimeout(refreshTimer.current);
+			refreshTimer.current = undefined;
+		}
+		const requestedWorkspace = workspaceId;
+		const existing = refreshState.current;
+		if (existing && existing.workspaceId === requestedWorkspace && existing.promise) {
+			existing.queued = true;
+			return existing.promise;
+		}
+		const state: {
+			workspaceId: string | undefined;
+			queued: boolean;
+			promise?: Promise<void>;
+		} = { workspaceId: requestedWorkspace, queued: false };
+		const run = async (): Promise<void> => {
+			while (true) {
+				state.queued = false;
+				await performRefresh();
+				if (!state.queued) return;
+			}
+		};
+		const promise = run();
+		state.promise = promise;
+		refreshState.current = state;
+		const clearInFlight = (): void => {
+			if (refreshState.current === state) refreshState.current = undefined;
+		};
+		void promise.then(clearInFlight, clearInFlight);
+		return promise;
+	}, [performRefresh, workspaceId]);
+
+	const scheduleRefresh = useCallback((): void => {
+		if (refreshTimer.current !== undefined) return;
+		refreshTimer.current = window.setTimeout(() => {
+			refreshTimer.current = undefined;
+			void refresh().catch((cause: unknown) =>
+				setError(cause instanceof Error ? cause.message : "Unable to restore conversation."),
+			);
+		}, 75);
+	}, [refresh]);
 
 	const handleEvent = useCallback(
 		(record: WireEvent) => {
@@ -332,9 +414,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			}
 			const type = record.event.type;
 			if (type === "snapshot_required" || type === "session_changed") {
-				void refresh().catch((cause: unknown) =>
-					setError(cause instanceof Error ? cause.message : "Unable to restore conversation."),
-				);
+				scheduleRefresh();
 				return;
 			}
 			if (type === "operation_update") {
@@ -396,7 +476,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					reason: typeof record.event.reason === "string" ? record.event.reason : "threshold",
 					...(typeof record.event.errorMessage === "string" ? { error: record.event.errorMessage } : {}),
 				});
-				void refresh().catch(() => undefined);
+				scheduleRefresh();
 				return;
 			}
 			if (type === "tool_execution_start") {
@@ -499,9 +579,9 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				}
 				return;
 			}
-			if (type === "agent_end") void refresh().catch(() => undefined);
+			if (type === "agent_end") scheduleRefresh();
 		},
-		[refresh],
+		[scheduleRefresh],
 	);
 
 	useEffect(() => {
@@ -553,6 +633,10 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		void connect();
 		return () => {
 			stopped.current = true;
+			if (refreshTimer.current !== undefined) {
+				window.clearTimeout(refreshTimer.current);
+				refreshTimer.current = undefined;
+			}
 		};
 	}, [handleEvent, ready, refresh, workspaceId]);
 
@@ -638,6 +722,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		const requestId = crypto.randomUUID();
 		setError(undefined);
 		lastCompactionError.current = undefined;
+		setCompaction({ state: "running", reason: "manual" });
 		setOperation({ requestId, kind: "compact", status: "queued" });
 		try {
 			await callRpc("compact", {}, requestId);
@@ -647,9 +732,36 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			const message =
 				lastCompactionError.current ??
 				(cause instanceof Error ? cause.message : "Unable to compact the session context.");
+			setCompaction({ state: "error", reason: "manual", error: message });
 			setOperation({ requestId, kind: "compact", status: "failed", error: { code: "INTERNAL_ERROR", message } });
 		}
 	}, [refresh]);
+	const runCommand = useCallback(async (name: string, args: string): Promise<CommandAction | undefined> => {
+		try {
+			const result = await callRpc<{ readonly action?: CommandAction }>("run_command", { name, args });
+			return result.action;
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Unable to run the command.");
+			return undefined;
+		}
+	}, []);
+	const navigateTree = useCallback(
+		async (entryId: string): Promise<TreeNavigation | undefined> => {
+			try {
+				const result = await callRpc<{ readonly navigation: TreeNavigation }>("navigate_tree", { entryId });
+				await refresh();
+				return result.navigation;
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : "Unable to navigate the session tree.");
+				return undefined;
+			}
+		},
+		[refresh],
+	);
+	const clearVisibleMessages = useCallback(() => {
+		setMessages([]);
+		setTools([]);
+	}, []);
 	const retry = useCallback(async () => {
 		if (operation?.status === "failed" || operation?.status === "cancelled") {
 			try {
@@ -760,6 +872,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		tools,
 		approvals,
 		contextFiles,
+		commands,
+		tree,
 		compaction,
 		usage,
 		operation,
@@ -770,6 +884,9 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		steer,
 		cancel,
 		compact,
+		runCommand,
+		navigateTree,
+		clearVisibleMessages,
 		retry,
 		newSession,
 		openSession,

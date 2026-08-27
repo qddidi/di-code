@@ -1,4 +1,4 @@
-import { Check, Copy, GitBranch, RotateCcw } from "lucide-react";
+import { Check, Copy, GitBranch, RotateCcw, Wand2 } from "lucide-react";
 import { ActivityTimeline } from "./ActivityTimeline.tsx";
 import type { ConversationMessage } from "../types.ts";
 
@@ -18,6 +18,7 @@ export function Transcript({ messages, onRetry, canRetry, onBranch, webSlot, wai
 		{messages.map((message, index) => <article className={`message message-${message.role}${message.status === "error" ? " message-error" : ""}`} key={`${message.role}-${index}`}>
 			<div className="message-label">{message.role === "user" ? "You" : message.role === "assistant" ? "di-code" : "Tool"}</div>
 			{message.role === "assistant" ? <ActivityTimeline activities={message.activities} streaming={message.status === "streaming"} /> : null}
+			{message.skillName ? <div className="message-skill"><Wand2 size={14} />Used skill <code>/{`skill:${message.skillName}`}</code></div> : null}
 			{message.text ? <div className="message-body">{message.text}</div> : null}
 			{message.images?.length ? <div className="message-images">{message.images.map((image, imageIndex) => <img key={`${image.src.slice(-32)}-${imageIndex}`} src={image.src} alt={image.alt} />)}</div> : null}
 			{message.status === "streaming" && !message.text && !message.activities?.length ? <span className="streaming-status" role="status" aria-label="Streaming response"><span className="streaming-dots"><i /><i /><i /></span></span> : null}

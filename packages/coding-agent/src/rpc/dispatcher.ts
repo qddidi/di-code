@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AssistantMessage, ImageContent, Message } from "@di-code/ai";
+import type { CommandRegistry } from "@di-code/builtins";
+import { redactSensitiveText } from "@di-code/plugin-runtime";
 import type { SessionTreeNode } from "../core/session/types.ts";
 import type { AgentSessionEvent, AgentSessionListener } from "../core/session.ts";
 import type { ProductHost } from "../runtime/product-host.ts";
@@ -9,6 +11,8 @@ import {
 	type OperationStatus,
 	RPC_PROTOCOL_VERSION,
 	type RpcAttachmentInfo,
+	type RpcCommandAction,
+	type RpcCommandInfo,
 	type RpcErrorCode,
 	type RpcEventRecord,
 	type RpcMethod,
@@ -46,6 +50,8 @@ export interface RpcDispatcherOptions {
 	readonly attachmentMaxCount?: number;
 	readonly attachmentMaxBytes?: number;
 	readonly attachmentStore?: RpcAttachmentStore;
+	/** Composition-owned commands that may be listed and invoked by a Web client. */
+	readonly commandRegistry?: CommandRegistry;
 	/** Completed operations remain queryable for this bounded retention window. */
 	readonly operationTtlMs?: number;
 	/** Active operations are never evicted; this only limits retained terminal records. */
@@ -187,6 +193,11 @@ function errorCode(cause: unknown): RpcErrorCode {
 	}
 	return "INTERNAL_ERROR";
 }
+function operationErrorMessage(cause: unknown, code: RpcErrorCode): string {
+	if (code === "CANCELLED") return "The RPC operation was cancelled.";
+	const message = redactSensitiveText(errorFrom(cause).message).trim();
+	return message ? message.slice(0, 1_000) : "The RPC operation failed.";
+}
 
 /**
  * Transport-free protocol dispatcher. It owns request idempotency, operation state, event ordering,
@@ -201,6 +212,7 @@ export class RpcDispatcher {
 	private productState: RpcProductState;
 	private readonly productHost?: ProductHost;
 	private readonly attachmentTtlMs: number;
+	private readonly commandRegistry?: CommandRegistry;
 	private readonly attachmentMaxCount: number;
 	private readonly attachmentMaxBytes: number;
 	private readonly operationTtlMs: number;
@@ -222,6 +234,7 @@ export class RpcDispatcher {
 		this.maxEvents = options.eventBufferSize ?? 256;
 		this.productState = options.productState ?? { projectTrusted: false };
 		this.productHost = options.productHost;
+		this.commandRegistry = options.commandRegistry;
 		this.attachmentTtlMs = options.attachmentTtlMs ?? 10 * 60 * 1000;
 		this.attachmentMaxCount = options.attachmentMaxCount ?? 32;
 		this.attachmentMaxBytes = options.attachmentMaxBytes ?? 64 * 1024 * 1024;
@@ -389,6 +402,8 @@ export class RpcDispatcher {
 						method: "list_web_contributions",
 						manifest: await this.requireProduct().getWebContributions(),
 					});
+				case "list_commands":
+					return this.success(request.id, { method: "list_commands", commands: this.listCommands() });
 				case "list_context_files":
 				case "list_mcp_servers":
 				case "login":
@@ -422,6 +437,8 @@ export class RpcDispatcher {
 						approvalId: request.params.approvalId,
 						approved: request.params.approved,
 					});
+				case "run_command":
+					return this.failure(request.id, "METHOD_NOT_FOUND", "Command execution requires operation dispatch.");
 				default:
 					return this.failure(request.id, "METHOD_NOT_FOUND", "RPC method is unavailable for this Host.");
 			}
@@ -502,6 +519,9 @@ export class RpcDispatcher {
 				case "compact":
 					await this.host().compact(operation.controller.signal);
 					result = { method: "compact" };
+					break;
+				case "run_command":
+					result = await this.runCommand(request, operation.controller.signal);
 					break;
 				case "navigate_tree":
 					result = {
@@ -682,7 +702,7 @@ export class RpcDispatcher {
 			operation.completedAt = Date.now();
 			operation.error = {
 				code,
-				message: code === "CANCELLED" ? "The RPC operation was cancelled." : "The RPC operation failed.",
+				message: operationErrorMessage(cause, code),
 			};
 			this.emitOperation(operation);
 			this.pruneOperations();
@@ -807,6 +827,7 @@ export class RpcDispatcher {
 			"steer",
 			"retry",
 			"compact",
+			"run_command",
 			"navigate_tree",
 			"set_model",
 			"set_runtime",
@@ -826,6 +847,41 @@ export class RpcDispatcher {
 			"reconnect_mcp_server",
 			"set_plugin_enabled",
 		].includes(method);
+	}
+	private listCommands(): readonly RpcCommandInfo[] {
+		const locale = this.productHost?.getSettings().locale ?? "en";
+		const commands = (this.commandRegistry?.list() ?? []).map((command) => ({
+			name: command.name,
+			description: typeof command.description === "function" ? command.description(locale) : command.description,
+			kind: "command" as const,
+		}));
+		const skills = (sessionHost(this.session) ? this.session.ui().availableSkills : []).map((skill) => ({
+			name: `skill:${skill.name}`,
+			description: skill.description,
+			kind: "skill" as const,
+		}));
+		return [...commands, ...skills].sort((left, right) => left.name.localeCompare(right.name));
+	}
+	private async runCommand(request: RpcRequest, signal: AbortSignal): Promise<RpcSuccessResult> {
+		const name = request.params.name as string;
+		const args = (request.params.args as string | undefined) ?? "";
+		if (!this.commandRegistry?.list().some((command) => command.name === name))
+			throw new RpcProtocolError("NOT_FOUND", `Unknown command: /${name}`, request.id);
+		let action: RpcCommandAction | undefined;
+		await this.commandRegistry.execute(
+			name,
+			{
+				args,
+				host: {
+					runCommand: (command: string, commandArgs: string): number => {
+						action = { command, args: commandArgs };
+						return 0;
+					},
+				},
+			},
+			signal,
+		);
+		return { method: "run_command", command: name, ...(action ? { action } : {}) };
 	}
 	private success(id: string, result: RpcSuccessResult): RpcResponse {
 		return { version: RPC_PROTOCOL_VERSION, kind: "response", id, ok: true, result };

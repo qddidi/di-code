@@ -16,11 +16,16 @@ describe("parseCliArgs", () => {
 		expect(parseCliArgs(["-v"])).toEqual({ kind: "version" });
 	});
 
-	it("parses the local web command and validates its port", () => {
+	it("parses the local web command and validates its options", () => {
 		expect(parseCliArgs(["web"])).toEqual({ kind: "web", port: 0 });
 		expect(parseCliArgs(["web", "--port", "4312"])).toEqual({ kind: "web", port: 4312 });
+		expect(parseCliArgs(["web", "--workspace", "D:/one", "--workspace", "D:/two"])).toEqual({
+			kind: "web",
+			port: 0,
+			workspaces: ["D:/one", "D:/two"],
+		});
 		expect(() => parseCliArgs(["web", "--port", "65536"])).toThrow("Option --port expects a TCP port");
-		expect(() => parseCliArgs(["web", "prompt"])).toThrow("Web command accepts only --port");
+		expect(() => parseCliArgs(["web", "prompt"])).toThrow("Web command accepts --port");
 	});
 
 	it("parses MCP management commands without shell-joining stdio arguments", () => {

@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@di-code/ai";
+import { createCommandRegistry } from "@di-code/builtins";
 import { describe, expect, it } from "vitest";
 import type { AgentSessionEvent, AgentSessionListener } from "../src/core/session.ts";
 import { RpcDispatcher, type RpcSession } from "../src/rpc/dispatcher.ts";
@@ -69,6 +70,31 @@ class DeferredSession implements RpcSession {
 }
 
 describe("RpcDispatcher", () => {
+	it("lists and executes composition-registered commands", async () => {
+		const commands = createCommandRegistry();
+		let receivedArgs: string | undefined;
+		commands.register({
+			name: "custom-check",
+			description: "Run the custom check",
+			run: (input) => {
+				receivedArgs = (input as { readonly args?: string }).args;
+				return 0;
+			},
+		});
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession(), commandRegistry: commands });
+		const listed = await dispatcher.dispatch(request("list-commands", "list_commands"));
+		expect(listed).toMatchObject({
+			ok: true,
+			result: { method: "list_commands", commands: [{ name: "custom-check", description: "Run the custom check" }] },
+		});
+		const executed = await dispatcher.dispatch(
+			request("run-command", "run_command", { name: "custom-check", args: "verify" }),
+		);
+		expect(executed).toMatchObject({ ok: true, result: { method: "run_command", command: "custom-check" } });
+		expect(receivedArgs).toBe("verify");
+		await dispatcher.dispose();
+	});
+
 	it("correlates a tool approval event with the approving RPC request", async () => {
 		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
 		const records: RpcServerMessage[] = [];
@@ -134,6 +160,24 @@ describe("RpcDispatcher", () => {
 			listener({ type: "product_audit", action: "set_project_trust" });
 		});
 		expect(records.some((record) => record.kind === "event" && record.event.type === "product_audit")).toBe(true);
+		await dispatcher.dispose();
+	});
+
+	it("returns a redacted cause when a ProductHost operation fails", async () => {
+		const product = {
+			login: async () => {
+				throw new Error("Unable to save apiKey=top-secret-value");
+			},
+			subscribe: () => () => undefined,
+		} as unknown as ProductHost;
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession(), productHost: product });
+		const response = await dispatcher.dispatch(
+			request("failed-login", "login", { providerId: "zhipu", apiKey: "top-secret-value", modelId: "glm-5.3" }),
+		);
+		expect(response).toMatchObject({
+			ok: false,
+			error: { code: "INTERNAL_ERROR", message: "Unable to save apiKey=[REDACTED]" },
+		});
 		await dispatcher.dispose();
 	});
 	it("keeps duplicate request IDs idempotent and exposes their detached operation", async () => {

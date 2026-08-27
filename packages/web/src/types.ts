@@ -44,6 +44,8 @@ export type ConversationActivity =
 export interface ConversationMessage {
 	readonly role: "user" | "assistant" | "tool";
 	readonly text: string;
+	/** The expanded Skill prompt is kept out of the conversation projection. */
+	readonly skillName?: string;
 	readonly images?: readonly ConversationImage[];
 	readonly thinking?: string;
 	readonly activities?: readonly ConversationActivity[];
@@ -128,6 +130,37 @@ export interface SkillSummary {
 	readonly name: string;
 	readonly description: string;
 	readonly scope: string;
+}
+export interface CommandSummary {
+	readonly name: string;
+	readonly description: string;
+	readonly kind: "command" | "skill";
+}
+export interface CommandAction {
+	readonly command: string;
+	readonly args: string;
+}
+export interface SessionTreeEntry {
+	readonly id: string;
+	readonly type: "message" | "summary" | "plugin";
+	readonly timestamp: string;
+	readonly summary?: string;
+	readonly pluginId?: string;
+	readonly message?: {
+		readonly role: "user" | "assistant" | "tool_result";
+		readonly content: readonly { readonly type: string; readonly text?: string }[];
+		readonly stopReason?: string;
+	};
+}
+export interface SessionTreeNode {
+	readonly entry: SessionTreeEntry;
+	readonly children: readonly SessionTreeNode[];
+}
+export interface TreeNavigation {
+	readonly editorText?: string;
+	readonly selectedEntryId: string;
+	readonly leafId: string;
+	readonly imagesOmitted: boolean;
 }
 export interface McpServerSummary {
 	readonly id: string;

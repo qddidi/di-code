@@ -463,6 +463,45 @@ describe("AgentSession persistence", () => {
 		expect(reopened.messages).toHaveLength(session.transcript.length);
 	});
 
+	it("allows a final assistant tree node but rejects an intermediate tool call", async () => {
+		await writeFile(join(root, "notes.txt"), "stored content", "utf8");
+		const faux = createFauxProvider({
+			responses: [
+				{
+					type: "success",
+					content: [{ type: "tool_call", id: "read-tree", name: "read", arguments: { path: "notes.txt" } }],
+				},
+				{ type: "success", content: [{ type: "text", text: "final answer" }] },
+			],
+		});
+		const manager = await SessionManager.create({ filePath: sessionFile, cwd: root });
+		const session = new AgentSession({
+			allowedRoot: root,
+			provider: faux.provider,
+			model: faux.model,
+			sessionManager: manager,
+		});
+
+		await session.prompt("read notes.txt");
+		const toolCall = manager.entries.find(
+			(entry) =>
+				entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "tool_use",
+		);
+		const finalAssistant = manager.entries.find(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "assistant" &&
+				entry.message.content.some((content) => content.type === "text" && content.text === "final answer"),
+		);
+		if (!toolCall || !finalAssistant) throw new Error("Expected persisted tool and final assistant messages.");
+
+		await expect(session.navigateTree(toolCall.id)).rejects.toThrow("Select the final tool result");
+		await expect(session.navigateTree(finalAssistant.id)).resolves.toMatchObject({
+			selectedEntryId: finalAssistant.id,
+			leafId: finalAssistant.id,
+		});
+	});
+
 	it("navigates to a historical user message and creates a sibling branch with only its ancestor context", async () => {
 		const faux = createFauxProvider({
 			responses: [

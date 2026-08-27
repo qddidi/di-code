@@ -578,9 +578,9 @@ worker 由 composition 的 `session-factory` 创建 session，并由同一 compo
 
 `RpcServer` 是 JSONL 传输适配器；协议解析、参数校验、方法分发、操作表和事件恢复由无 stdin/stdout 依赖的 `RpcDispatcher` 完成。嵌入其他传输时只能复用 dispatcher，不得让网络写入等待 Agent 事件处理。
 
-新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法。`set_runtime` 和 `set_thinking_level` 都会在空闲时更新当前 Session，并持久化为之后 WebUI Session 与终端启动使用的默认模型/推理偏好；已有工作区 `.di-code/settings.json` 时写入工作区，否则写入用户级 settings。若终端显式设置了 `DI_CODE_PROVIDER` 或 `DI_CODE_MODEL`，环境变量仍优先。`set_thinking_level` 传入 `level: "low" | "medium" | "high" | "max"` 时按值设置；省略 `level` 保持原有循环行为。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
+新客户端先调用 `get_capabilities` 并在 `events` 中声明 `sequence`、`operation_update`、`snapshot_required` 等扩展事件。未协商的连接只接收原有 Agent 事件，因此旧客户端不会遇到未知 event。协商后可调用 `list_sessions`、`new_session`、`open_session`、`get_transcript`、`get_tree`、`navigate_tree`、`steer`、`retry`、`get_operation`、模型/运行时、压缩、usage 和资源快照方法，以及 `list_commands` 和 `run_command`。前者只返回当前 composition 注册的命令和当前 Session 已加载的 Skills；后者只接受清单中已注册的命令名与字符串参数，`args` 可以为空，扩展命令仍在其 registry handler 中运行。`set_runtime` 和 `set_thinking_level` 都会在空闲时更新当前 Session，并持久化为之后 WebUI Session 与终端启动使用的默认模型/推理偏好；已有工作区 `.di-code/settings.json` 时写入工作区，否则写入用户级 settings。若终端显式设置了 `DI_CODE_PROVIDER` 或 `DI_CODE_MODEL`，环境变量仍优先。`set_thinking_level` 传入 `level: "low" | "medium" | "high" | "max"` 时按值设置；省略 `level` 保持原有循环行为。异步请求由 request ID 归属；重复同一 ID 返回同一个操作结果，`get_operation` 可查询 detached 操作，`cancel` 可取消它。事件带可选 `sessionId` 和单调 `sequence`，`resume_events` 在环形缓冲已过期时发送 `snapshot_required`，客户端必须重新读取状态、transcript、tree 和 usage。
 
-v1 只新增方法与可选字段。产品配置、附件、工具审批和插件命名空间仍要求对应的显式 Host capability、schema、权限和 owner disposer；没有这些能力的 composition 会以 `METHOD_NOT_FOUND` 拒绝，绝不映射到 `commandRegistry` 或任意插件命令。
+v1 只新增方法与可选字段。产品配置、附件、工具审批和插件命名空间仍要求对应的显式 Host capability、schema、权限和 owner disposer；没有这些能力的 composition 会以 `METHOD_NOT_FOUND` 拒绝。`run_command` 是唯一的命令投影：它只执行同一 composition 中已注册且由 `list_commands` 返回的名称，浏览器不会取得 registry 或调用任意插件代码。
 
 Node.js 宿主从公开入口导入 SDK：
 
@@ -610,16 +610,18 @@ RPC client 也有独立的 `rpc-client-sdk` namespace composition entry；嵌入
 
 `di-code web [--port <0-65535>]` 是面向浏览器的同源入口，默认使用随机可用端口并且始终只绑定 `127.0.0.1`。同一个 Node 进程拥有静态 SPA、`GET /healthz`、`GET /api/boot` 和现有 HTTP/SSE RPC adapter 的 `/api` 路由；页面只读取 boot/capabilities，实际 prompt、Session 和工具调用仍由 `RpcDispatcher`/`SessionHost` 执行。静态资源来自已安装包的 `dist/web`，API 路由与 SPA fallback 隔离，路径穿越和 symlink 逃逸会被拒绝。首次静态页面响应建立 HttpOnly、SameSite cookie，浏览器不需要知道 transport token。
 
-`npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
+`npm run web:dev` 是源码开发 supervisor：它保留现有 Provider/settings 环境、等待 backend 的真实随机端口、再启动 Vite 代理；若当前 Provider 尚未配置 API key，则 backend 使用 Faux runtime 启动页面，供用户在 Settings 中完成登录，内置 Provider（包括 Zhipu）仍会显示为未配置状态，settings 文件本身的格式或安全校验错误仍会失败。端口冲突会失败，`Ctrl+C` 会终止 backend 和 Vite。它只供本地开发，不能用于远程 bind 或放宽 workspace 授权。
 
 Web SPA 的首页读取 `/api/boot`、`list_sessions` 和脱敏 `get_settings` 快照，提供双栏导航、workspace 选择、受管 Session 创建/打开、响应式侧栏，以及拆分为 General/Models 的 Settings overlay。启动时的真实 workspace 与重复 `--workspace` 显式授权且已信任的 workspace 会以不透明 ID 返回，选择后只显示该 workspace 的会话；会话按最后修改时间倒序。设置快照中的每个模型会包含其实际支持的 `reasoningEfforts`；活动 Provider 即使未注册到全局目录也会作为运行时回退返回。对话 store 以 `get_state`、完整 transcript 和 usage snapshot 为权威，消费有序 SSE 来投影 streaming text、thinking、operation 与 usage；重连使用 resume token，收到 `snapshot_required` 或刷新后完整重拉，绝不静默重放 prompt。图片和文本都作为 durable user message 保存；Web transcript 将持久化图片映射为 data URL 并在对应用户消息中渲染。为读取最大 5 MiB 图片的 base64 JSONL 记录，`get_transcript.maxBytes` 上限为 8 MiB。每个 transcript 消息同时携带 durable entry ID；从完成回复创建分支时，RPC 会以该 entry ID 截断后续上下文、打开新分支并返回其 active session。composer 支持输入法组合、拖放/粘贴/文件选择图片、最多四个 opaque attachment handle、运行时 steer、cancel 和失败 retry。PNG/JPEG/WebP/GIF 单张图片可达 5 MiB，base64 传输按附件上限而非普通 prompt 长度校验，并作为 Provider context 的 image content block 传递。仅模型目录声明 `input: ["text", "image"]` 时，composer 才允许附加图片；文本模型不能静默发送空图片。OpenAI Chat Completions 兼容 Provider 会把用户图片映射为标准的 `image_url` data URL content part。浏览器内仅有预览 object URL；服务端路径、transport token、Provider key 不会出现在页面、事件或错误中。配置中心只接受窄参数 RPC：Provider 登录/登出、自定义 Provider、运行时模型和推理强度、默认 Provider/model、locale 和权限模式；已有工作区 settings 时模型与推理强度保存到工作区，否则保存到用户级 settings。环境变量托管字段只读显示，API key 不会出现在快照、事件或错误中。外观切换仅作用于浏览器本地页面。
+
+Web composer 的 Commands 菜单和输入开头的 `/` 都会显示当前 composition 的内置、扩展命令和已加载的 `/skill:<name>`；选择不需要参数的内置或扩展 command 会立即通过 `run_command` 执行，只有 `/skill:<name>` 和 `/steer` 会写入输入框以补充请求内容。`/tree` 打开 Session 树节点弹窗，同一线性分支保持左对齐，只有实际分叉才增加缩进；选择 user 节点会回填其文本并从父节点继续，选择完成的 assistant、tool result 或 summary 节点会从所选节点继续。带 tool call 的中间 assistant 节点不可选择，应选择对应 tool result。树导航不会回滚已经发生的工作区副作用。Web transcript 遇到持久化的显式 Skill 展开消息时，只展示 Skill 名称，不展示其展开正文。
 
 对话区的 `Chat`/`Trajectory` tabs 直接消费 `tool_execution_start/end`、`compaction_*`、`usage_update` 和 `tool_approval` 事件。空闲时的 `Compact context` 控制项调用现有 `compact` RPC，生成或压缩期间会禁用。工具卡为 `read`、`write`、`edit`、`bash`、`glob`、`grep` 保留独立状态和折叠输出，edit 结果的 `details.diff/patch` 以纯文本代码块显示；长输出不会注入 HTML。`ask` 模式的审批使用服务端生成的 `approvalId`，浏览器通过 `approve_tool` 回传决定，不能绕过 Agent 的工具校验。
 
 `di-code-webui` 是给自定义或嵌入式 HTTP 客户端保留的 token header transport：
 
 `di-code-webui` 使用 `webui` composition 创建 `HostManager` 和每个浏览器 client 的 `SessionActor`，再由 `RpcDispatcher` 执行所有 RPC v1
-方法。它不导入或调用 `commandRegistry`，不会创建第二个 Agent loop。Web 与 TUI 使用同一套环境变量、工作区和用户级 settings 解析 Provider、模型、语言、thinking 默认值和持久化 Session；client/actor 目录只保存附件等传输临时状态，不能承载 settings 或 Session。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
+方法。它通过 `list_commands`/`run_command` 受控投影同一 composition 已注册的命令，不向浏览器暴露 `commandRegistry` 或任意命令执行入口，也不会创建第二个 Agent loop。Web 与 TUI 使用同一套环境变量、工作区和用户级 settings 解析 Provider、模型、语言、thinking 默认值和持久化 Session；client/actor 目录只保存附件等传输临时状态，不能承载 settings 或 Session。设置 `DI_CODE_WEBUI_TOKEN` 为至少 32 个字符的随机值后启动；默认绑定
 `127.0.0.1` 和随机可用端口，可用 `DI_CODE_WEBUI_PORT` 指定端口。`DI_CODE_WEBUI_HOST` 只有与 `DI_CODE_WEBUI_ALLOW_REMOTE=1` 同时设置时才可绑定非回环地址。
 
 `POST /rpc`、`GET /events` 和 `POST /attachments` 都要求 `Authorization: Bearer <token>` 或 `X-Di-Code-Token` header。服务拒绝不匹配的
