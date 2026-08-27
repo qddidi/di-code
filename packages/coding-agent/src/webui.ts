@@ -126,6 +126,7 @@ export class WebUiServer {
 	private readonly clients = new Map<string, ClientState>();
 	private readonly clientsByResumeToken = new Map<string, ClientState>();
 	private readonly server: Server;
+	private readonly addedWorkspaceRoots = new Set<string>();
 	private tokenValue: string;
 	private sseConnections = 0;
 	private disposed = false;
@@ -212,6 +213,7 @@ export class WebUiServer {
 			if (!client) return;
 			if (!this.rateAllowed(client)) return json(res, 429, { error: "Rate limit exceeded." });
 			if (req.method === "GET" && url.pathname === "/api/boot") return await this.boot(res, client, url);
+			if (req.method === "POST" && url.pathname === "/api/workspaces") return await this.addWorkspaceRoute(req, res);
 			if (req.method === "POST" && url.pathname === "/api/rpc") return await this.rpc(req, res, client, url);
 			if (req.method === "GET" && url.pathname === "/api/events") return await this.events(req, res, client, url);
 			if (req.method === "POST" && url.pathname === "/api/attachments")
@@ -424,8 +426,18 @@ export class WebUiServer {
 		const allowed = (await this.resolveWorkspace(url)).root;
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
+			const primary = await realpath(resolve(this.options.allowedRoot));
+			const projectTrusted =
+				allowed.toLowerCase() === primary.toLowerCase()
+					? (this.options.projectTrusted ?? false)
+					: (await createProjectTrustStore(resolve(this.options.agentDir, "trust.json")).get(allowed)) === true;
 			const startupConfiguration = await loadStartupConfiguration(allowed, process.env, this.options.agentDir);
-			const hostOptions = this.hostOptions(client.principal, allowed, this.resolveActorRuntime(startupConfiguration));
+			const hostOptions = this.hostOptions(
+				client.principal,
+				allowed,
+				this.resolveActorRuntime(startupConfiguration),
+				projectTrusted,
+			);
 			let permissionMode = startupConfiguration.permissionMode ?? "ask";
 			let requestApproval:
 				| ((toolName: string, parameters: unknown, signal?: AbortSignal) => Promise<boolean>)
@@ -449,7 +461,7 @@ export class WebUiServer {
 				context: this.options.context,
 				cwd: allowed,
 				agentDir: hostOptions.agentDir,
-				projectTrusted: this.options.projectTrusted ?? false,
+				projectTrusted,
 				provider: hostOptions.provider,
 				model: hostOptions.model,
 				runtimeSnapshot: () => {
@@ -484,7 +496,7 @@ export class WebUiServer {
 			dispatcher = new RpcDispatcher({
 				session: actor,
 				commandRegistry: this.options.context.get(commandRegistryKey),
-				productState: { projectTrusted: this.options.projectTrusted ?? false },
+				productState: { projectTrusted },
 				productHost: product,
 				attachmentStore: attachments,
 			});
@@ -519,7 +531,11 @@ export class WebUiServer {
 	}
 	private async authorizedWorkspaces(): Promise<readonly WebWorkspace[]> {
 		const primary = await realpath(resolve(this.options.allowedRoot));
-		const candidates = [this.options.allowedRoot, ...(this.options.allowedWorkspaces ?? [])];
+		const candidates = [
+			this.options.allowedRoot,
+			...(this.options.allowedWorkspaces ?? []),
+			...this.addedWorkspaceRoots,
+		];
 		const seen = new Set<string>();
 		const result: WebWorkspace[] = [];
 		for (const candidate of candidates) {
@@ -538,6 +554,25 @@ export class WebUiServer {
 			});
 		}
 		return result;
+	}
+	private async addWorkspaceRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
+		const value: unknown = JSON.parse(await body(req, 64 * 1024));
+		if (typeof value !== "object" || value === null || typeof (value as { readonly path?: unknown }).path !== "string")
+			throw new Error("Workspace path is required.");
+		const workspace = await this.addWorkspace((value as { readonly path: string }).path);
+		json(res, 200, { workspace });
+	}
+	/** Adds a validated local directory to this server's explicitly authorized workspace set. */
+	private async addWorkspace(requestedPath: string): Promise<Pick<WebWorkspace, "id" | "name">> {
+		if (!requestedPath.trim() || requestedPath.includes("\0")) throw new Error("Workspace path is invalid.");
+		const root = await realpath(resolve(requestedPath));
+		if (!(await stat(root)).isDirectory()) throw new Error("Workspace path is not a directory.");
+		const primary = await realpath(resolve(this.options.allowedRoot));
+		if (root.toLowerCase() !== primary.toLowerCase()) {
+			await createProjectTrustStore(resolve(this.options.agentDir, "trust.json")).set(root, true);
+		}
+		this.addedWorkspaceRoots.add(root);
+		return { id: createHash("sha256").update(root).digest("hex").slice(0, 24), name: basename(root) || "Workspace" };
 	}
 	private async resolveWorkspace(url: URL): Promise<WebWorkspace> {
 		const workspaces = await this.authorizedWorkspaces();
@@ -578,13 +613,18 @@ export class WebUiServer {
 			throw new Error("Provider is not configured.");
 		}
 	}
-	private hostOptions(_principal: string, cwd: string, runtime?: StartupRuntime): SessionHostBootstrapOptions {
+	private hostOptions(
+		_principal: string,
+		cwd: string,
+		runtime?: StartupRuntime,
+		projectTrusted = this.options.projectTrusted,
+	): SessionHostBootstrapOptions {
 		return {
 			cwd,
 			// SessionHost uses the same durable root as TUI. Browser identity only
 			// scopes transport state and must never become a settings root.
 			agentDir: resolve(this.options.agentDir),
-			projectTrusted: this.options.projectTrusted,
+			projectTrusted,
 			noSkills: this.options.noSkills,
 			noContextFiles: this.options.noContextFiles,
 			skillPaths: this.options.skillPaths,

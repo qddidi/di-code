@@ -9,6 +9,7 @@ import type {
 	SettingsSnapshot,
 	SkillSummary,
 	WebManifest,
+	WorkspaceSummary,
 } from "./types.ts";
 
 const CLIENT_ID_KEY = "di-code-web-client-id";
@@ -19,10 +20,10 @@ export function selectWorkspace(id: string | undefined): void {
 	workspaceId = id;
 }
 
-function apiPath(path: string): string {
-	if (!workspaceId) return path;
+function apiPath(path: string, selectedWorkspaceId = workspaceId): string {
+	if (!selectedWorkspaceId) return path;
 	const url = new URL(path, window.location.origin);
-	url.searchParams.set("workspaceId", workspaceId);
+	url.searchParams.set("workspaceId", selectedWorkspaceId);
 	return `${url.pathname}${url.search}`;
 }
 
@@ -101,6 +102,41 @@ export function eventHeaders(lastSequence: number, resumeToken?: string): Header
 
 export async function loadSessions(): Promise<SessionsResult> {
 	return callRpc<SessionsResult>("list_sessions");
+}
+
+/** Reads a workspace's sessions without changing the active workspace actor. */
+export async function loadSessionsForWorkspace(selectedWorkspaceId: string): Promise<SessionsResult> {
+	const response = await fetch(apiPath("/api/rpc", selectedWorkspaceId), {
+		method: "POST",
+		credentials: "same-origin",
+		headers: clientHeaders({ "content-type": "application/json" }),
+		body: JSON.stringify({
+			version: 1,
+			kind: "request",
+			id: crypto.randomUUID(),
+			method: "list_sessions",
+			params: {},
+		}),
+	});
+	rememberClient(response);
+	if (!response.ok) throw new Error(`RPC request failed (${response.status}).`);
+	const envelope = (await response.json()) as RpcEnvelope<SessionsResult>;
+	if (!envelope.ok || envelope.result === undefined) throw new Error(envelope.error?.message ?? "RPC request failed.");
+	return envelope.result;
+}
+
+export async function addWorkspace(path: string): Promise<WorkspaceSummary> {
+	const response = await fetch("/api/workspaces", {
+		method: "POST",
+		credentials: "same-origin",
+		headers: clientHeaders({ "content-type": "application/json" }),
+		body: JSON.stringify({ path }),
+	});
+	rememberClient(response);
+	if (!response.ok) throw new Error("Unable to add workspace.");
+	const result = (await response.json()) as { readonly workspace?: WorkspaceSummary };
+	if (!result.workspace) throw new Error("Unable to add workspace.");
+	return result.workspace;
 }
 
 export async function loadSettings(): Promise<SettingsSnapshot> {

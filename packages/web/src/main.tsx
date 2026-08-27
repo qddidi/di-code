@@ -6,8 +6,8 @@ import { EmptyState } from "./components/EmptyState.tsx";
 import { SettingsOverlay } from "./components/SettingsOverlay.tsx";
 import { OnboardingPanel } from "./components/OnboardingPanel.tsx";
 import { Transcript } from "./components/Transcript.tsx";
-import { callRpc, loadSettings, loadWebContributions, selectWorkspace } from "./api.ts";
-import type { SettingsSnapshot, WebManifest } from "./types.ts";
+import { addWorkspace, callRpc, loadSessionsForWorkspace, loadSettings, loadWebContributions, selectWorkspace } from "./api.ts";
+import type { SessionSummary, SettingsSnapshot, WebManifest, WorkspaceSummary } from "./types.ts";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { WorkspaceBar } from "./components/WorkspaceBar.tsx";
 import { ApprovalBar } from "./components/ApprovalBar.tsx";
@@ -25,10 +25,14 @@ import { I18nProvider, useI18n } from "./i18n.tsx";
 
 function App(): React.JSX.Element {
 	const { setLocale } = useI18n();
-	const { data, error: bootError, loading } = useBoot();
+	const { data, error: bootError, loading, workspaceSessions } = useBoot();
 	const [workspaceId, setWorkspaceId] = useState<string>();
 	selectWorkspace(workspaceId);
 	const conversation = useConversation(data !== undefined, workspaceId);
+	const [pendingSession, setPendingSession] = useState<{ readonly workspaceId: string; readonly sessionId: string }>();
+	const [pendingNewWorkspace, setPendingNewWorkspace] = useState<string>();
+	const [addedWorkspaces, setAddedWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
+	const [addedWorkspaceSessions, setAddedWorkspaceSessions] = useState<Readonly<Record<string, readonly SessionSummary[]>>>({});
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 800);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
@@ -78,6 +82,16 @@ function App(): React.JSX.Element {
 		};
 	}, [data, refreshSettings]);
 	useEffect(() => {
+		if (!pendingSession || pendingSession.workspaceId !== workspaceId) return;
+		setPendingSession(undefined);
+		void conversation.openSession(pendingSession.sessionId);
+	}, [conversation.openSession, pendingSession, workspaceId]);
+	useEffect(() => {
+		if (!pendingNewWorkspace || pendingNewWorkspace !== workspaceId) return;
+		setPendingNewWorkspace(undefined);
+		void conversation.newSession();
+	}, [conversation.newSession, pendingNewWorkspace, workspaceId]);
+	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent): void => {
 			const modifier = event.ctrlKey || event.metaKey;
 			if (modifier && event.key.toLowerCase() === "k") { event.preventDefault(); setSidebarCollapsed(false); }
@@ -97,6 +111,9 @@ function App(): React.JSX.Element {
 	const hero = conversation.messages.length === 0 && !busy;
 	const activeTitle = conversation.sessions.find((session) => session.id === conversation.activeSessionId)?.label;
 	const activeSession = conversation.sessions.find((session) => session.id === conversation.activeSessionId);
+	const sessionsByWorkspace = useMemo(() => ({ ...workspaceSessions, ...(workspaceId ? { [workspaceId]: conversation.sessions } : {}) }), [conversation.sessions, workspaceId, workspaceSessions]);
+	const allWorkspaces = useMemo(() => [...(data?.workspaces ?? []), ...addedWorkspaces.filter((added) => !(data?.workspaces ?? []).some((workspace) => workspace.id === added.id))], [addedWorkspaces, data?.workspaces]);
+	const allSessionsByWorkspace = useMemo(() => ({ ...sessionsByWorkspace, ...addedWorkspaceSessions, ...(workspaceId ? { [workspaceId]: conversation.sessions } : {}) }), [addedWorkspaceSessions, conversation.sessions, sessionsByWorkspace, workspaceId]);
 	const runtimeProvider = settings?.providers.find((provider) => provider.id === settings.runtime.providerId);
 	const runtimeModel = runtimeProvider?.models.find((model) => model.id === settings?.runtime.modelId);
 	const imageInputSupported = runtimeModel?.input.includes("image") ?? false;
@@ -128,8 +145,36 @@ function App(): React.JSX.Element {
 		const timer = window.setTimeout(() => setToast((current) => (current === message ? undefined : current)), 5_000);
 		return () => window.clearTimeout(timer);
 	}, [conversation.operation?.error?.message, conversation.operation?.status]);
+	const openWorkspaceSession = (targetWorkspaceId: string, sessionId: string): void => {
+		if (targetWorkspaceId === workspaceId) void conversation.openSession(sessionId);
+		else {
+			setPendingSession({ workspaceId: targetWorkspaceId, sessionId });
+			setWorkspaceId(targetWorkspaceId);
+		}
+	};
+	const handleAddWorkspace = async (path: string): Promise<WorkspaceSummary> => {
+		const workspace = await addWorkspace(path);
+		setAddedWorkspaces((current) => current.some((item) => item.id === workspace.id) ? current : [...current, workspace]);
+		try {
+			const result = await loadSessionsForWorkspace(workspace.id);
+			setAddedWorkspaceSessions((current) => ({ ...current, [workspace.id]: result.sessions }));
+		} catch {
+			setAddedWorkspaceSessions((current) => ({ ...current, [workspace.id]: [] }));
+		}
+		setPendingSession(undefined);
+		setWorkspaceId(workspace.id);
+		return workspace;
+	};
+	const createWorkspaceSession = (targetWorkspaceId?: string): void => {
+		if (!targetWorkspaceId || targetWorkspaceId === workspaceId) void conversation.newSession();
+		else {
+			setPendingSession(undefined);
+			setPendingNewWorkspace(targetWorkspaceId);
+			setWorkspaceId(targetWorkspaceId);
+		}
+	};
 	return <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${hero ? " is-hero" : " is-active"}`}>
-		<Sidebar collapsed={sidebarCollapsed} sessions={conversation.sessions} workspaces={data?.workspaces ?? []} activeWorkspaceId={workspaceId} onSelectWorkspace={setWorkspaceId} activeSessionId={conversation.activeSessionId} onToggle={() => setSidebarCollapsed((value) => !value)} onNewSession={() => { void conversation.newSession(); }} onOpenSession={(id) => { void conversation.openSession(id); }} onRenameSession={conversation.renameSession} onDeleteSession={conversation.deleteSession} onBranchSession={conversation.branchSession} onInspectSession={conversation.inspectSession} onSettings={() => setSettingsOpen(true)} webSlot={<WebSlot host={webHost} slot="app.sidebar" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} sessionWebSlot={<WebSlot host={webHost} slot="session.tree" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} />
+		<Sidebar collapsed={sidebarCollapsed} sessionsByWorkspace={allSessionsByWorkspace} workspaces={allWorkspaces} activeWorkspaceId={workspaceId} onSelectWorkspace={(id) => { setPendingSession(undefined); setPendingNewWorkspace(undefined); setWorkspaceId(id); }} onAddWorkspace={handleAddWorkspace} activeSessionId={conversation.activeSessionId} onToggle={() => setSidebarCollapsed((value) => !value)} onNewSession={createWorkspaceSession} onOpenSession={openWorkspaceSession} onRenameSession={conversation.renameSession} onDeleteSession={conversation.deleteSession} onBranchSession={conversation.branchSession} onInspectSession={conversation.inspectSession} onSettings={() => setSettingsOpen(true)} webSlot={<WebSlot host={webHost} slot="app.sidebar" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} sessionWebSlot={<WebSlot host={webHost} slot="session.tree" context={{ sessionId: conversation.activeSessionId }} actions={webActions} signal={webAbort.signal} />} />
 		<div className="main-column">{!hero ? <WorkspaceBar title={activeTitle} onToggleSidebar={() => setSidebarCollapsed((value) => !value)} onSettings={() => setSettingsOpen(true)} onSessionLog={() => setSessionLogOpen(true)} /> : null}<main className={`main-content${hero ? " is-hero" : ""}`}>
 			{bootError || conversation.error ? <div className="connection-banner" role="alert">{conversation.error ?? bootError}</div> : null}
 			{!conversation.connected && !conversation.error ? <div className="connection-state" role="status">Reconnecting to session events...</div> : null}

@@ -5,7 +5,7 @@ export type WebLocale = "en" | "zh-CN";
 const zh: Readonly<Record<string, string>> = {
 	"Connected": "已连接", "Unavailable": "不可用", "Connecting": "连接中",
 	"Workspace navigation": "工作区导航", "Open sidebar": "打开侧栏", "Collapse sidebar": "收起侧栏",
-	"Select workspace": "选择工作区", "New session": "新建会话", "Sessions": "会话", "Settings": "设置",
+	"Select workspace": "选择工作区", "New session": "新建会话", "Sessions": "会话", "Workspaces": "工作区", "Search sessions": "搜索会话", "Close search": "关闭搜索", "Workspace display options": "工作区显示选项", "Add workspace": "添加工作区", "Workspace path": "工作区路径", "Enter a local folder path": "输入本地文件夹路径", "Cancel": "取消", "Adding...": "添加中...", "Unable to add workspace.": "无法添加工作区。", "Settings": "设置",
 	"Open navigation": "打开导航", "Session": "会话", "Standard mode": "标准模式", "Session log": "会话日志",
 	"What are we building today?": "今天我们要构建什么？", "Ask di-code to explore your workspace, write code, or solve a problem.": "让 di-code 探索工作区、编写代码或解决问题。", "Workspace": "工作区", "Standard session": "标准会话", "Current workspace and mode": "当前工作区和模式",
 	"Conversation views": "对话视图", "Chat": "对话", "Trajectory": "轨迹", "Reconnecting to session events...": "正在重新连接会话事件...", "Compacting context": "正在压缩上下文",

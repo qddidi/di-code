@@ -785,10 +785,17 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		}
 	}, []);
 	const newSession = useCallback(async () => {
+		const placeholderId = `pending-${crypto.randomUUID()}`;
+		const placeholder: SessionSummary = { id: placeholderId, label: "New session", modifiedAt: new Date().toISOString() };
+		setSessions((current) => [placeholder, ...current]);
+		setActiveSessionId(placeholderId);
 		try {
-			await callRpc("new_session");
+			const result = await callRpc<{ readonly session: SessionSummary }>("new_session");
 			await refresh();
+			setActiveSessionId(result.session.id);
 		} catch (cause) {
+			setSessions((current) => current.filter((session) => session.id !== placeholderId));
+			setActiveSessionId(undefined);
 			setError(cause instanceof Error ? cause.message : "Unable to create a new session.");
 		}
 	}, [refresh]);

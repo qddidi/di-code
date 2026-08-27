@@ -10,6 +10,37 @@
 .composer-wrap { width: min(760px, calc(100% - 40px)); margin: auto auto 24px; } .composer { border: 1px solid #d9dde2; background: var(--surface); border-radius: 9px; box-shadow: 0 5px 20px rgba(38,48,62,.06); } .composer textarea { display: block; width: 100%; min-height: 58px; max-height: 180px; resize: none; padding: 15px 16px 8px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 14px; } .composer textarea::placeholder { color: #9aa2ad; } .composer-toolbar { display: flex; align-items: center; gap: 3px; padding: 7px 9px 9px; } .composer-tool { width: 29px; height: 29px; display: grid; place-items: center; color: #788390; background: transparent; border-radius: 5px; } .composer-spacer { flex: 1; } .model-select { display: flex; align-items: center; gap: 6px; padding: 6px 8px; color: #727c88; background: transparent; border-radius: 5px; font-size: 11px; } .send-button { width: 30px; height: 30px; display: grid; place-items: center; color: #fff; background: #25303c; border-radius: 6px; } .send-button:disabled { color: #b7bec6; background: #e3e6e9; } .composer-note { margin: 8px 0 0; color: #a5acb5; text-align: center; font-size: 10px; }
 .loading-state { margin: auto; color: var(--muted); font-size: 13px; } .connection-banner { margin: 16px auto 0; padding: 9px 12px; color: #90534f; background: #fff3f1; border: 1px solid #f1d6d1; border-radius: 6px; font-size: 12px; }
 .session-item.is-active { background: #e4e7ea; color: var(--ink); }
+.workspace-heading { display: flex; gap: 7px; align-items: center; margin: 22px 9px 8px; color: #8b939e; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+.workspace-heading-actions { display: inline-flex; align-items: center; gap: 1px; margin-left: auto; }
+.workspace-heading-actions .icon-button { width: 28px; height: 28px; }
+.workspace-add-overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: rgba(25,31,38,.25); }
+.workspace-add-dialog { width: min(420px, 100%); padding: 18px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 16px 48px rgba(18,25,33,.2); }
+.workspace-add-header { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.workspace-add-header h2 { margin: 0; font-size: 18px; }
+.workspace-add-field { display: grid; gap: 7px; margin-top: 18px; color: var(--muted); font-size: 12px; }
+.workspace-add-field input { width: 100%; padding: 9px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; font-size: 13px; }
+.workspace-add-error { margin: 10px 0 0; color: #9b453e; font-size: 12px; }
+.workspace-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.workspace-add-actions button { padding: 7px 11px; color: var(--muted); background: transparent; border-radius: 5px; font-size: 12px; }
+.workspace-add-actions button:hover { background: #f0f2f4; color: var(--ink); }
+.workspace-add-actions .workspace-add-submit { color: #fff; background: #25303c; }
+.workspace-add-actions .workspace-add-submit:disabled { color: #aab2bb; background: #e3e6e9; cursor: not-allowed; }
+.workspace-search { margin-top: 0; }
+.workspace-list { flex: 1; min-height: 90px; overflow: auto; padding: 2px 0 10px; }
+.workspace-section { margin: 2px 0; }
+.workspace-section-header { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 8px; color: #5f6975; background: transparent; border-radius: 6px; text-align: left; font-size: 13px; }
+.workspace-section-header:hover, .workspace-section.is-active > .workspace-section-header { color: var(--ink); background: #e4e7ea; }
+.workspace-section-header svg:first-child { color: #65717e; }
+.workspace-section.is-active > .workspace-section-header svg:first-child { color: #376fda; }
+.workspace-section-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.workspace-session-count { color: #929aa5; font-size: 11px; }
+.workspace-section-header > svg:last-child { transition: transform .15s ease; }
+.workspace-section-header > svg:last-child.is-collapsed { transform: rotate(-90deg); }
+.workspace-section-sessions { padding: 0 0 4px 17px; }
+.workspace-section-sessions .session-tree { min-height: 0; overflow: visible; }
+.workspace-section-sessions .session-item { padding-top: 7px; padding-bottom: 7px; }
+.workspace-section-sessions .session-item-actions { margin-right: 2px; }
+.session-search svg { flex: 0 0 auto; }
 .session-item-wrap{position:relative;display:flex;align-items:center;gap:2px;min-width:0}.session-item-wrap .session-item{min-width:0;flex:1}.session-item-actions{position:relative;display:flex;flex:0 0 auto;opacity:0}.session-item-wrap:hover .session-item-actions,.session-item-wrap.is-active .session-item-actions,.session-item-actions:focus-within{opacity:1}.session-item-actions button{border:0;background:transparent;color:var(--muted);padding:4px}.session-more{display:grid;place-items:center;border-radius:4px}.session-more:hover,.session-more:focus-visible{color:var(--ink);background:#e4e7eb}.session-action-menu{position:absolute;z-index:9;top:calc(100% + 3px);right:0;min-width:128px;display:grid;gap:2px;padding:5px;background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:0 10px 28px rgba(23,32,43,.16)}.session-action-menu button{display:flex;align-items:center;gap:7px;width:100%;padding:7px 8px;color:var(--ink);border-radius:4px;text-align:left;font-size:11px}.session-action-menu button:hover{background:#f0f2f4}.session-filters{display:flex;gap:4px;margin:6px 0}.session-filters button{border:1px solid var(--line);background:transparent;color:var(--muted);font-size:11px;padding:3px 7px;border-radius:4px}.session-filters .is-selected{background:var(--accent-soft);color:var(--ink)}.session-inspect{position:fixed;inset:12% 10%;z-index:20;padding:18px;background:var(--surface);border:1px solid var(--line);box-shadow:0 20px 60px rgba(18,25,33,.2);overflow:auto}.session-inspect pre{white-space:pre-wrap;font-size:11px}
 .cancel-button { background: #9b453e; }
 .attachment-input { display: none; }

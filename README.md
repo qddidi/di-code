@@ -546,6 +546,8 @@ Web composer 中的 `/tree` 会打开当前持久化 Session 的树状节点选�
 
 ### WebUI HTTP/SSE
 
+Web 侧栏以可展开的工作区目录分组展示所有已授权 workspace 的会话。切换工作区会切换对应的 Session actor；点击其他工作区中的会话会在切换完成后打开目标会话。浏览器只接收不透明 workspace ID 和目录显示名，不接收绝对路径。
+
 构建后，`di-code-webui` 提供受 token 认证的本地 HTTP/SSE 传输层。它默认仅绑定 `127.0.0.1`，并且必须设置至少 32 个字符的
 `DI_CODE_WEBUI_TOKEN`；token 只能放在 `Authorization: Bearer ...` 或 `X-Di-Code-Token` 请求头中，不能放在 URL、日志或事件中。
 

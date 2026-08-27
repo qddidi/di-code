@@ -337,6 +337,31 @@ describe("WebUiServer", () => {
 		expect(await denied.text()).not.toContain(rootPath(baseUrl));
 	});
 
+	it("adds a validated workspace through the authenticated WebUI route", async () => {
+		const { baseUrl, token } = await createServer();
+		const addedRoot = await mkdtemp(join(tmpdir(), "di-code-webui-added-"));
+		cleanups.push(() => rm(addedRoot, { recursive: true, force: true }));
+		const added = await fetch(`${baseUrl}/api/workspaces`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({ path: addedRoot }),
+		});
+		expect(added.status).toBe(200);
+		const result = (await added.json()) as { readonly workspace: { readonly id: string; readonly name: string } };
+		expect(result.workspace.name).toBeTruthy();
+		const boot = await fetch(`${baseUrl}/api/boot`, { headers: headers(token) });
+		expect(boot.status).toBe(200);
+		expect((await boot.json()) as { readonly workspaces: readonly { readonly id: string }[] }).toMatchObject({
+			workspaces: expect.arrayContaining([expect.objectContaining({ id: result.workspace.id })]),
+		});
+		const invalid = await fetch(`${baseUrl}/api/workspaces`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({ path: join(addedRoot, "missing") }),
+		});
+		expect(invalid.status).toBe(400);
+	});
+
 	it("returns a safe Provider failure for WebUI clients to render and retry", async () => {
 		const faux = createFauxProvider({
 			responses: [{ type: "failure", errorMessage: "Provider rejected the credential" }],
