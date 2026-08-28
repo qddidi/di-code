@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/plugin-sdk",
-	"version": "0.1.9",
+	"version": "0.2.1",
 	"description": "Public SDK entry point for di-code plugins",
 	"private": false,
 	"type": "module",
@@ -24,7 +24,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@di-code/plugin-loader": "0.1.9",
-		"@di-code/plugin-runtime": "0.1.9"
+		"@di-code/plugin-loader": "0.2.1",
+		"@di-code/plugin-runtime": "0.2.1"
 	}
 }

@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/mcp",
-	"version": "0.1.9",
+	"version": "0.2.1",
 	"description": "MCP stdio client lifecycle for di-code hosts",
 	"keywords": [
 		"mcp",

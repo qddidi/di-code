@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/agent",
-	"version": "0.1.9",
+	"version": "0.2.1",
 	"description": "Core agent state and loop for di-code",
 	"keywords": [
 		"ai-agent",
@@ -41,7 +41,7 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/ai": "0.1.9"
+		"@di-code/ai": "0.2.1"
 	},
 	"engines": {
 		"node": ">=22.19.0"
