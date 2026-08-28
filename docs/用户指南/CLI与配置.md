@@ -15,7 +15,7 @@ di-code [options] <prompt>
 | `--interactive` | 进入交互模式 |
 | `--continue, -c` | 恢复当前工作区最近会话 |
 | `--session <path>` | 指定或创建 JSONL 会话 |
-| `--image <path>` | 附加图片；每个 prompt 最多 4 张、每张 5 MiB |
+| `--image <path>` | 非交互模式附加图片；每个 prompt 最多 4 张、每张 5 MiB。interactive 请使用 `@path`、拖放或剪贴板粘贴 |
 | `--skill <path>` | 显式加载 Skill 文件或目录，可重复 |
 | `--no-skills` | 禁用 Skill 发现 |
 | `--no-context-files` | 不加载 `AGENTS.md` |

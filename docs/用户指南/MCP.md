@@ -37,13 +37,11 @@ scope 默认是 `local`，文件为 `<work-root>/.di-code/mcp.local.json`；`pro
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "company": {
-      "transport": {
-        "type": "streamable-http",
-        "url": "https://mcp.example.com/mcp",
-        "headers": { "Authorization": "Bearer ${COMPANY_MCP_TOKEN}" }
-      }
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${COMPANY_MCP_TOKEN}" }
     }
   }
 }
