@@ -64,6 +64,7 @@ export class Input implements Component, Focusable {
 
 	handleInput(data: string): void {
 		if (this.consumePaste(data)) return;
+		if (this.consumeUnbracketedPaste(data)) return;
 		if (data === "\x04" && this.cancelOnEndOfTransmission) {
 			this.onEscape?.();
 			return;
@@ -141,6 +142,12 @@ export class Input implements Component, Focusable {
 		this.isPasting = false;
 		this.insert(normalizeSingleLine(pasted));
 		if (remainder) this.handleInput(remainder);
+		return true;
+	}
+
+	private consumeUnbracketedPaste(data: string): boolean {
+		if (!/[\r\n]/.test(data) || !/[^\r\n]/.test(data)) return false;
+		this.insert(normalizeSingleLine(data));
 		return true;
 	}
 

@@ -200,6 +200,7 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		if (this.consumePaste(data)) return;
+		if (this.consumeUnbracketedPaste(data)) return;
 		if (this.onCommand?.(data) === true) return;
 		if (matchesKey(data, Key.ctrl("c"))) {
 			this.onInterrupt?.();
@@ -343,6 +344,14 @@ export class Editor implements Component, Focusable {
 		this.cancelAutocomplete();
 		this.insert(this.onPaste?.(normalizePastedText(pasted)) ?? normalizePastedText(pasted));
 		if (remainder) this.handleInput(remainder);
+		return true;
+	}
+
+	private consumeUnbracketedPaste(data: string): boolean {
+		if (!/[\r\n]/.test(data) || !/[^\r\n]/.test(data)) return false;
+		this.cancelAutocomplete();
+		const pasted = normalizePastedText(data);
+		this.insert(this.onPaste?.(pasted) ?? pasted);
 		return true;
 	}
 

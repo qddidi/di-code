@@ -93,6 +93,17 @@ describe("Editor editing", () => {
 		assert.equal(editor.getValue(), "hello\nworld");
 	});
 
+	it("preserves newlines from an unbracketed Windows multiline paste", () => {
+		const editor = new Editor();
+		const changes: string[] = [];
+		editor.onChange = (value) => changes.push(value);
+
+		editor.handleInput("hello\r\nworld");
+
+		assert.equal(editor.getValue(), "hello\nworld");
+		assert.equal(changes.length, 1);
+	});
+
 	it("lets the owner transform bracketed paste before insertion", () => {
 		const editor = new Editor();
 		editor.onPaste = (text) => (text === "C:\\work\\diagram.png" ? '@"C:\\work\\diagram.png" ' : text);

@@ -57,7 +57,7 @@ Skill 内容只是提示词文本，不授予文件、命令或网络权限，�
 di-code --image .\before.png --image .\after.webp "比较两张图"
 ```
 
-支持 PNG、JPEG、WebP、GIF；按文件签名校验，不信任扩展名。每条 prompt 最多 4 张，每张最多 5 MiB，模型必须声明 `image` 输入能力。interactive 中可输入 `@path`、拖放图片，Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V`。剪贴板临时文件位于 `~/.di-code/clipboard/<工作区哈希>/<进程 ID>/`，发送、删除引用或退出后清理。
+支持 PNG、JPEG、WebP、GIF；按文件签名校验，不信任扩展名。每条 prompt 最多 4 张，每张最多 5 MiB，模型必须声明 `image` 输入能力。interactive 中可输入 `@path`、拖放图片，Windows 使用 `Alt+V`，macOS/Linux 使用 `Ctrl+V`。只有实际存在且能成功读取的文件才会被 `@path` 识别为附件；不存在或无法识别的 `@...` 会作为普通文本发送。剪贴板临时文件位于 `~/.di-code/clipboard/<工作区哈希>/<进程 ID>/`，发送、删除引用或退出后清理。
 
 图片会作为 user message 的 image content 持久化，重开会话仍可查看；图片附件不会因 `/tree` 导航自动恢复到下一次 prompt，需要重新附加。
 

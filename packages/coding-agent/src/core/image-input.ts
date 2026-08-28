@@ -119,14 +119,24 @@ export async function loadImageInputs(paths: readonly string[], cwd: string): Pr
 }
 
 function isMissingFileError(cause: unknown): boolean {
-	return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+	return cause instanceof Error && "code" in cause && (cause.code === "ENOENT" || cause.code === "ENOTDIR");
 }
 
 function isUnsupportedImageError(cause: unknown): boolean {
 	return cause instanceof Error && cause.message.startsWith("Unsupported image format:");
 }
 
-/** Extracts @path references into image attachments or bounded text blocks for the model prompt. */
+function isUnrecognizedAttachmentError(cause: unknown): boolean {
+	if (isMissingFileError(cause)) return true;
+	if (!(cause instanceof Error)) return false;
+	return (
+		cause.message === "Path is outside the allowed root" ||
+		cause.message.startsWith("Image path is not a regular file:") ||
+		cause.message.startsWith("File attachment is not a regular file:")
+	);
+}
+
+/** Extracts existing @path references into attachments; unrecognized references remain ordinary prompt text. */
 export async function extractImageAttachments(
 	text: string,
 	cwd: string,
@@ -152,7 +162,10 @@ export async function extractImageAttachments(
 			images.push(image);
 			attachments.push(`[Attached image: ${basename(path)}]`);
 		} catch (cause) {
-			if (isMissingFileError(cause)) throw new Error(`File attachment was not found: ${path}`);
+			if (isUnrecognizedAttachmentError(cause)) {
+				result += match[0].slice(leading.length);
+				continue;
+			}
 			if (!isUnsupportedImageError(cause)) throw cause;
 			attachments.push(await loadTextAttachment(path, cwd));
 		}

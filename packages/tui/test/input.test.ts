@@ -45,6 +45,14 @@ describe("Input editing", () => {
 		assert.equal(input.getValue(), "hello world");
 	});
 
+	it("accepts an unbracketed Windows multiline paste", () => {
+		const input = new Input();
+
+		input.handleInput("hello\r\nworld");
+
+		assert.equal(input.getValue(), "hello world");
+	});
+
 	it("submits on Enter and cancels on Escape without changing text", () => {
 		const input = new Input();
 		const submitted: string[] = [];

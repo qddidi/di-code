@@ -63,9 +63,14 @@ describe("loadImageInputs", () => {
 			text: "[Attached image: architecture diagram.png]\nExplain",
 			images: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
 		});
-		await expect(extractImageAttachments("Explain @missing.png", root)).rejects.toThrow(
-			"File attachment was not found: missing.png",
-		);
+		await expect(extractImageAttachments("Explain @missing.png", root)).resolves.toEqual({
+			text: "Explain @missing.png",
+			images: [],
+		});
+		await expect(extractImageAttachments("Explain @playwright/mcp", root)).resolves.toEqual({
+			text: "Explain @playwright/mcp",
+			images: [],
+		});
 	});
 
 	it("injects UTF-8 text references into the prompt with a relative file marker", async () => {
@@ -83,8 +88,9 @@ describe("loadImageInputs", () => {
 		await expect(extractImageAttachments("Inspect @data.bin", root)).rejects.toThrow(
 			"Binary files are not supported by @ attachments: data.bin",
 		);
-		await expect(extractImageAttachments("Inspect @../secret.txt", root)).rejects.toThrow(
-			"Path is outside the allowed root",
-		);
+		await expect(extractImageAttachments("Inspect @../secret.txt", root)).resolves.toEqual({
+			text: "Inspect @../secret.txt",
+			images: [],
+		});
 	});
 });
