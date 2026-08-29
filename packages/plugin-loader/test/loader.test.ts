@@ -175,6 +175,7 @@ describe("namespace plugin loader contract", () => {
 			entries: [{ id: "project", name: fixture, projectLocal: true }],
 		});
 		expect((await loader.load()).get("project")?.status).toBe("skipped");
+		expect((await loader.loadTrustedProjectEntries()).get("project")?.status).toBe("active");
 		await context.dispose();
 	});
 	it("reports real import failures with a skipped optional entry", async () => {

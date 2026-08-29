@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/orchestrator",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Process supervisor for di-code RPC agents",
 	"keywords": [
 		"process-supervisor",
@@ -41,8 +41,8 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/coding-agent": "0.2.1",
-		"@di-code/plugin-runtime": "0.2.1"
+		"@di-code/coding-agent": "0.2.2",
+		"@di-code/plugin-runtime": "0.2.2"
 	},
 	"engines": {
 		"node": ">=22.19.0"

@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/tui",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Reusable terminal UI library for di-code",
 	"keywords": [
 		"terminal-ui",

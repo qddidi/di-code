@@ -63,6 +63,25 @@ export interface SessionHostState {
 	readonly operations: readonly { readonly requestId: RequestId; readonly kind: SessionOperationKind }[];
 }
 
+/** Read-only diagnostics captured while the SessionHost loads Skills and MCP resources. */
+export interface SessionStartupStatus {
+	readonly skills: readonly { readonly name: string; readonly scope: string }[];
+	readonly resourceDiagnostics: readonly {
+		readonly path: string;
+		readonly kind: string;
+		readonly stage: string;
+		readonly severity: string;
+		readonly message: string;
+	}[];
+	readonly mcpServers: readonly {
+		readonly id: string;
+		readonly tools: number;
+		readonly resources: number;
+		readonly prompts: number;
+	}[];
+	readonly mcpDiagnostics: readonly { readonly serverId: string; readonly stage: string; readonly message: string }[];
+}
+
 export type SessionOperationKind = "prompt" | "steer" | "retry" | "compact" | "tree" | "session";
 export type SessionHostEvent = AgentSessionEvent | { readonly type: "session_changed"; readonly session?: SessionInfo };
 export type SessionHostListener = (event: SessionHostEvent) => void | Promise<void>;
@@ -99,6 +118,8 @@ export interface SessionHostBootstrapOptions {
 
 export interface SessionHost {
 	readonly state: () => SessionHostState;
+	/** Returns the resource snapshot captured during host bootstrap. */
+	readonly startupStatus: () => SessionStartupStatus;
 	readonly listSessions: () => Promise<readonly SessionInfo[]>;
 	readonly createSession: () => Promise<SessionInfo>;
 	readonly openSession: (sessionId: string) => Promise<SessionInfo>;
@@ -211,6 +232,7 @@ interface HostInternals {
 	readonly systemPrompt: string;
 	readonly externalTools: readonly AgentSessionTool[];
 	readonly closeMcp: () => Promise<void>;
+	readonly startupStatus: SessionStartupStatus;
 }
 
 async function validateDataRoot(path: string): Promise<string> {
@@ -391,6 +413,17 @@ async function createBootstrap(context: Context, options: SessionHostBootstrapOp
 		systemPrompt: resources.systemPrompt,
 		externalTools,
 		closeMcp: () => mcpClient.close(mcp.manager),
+		startupStatus: {
+			skills: resources.resources.skills.map((skill) => ({ name: skill.name, scope: skill.scope })),
+			resourceDiagnostics: resources.resources.diagnostics,
+			mcpServers: mcp.servers.map((server) => ({
+				id: server.config.id,
+				tools: server.tools.length,
+				resources: server.resources.length,
+				prompts: server.prompts.length,
+			})),
+			mcpDiagnostics: mcp.diagnostics,
+		},
 	};
 }
 
@@ -427,6 +460,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 	const ensureOpen = (): void => {
 		if (disposed) throw new SessionHostError("DISPOSED", "SessionHost has been disposed.");
 	};
+	const startupStatus = (): SessionStartupStatus => bootstrap.startupStatus;
 	const current = () => {
 		if (!activeId) throw new SessionHostError("NOT_FOUND", "No Session is open.");
 		const value = sessions.get(activeId);
@@ -608,6 +642,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			busy: operations.size > 0,
 			operations: [...operations].map(([requestId, op]) => ({ requestId, kind: op.kind })),
 		}),
+		startupStatus,
 		listSessions: async () => {
 			ensureOpen();
 			let entries: readonly import("node:fs").Dirent<string>[] = [];

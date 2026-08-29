@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -41,6 +41,53 @@ const additionalBuiltinModules = [
 ];
 
 describe("interactive composition profile", () => {
+	it("asks for trust when project composition is present", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-project-trust-prompt-"));
+		const agentDir = join(root, "agent");
+		const previousProvider = process.env.DI_CODE_PROVIDER;
+		const prompts: string[] = [];
+		try {
+			process.env.DI_CODE_PROVIDER = "faux";
+			await mkdir(join(root, ".di-code"), { recursive: true });
+			await writeFile(join(root, ".di-code", "composition.yml"), "patches: []\n");
+			const code = await runMinimalProfile(["--interactive"], {
+				version: "test",
+				allowedRoot: root,
+				agentDir,
+				stdout: () => undefined,
+				stderr: () => undefined,
+				interactive: {
+					isInteractiveTerminal: true,
+					promptProjectTrust: async (cwd) => {
+						prompts.push(cwd);
+						return false;
+					},
+					startInteractiveMode: ({ onExit }) => {
+						onExit();
+						return 0;
+					},
+				},
+				importModule: async (name) => {
+					if (name.startsWith("@di-code/builtins/")) {
+						const entryName = name.slice("@di-code/builtins/".length);
+						const plugin = [...Object.values(pluginModules), ...additionalBuiltinModules].find(
+							(entry) => entry.name === (entryName === "bootstrap" ? "Bootstrap" : entryName),
+						);
+						if (!plugin) throw new Error(`Missing builtins fixture entry: ${name}`);
+						return plugin as PluginModule;
+					}
+					return await importCompositionModule(name);
+				},
+			});
+			expect(code).toBe(0);
+			expect(prompts).toEqual([root]);
+		} finally {
+			if (previousProvider === undefined) delete process.env.DI_CODE_PROVIDER;
+			else process.env.DI_CODE_PROVIDER = previousProvider;
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("starts through the mode registry with new and persisted session choices", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-interactive-profile-"));
 		const agentDir = join(root, "agent");

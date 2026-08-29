@@ -528,11 +528,11 @@ export class CompositionLoader {
 	private readonly fibers: Fiber[] = [];
 	private readonly context: Context;
 	private readonly importer: (name: string) => Promise<PluginModule>;
-	private readonly optionsProjectTrusted: boolean | undefined;
+	private projectTrusted: boolean | undefined;
 	constructor(options: LoaderOptions) {
 		this.context = options.context;
 		this.importer = options.importModule ?? ((name) => import(name));
-		this.optionsProjectTrusted = options.projectTrusted;
+		this.projectTrusted = options.projectTrusted;
 		const entries = options.entries ?? mergeCompositionLayers(options.layers ?? []);
 		this.tree = new EntryTree(entries);
 	}
@@ -541,7 +541,7 @@ export class CompositionLoader {
 		const active = new Set<string>();
 		for (const entry of entries) {
 			if (entry.disabled) continue;
-			if (entry.projectLocal && this.optionsProjectTrusted === false) {
+			if (entry.projectLocal && this.projectTrusted === false) {
 				this.tree.set(entry.id, { status: "skipped", error: new Error("Project is not trusted") });
 				continue;
 			}
@@ -571,6 +571,49 @@ export class CompositionLoader {
 					await this.dispose();
 					throw new CompositionError("required-failure", `Required entry ${entry.id} failed: ${error.message}`);
 				}
+			}
+		}
+		return this.tree.snapshot();
+	}
+	/** Loads project-local entries that were skipped before an explicit trust decision. */
+	async loadTrustedProjectEntries(): Promise<PluginInventory> {
+		if (this.projectTrusted === true) return this.tree.snapshot();
+		this.projectTrusted = true;
+		const entries = topologicallySortEntries(this.tree.snapshot().entries.map((record) => record.entry));
+		const active = new Set(
+			this.tree
+				.snapshot()
+				.entries.filter((record) => record.status === "active")
+				.map((record) => record.entry.id),
+		);
+		for (const entry of entries) {
+			const record = this.tree.get(entry.id);
+			if (!entry.projectLocal || record?.status !== "skipped" || record.error?.message !== "Project is not trusted")
+				continue;
+			const required = entry.required !== false;
+			const failedDependency = [...(entry.dependsOn ?? [])].find((id) => !active.has(id));
+			if (failedDependency) {
+				const error = new CompositionError(
+					"missing-dependency",
+					`${entry.id} dependency ${failedDependency} is not active`,
+				);
+				this.tree.set(entry.id, { status: required ? "failed" : "skipped", error });
+				if (required)
+					throw new CompositionError("required-failure", `Required entry ${entry.id} failed: ${error.message}`);
+				continue;
+			}
+			this.tree.set(entry.id, { status: "loading", error: undefined });
+			try {
+				const definition = getPluginDefinition(await this.importer(entry.name));
+				const fiber = await this.context.plugin(definition, entry.config);
+				this.fibers.push(fiber);
+				active.add(entry.id);
+				this.tree.set(entry.id, { status: "active", fiber });
+			} catch (cause) {
+				const error = cause instanceof Error ? cause : new Error(String(cause));
+				this.tree.set(entry.id, { status: required ? "failed" : "skipped", error });
+				if (required)
+					throw new CompositionError("required-failure", `Required entry ${entry.id} failed: ${error.message}`);
 			}
 		}
 		return this.tree.snapshot();

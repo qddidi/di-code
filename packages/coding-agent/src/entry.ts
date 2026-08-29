@@ -11,7 +11,9 @@ import { runWebCommand } from "./web-command.ts";
 async function promptProjectTrust(cwd: string): Promise<boolean> {
 	const readline = createInterface({ input: process.stdin, output: process.stdout });
 	try {
-		const answer = await readline.question(`Trust project-local Skills and MCP configuration in ${cwd}? [y/N] `);
+		const answer = await readline.question(
+			`Trust project-local plugins, Skills, and MCP configuration in ${cwd}? [y/N] `,
+		);
 		return /^(?:y|yes)$/i.test(answer.trim());
 	} finally {
 		readline.close();

@@ -23,6 +23,7 @@ import "./styles.css";
 import "./settings.css";
 import { createWebSlotHost, WebSlot } from "./web-slots.tsx";
 import { I18nProvider, useI18n } from "./i18n.tsx";
+import { ResourceTrustDialog } from "./components/ResourceTrustDialog.tsx";
 
 function App(): React.JSX.Element {
 	const { setLocale } = useI18n();
@@ -40,6 +41,7 @@ function App(): React.JSX.Element {
 	const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
 	const [settings, setSettings] = useState<SettingsSnapshot>();
 	const [onboarding, setOnboarding] = useState(false);
+	const [resourceTrustPrompt, setResourceTrustPrompt] = useState(true);
 	const [sessionLogOpen, setSessionLogOpen] = useState(false);
 	const [treeOpen, setTreeOpen] = useState(false);
 	const [restoredDraft, setRestoredDraft] = useState<{ readonly id: string; readonly text: string }>();
@@ -63,11 +65,12 @@ function App(): React.JSX.Element {
 	}, [refreshSettings]);
 	useEffect(() => () => { webAbort.abort(); webHost.dispose(); }, [webAbort, webHost]);
 	useEffect(() => {
+		if (!data) return;
 		const refreshWebContributions = (): void => { void loadWebContributions().then(setWebManifest).catch(() => undefined); };
 		refreshWebContributions();
 		window.addEventListener("di-code-web-contributions-changed", refreshWebContributions);
 		return () => window.removeEventListener("di-code-web-contributions-changed", refreshWebContributions);
-	}, []);
+	}, [data]);
 	useEffect(() => {
 		if (!data) return;
 		setWorkspaceId((current) => current ?? data.workspaceId);
@@ -216,6 +219,7 @@ function App(): React.JSX.Element {
 		<SessionLogOverlay open={sessionLogOpen} session={activeSession} usage={conversation.usage} onClose={() => setSessionLogOpen(false)} />
 		<TreeDialog open={treeOpen} tree={conversation.tree} onClose={() => setTreeOpen(false)} onContinue={async (entryId) => { const result = await conversation.navigateTree(entryId); if (!result) return false; if (result.editorText !== undefined) setRestoredDraft({ id: crypto.randomUUID(), text: result.editorText }); return true; }} />
 		<Toast message={toast} onClose={() => setToast(undefined)} />
+		{data && resourceTrustPrompt ? <ResourceTrustDialog onComplete={() => { setResourceTrustPrompt(false); void refreshSettings(); window.dispatchEvent(new Event("di-code-web-contributions-changed")); }} /> : null}
 		{onboarding && settings ? <OnboardingPanel settings={settings} onComplete={() => { setOnboarding(false); void loadSettings().then(setSettings); }} /> : null}
 	</div>;
 }

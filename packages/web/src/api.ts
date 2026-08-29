@@ -233,3 +233,23 @@ export async function setProjectTrust(trusted: boolean): Promise<boolean> {
 	const result = await callRpc<{ readonly trusted: boolean }>("set_project_trust", { trusted });
 	return result.trusted;
 }
+
+export async function loadProjectResourceSummary(): Promise<{
+	readonly hasProjectResources: boolean;
+	readonly projectTrusted: boolean;
+}> {
+	const [trust, plugins, skills, mcp] = await Promise.all([
+		callRpc<{ readonly trusted: boolean }>("get_project_trust"),
+		loadPlugins(),
+		callRpc<{ readonly skills: readonly SkillSummary[]; readonly projectResourcesDetected?: boolean }>("list_skills"),
+		loadMcpServers(),
+	]);
+	return {
+		projectTrusted: trust.trusted,
+		hasProjectResources:
+			plugins.some((plugin) => plugin.source === "project") ||
+			Boolean(skills.projectResourcesDetected) ||
+			skills.skills.some((skill) => skill.scope === "project") ||
+			mcp.some((server) => server.scope === "project"),
+	};
+}

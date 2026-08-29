@@ -6,15 +6,91 @@ import {
 	keybindingRegistryKey,
 	modeRegistryKey,
 } from "@di-code/builtins";
+import type { PluginInventory } from "@di-code/plugin-loader";
 import type { PluginDefinition } from "@di-code/plugin-runtime";
+import { redactSensitiveText } from "@di-code/plugin-runtime";
 import { createUserInteraction } from "@di-code/plugin-sdk";
 import { ProcessTerminal } from "@di-code/tui";
 import { DEFAULT_LOCALE, translate } from "./i18n.ts";
 import { runInteractiveMode } from "./modes/interactive-entry.ts";
 import { runProviderOnboarding, shouldStartProviderOnboarding } from "./provider-onboarding.ts";
 import type { InteractiveHostRequest } from "./runtime/interactive-host-service.ts";
-import { createSessionHost } from "./runtime/session-host.ts";
+import { pluginInventoryKey } from "./runtime/plugin-inventory-service.ts";
+import { createSessionHost, type SessionStartupStatus } from "./runtime/session-host.ts";
 import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
+
+const ANSI = {
+	reset: "\u001b[0m",
+	bold: "\u001b[1m",
+	dim: "\u001b[2m",
+	cyan: "\u001b[36m",
+	blue: "\u001b[34m",
+	green: "\u001b[32m",
+	yellow: "\u001b[33m",
+	red: "\u001b[31m",
+	gray: "\u001b[90m",
+	magenta: "\u001b[35m",
+} as const;
+
+function paint(value: string, color: keyof typeof ANSI): string {
+	return `${ANSI[color]}${value}${ANSI.reset}`;
+}
+
+function paintStatus(status: string): string {
+	const color =
+		status === "active" || status === "connected"
+			? "green"
+			: status === "failed"
+				? "red"
+				: status === "disabled"
+					? "gray"
+					: "yellow";
+	return paint(status, color);
+}
+
+function printStartupResources(
+	request: InteractiveHostRequest,
+	inventory: PluginInventory | undefined,
+	startup: SessionStartupStatus,
+): void {
+	const projectEntries =
+		inventory?.entries.filter(
+			(record) => record.entry.projectLocal || record.entry.id.startsWith("managed.") || record.status === "failed",
+		) ?? [];
+	const hasDetails =
+		projectEntries.length > 0 ||
+		startup.skills.length > 0 ||
+		startup.resourceDiagnostics.length > 0 ||
+		startup.mcpServers.length > 0 ||
+		startup.mcpDiagnostics.length > 0;
+	if (!hasDetails) return;
+	const lines = ["", `${paint("di-code startup resources", "bold")}:`, `  ${paint("Plugins", "cyan")}:`];
+	if (projectEntries.length === 0) lines.push(`    ${paint("- none", "dim")}`);
+	for (const record of projectEntries) {
+		const reason = record.error ? `: ${redactSensitiveText(record.error.message)}` : "";
+		lines.push(`    - ${record.entry.id}: ${paintStatus(record.status)}${reason}`);
+	}
+	lines.push(`  ${paint("Skills", "magenta")}:`);
+	if (startup.skills.length === 0) lines.push(`    ${paint("- none", "dim")}`);
+	for (const skill of startup.skills)
+		lines.push(`    - ${paint(skill.name, "magenta")} ${paint(`(${skill.scope})`, "dim")}`);
+	for (const diagnostic of startup.resourceDiagnostics)
+		lines.push(
+			`    - ${paint(`${diagnostic.kind} ${diagnostic.severity}`, diagnostic.severity === "error" ? "red" : "yellow")}: ${diagnostic.path}: ${diagnostic.message}`,
+		);
+	lines.push(`  ${paint("MCP", "blue")}:`);
+	if (startup.mcpServers.length === 0 && startup.mcpDiagnostics.length === 0)
+		lines.push(`    ${paint("- none", "dim")}`);
+	for (const server of startup.mcpServers)
+		lines.push(
+			`    - ${server.id}: ${paintStatus("connected")} ${paint(`(tools ${server.tools}, resources ${server.resources}, prompts ${server.prompts})`, "dim")}`,
+		);
+	for (const diagnostic of startup.mcpDiagnostics)
+		lines.push(
+			`    - ${diagnostic.serverId}: ${paintStatus("failed")} (${diagnostic.stage}): ${redactSensitiveText(diagnostic.message)}`,
+		);
+	request.stderr(`${lines.join("\n")}\n\n`);
+}
 
 function isInteractiveHostRequest(value: unknown): value is InteractiveHostRequest {
 	return (
@@ -57,24 +133,47 @@ export const apply: PluginDefinition["apply"] = (context, _config, fiber) => {
 				return mode.requestInteraction(input, interactionSignal);
 			},
 		});
-		const host = await createSessionHost(context, {
-			cwd: request.cwd,
-			agentDir: request.agentDir,
-			projectTrusted: request.projectTrusted,
-			noSkills: request.command.noSkills,
-			noContextFiles: request.command.noContextFiles,
-			skillPaths: request.command.skillPaths,
-			provider: runtime.provider,
-			model: runtime.model,
-			signal,
-			planMode: {
-				section: "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.",
-			},
-			interaction,
-			...(request.command.sessionPath ? { initialSessionPath: resolve(request.cwd, request.command.sessionPath) } : {}),
-		});
+		let host: Awaited<ReturnType<typeof createSessionHost>>;
+		try {
+			host = await createSessionHost(context, {
+				cwd: request.cwd,
+				agentDir: request.agentDir,
+				projectTrusted: request.projectTrusted,
+				noSkills: request.command.noSkills,
+				noContextFiles: request.command.noContextFiles,
+				skillPaths: request.command.skillPaths,
+				provider: runtime.provider,
+				model: runtime.model,
+				signal,
+				planMode: {
+					section:
+						"You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.",
+				},
+				interaction,
+				...(request.command.sessionPath
+					? { initialSessionPath: resolve(request.cwd, request.command.sessionPath) }
+					: {}),
+			});
+		} catch (cause) {
+			printStartupResources(request, context.get(pluginInventoryKey)?.snapshot(), {
+				skills: [],
+				resourceDiagnostics: [
+					{
+						path: request.cwd,
+						kind: "startup",
+						stage: "load",
+						severity: "error",
+						message: redactSensitiveText(cause instanceof Error ? cause.message : String(cause)),
+					},
+				],
+				mcpServers: [],
+				mcpDiagnostics: [],
+			});
+			throw cause;
+		}
 		if (!host.state().activeSession) await host.createSession();
 		const ui = host.ui();
+		printStartupResources(request, context.get(pluginInventoryKey)?.snapshot(), host.startupStatus());
 		const sessions = await host.listSessions();
 		const activeId = host.state().activeSession?.id;
 		const sessionChoices = [

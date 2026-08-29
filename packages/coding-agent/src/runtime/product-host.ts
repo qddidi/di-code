@@ -19,6 +19,7 @@ import {
 	saveScopedThinkingLevel,
 } from "../startup.ts";
 import { interactiveResourceServiceKey } from "./interactive-resource-service.ts";
+import { pluginInventoryKey } from "./plugin-inventory-service.ts";
 import { pluginManagerKey } from "./plugin-manager-entry.ts";
 
 export interface ProductHostOptions {
@@ -44,6 +45,10 @@ export interface ProductHostOptions {
 	readonly onPermissionModeChange?: (mode: "ask" | "allow" | "deny") => void;
 	/** Refreshes the owning SessionHost after a trust or MCP configuration change. */
 	readonly refreshResources?: (projectTrusted?: boolean, signal?: AbortSignal) => Promise<void>;
+	/** Loads project-local composition entries after the trust decision changes. */
+	readonly onProjectTrustChange?: (trusted: boolean) => Promise<void>;
+	/** Project composition entries belong to the primary WebUI workspace only. */
+	readonly includeProjectPluginInventory?: boolean;
 }
 
 export type ProductHostAuditAction =
@@ -125,6 +130,9 @@ export interface RpcPluginInfo {
 	readonly enabled: boolean;
 	readonly installedAt: string;
 	readonly capabilities: readonly string[];
+	readonly source?: "managed" | "project";
+	readonly status?: "active" | "failed" | "skipped" | "disabled";
+	readonly error?: string;
 }
 
 const BUILTIN_WEB_MANIFEST = Object.freeze({
@@ -414,14 +422,34 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	const listPlugins = async (): Promise<readonly RpcPluginInfo[]> => {
 		ensureOpen();
 		const manager = options.context.get(pluginManagerKey);
-		if (!manager) return [];
-		return (await manager.list()).map((plugin) => ({
-			id: plugin.id,
-			version: plugin.manifest.version,
-			enabled: plugin.enabled,
-			installedAt: plugin.installedAt,
-			capabilities: Object.keys(plugin.manifest.capabilities).sort(),
-		}));
+		const managed = manager
+			? (await manager.list()).map((plugin) => ({
+					id: plugin.id,
+					version: plugin.manifest.version,
+					enabled: plugin.enabled,
+					installedAt: plugin.installedAt,
+					capabilities: Object.keys(plugin.manifest.capabilities).sort(),
+					source: "managed" as const,
+					status: plugin.enabled ? ("active" as const) : ("disabled" as const),
+				}))
+			: [];
+		const inventory = options.context.get(pluginInventoryKey)?.snapshot();
+		const project =
+			options.includeProjectPluginInventory !== false
+				? (inventory?.entries
+						.filter((record) => record.entry.projectLocal)
+						.map((record) => ({
+							id: record.entry.id,
+							version: "composition",
+							enabled: record.status === "active",
+							installedAt: "",
+							capabilities: [],
+							source: "project" as const,
+							status: record.status === "pending" || record.status === "loading" ? ("skipped" as const) : record.status,
+							error: record.error?.message,
+						})) ?? [])
+				: [];
+		return [...managed, ...project];
 	};
 	const getWebContributions = async (): Promise<WebManifest> => {
 		ensureOpen();
@@ -533,6 +561,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 			await trustStore.set(options.cwd, trusted);
 			throwIfAborted(signal);
 			projectTrusted = trusted;
+			await options.onProjectTrustChange?.(trusted);
 			await connect(signal).catch((cause) => {
 				if (signal?.aborted) throw cause;
 			});

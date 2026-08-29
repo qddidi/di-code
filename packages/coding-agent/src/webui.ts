@@ -53,6 +53,8 @@ export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "c
 	readonly staticRoot?: string;
 	/** Additional same-origin development origin accepted by the API. */
 	readonly developmentOrigin?: string;
+	/** Loads project-local composition entries after the browser confirms workspace trust. */
+	readonly onProjectTrustChange?: (trusted: boolean) => Promise<void>;
 }
 
 interface Connection {
@@ -523,6 +525,9 @@ export class WebUiServer {
 					permissionMode = mode;
 				},
 				refreshResources: (projectTrusted) => actor.refreshResources(projectTrusted),
+				onProjectTrustChange:
+					allowed.toLowerCase() === primary.toLowerCase() ? this.options.onProjectTrustChange : undefined,
+				includeProjectPluginInventory: allowed.toLowerCase() === primary.toLowerCase(),
 			});
 			const attachments = await createManagedAttachmentStore({
 				directory: resolve(this.clientTempRoot(client), "attachments"),

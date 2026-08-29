@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/plan-mode",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Reference plan-mode plugin for di-code",
 	"private": false,
 	"type": "module",
@@ -24,8 +24,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.2.1",
-		"@di-code/ai": "0.2.1",
-		"@di-code/plugin-sdk": "0.2.1"
+		"@di-code/agent": "0.2.2",
+		"@di-code/ai": "0.2.2",
+		"@di-code/plugin-sdk": "0.2.2"
 	}
 }

@@ -182,6 +182,9 @@ export interface PluginSummary {
 	readonly enabled: boolean;
 	readonly installedAt: string;
 	readonly capabilities: readonly string[];
+	readonly source?: "managed" | "project";
+	readonly status?: "active" | "failed" | "skipped" | "disabled";
+	readonly error?: string;
 }
 
 export type WebSlotId =

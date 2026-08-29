@@ -14,6 +14,7 @@ import {
 } from "./compositions.ts";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { disposeRpcComposition } from "./rpc/lifecycle.ts";
+import { pluginInventoryKey } from "./runtime/plugin-inventory-service.ts";
 import {
 	loadStartupConfiguration,
 	resolveStartupRuntime,
@@ -75,7 +76,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 			...(await resolveCompositionEntries("webui", {
 				cwd: allowedRoot,
 				agentDir,
-				includeProjectComposition: projectTrusted,
+				includeProjectComposition: true,
 				allowedRoot,
 			})),
 			...(await resolveManagedCompositionEntries(agentDir)),
@@ -86,6 +87,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 	let server: WebUiServer | undefined;
 	try {
 		await loader.load();
+		context.require(pluginInventoryKey).set(loader.tree.snapshot());
 		const configuration = await loadStartupConfiguration(allowedRoot, process.env, agentDir);
 		const runtime = resolveWebRuntime(configuration);
 		server = new WebUiServer({
@@ -101,6 +103,10 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 			token: randomBytes(32).toString("base64url"),
 			staticRoot: await webAssetRoot(),
 			developmentOrigin: developmentOrigin(),
+			onProjectTrustChange: async (trusted) => {
+				if (trusted) await loader.loadTrustedProjectEntries();
+				context.require(pluginInventoryKey).set(loader.tree.snapshot());
+			},
 		});
 		const address = await server.listen();
 		process.stdout.write(`Web server listening at http://${address.host}:${address.port}\n`);

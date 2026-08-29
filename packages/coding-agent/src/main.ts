@@ -45,6 +45,9 @@ function isMinimalCommand(
 
 async function hasTrustedProjectContent(cwd: string): Promise<boolean> {
 	for (const path of [
+		join(cwd, ".di-code", "composition.yml"),
+		join(cwd, ".di-code", "composition.yaml"),
+		join(cwd, ".di-code", "plugins"),
 		join(cwd, ".di-code", "skills"),
 		join(cwd, ".agents", "skills"),
 		join(cwd, ".di-code", "mcp.local.json"),

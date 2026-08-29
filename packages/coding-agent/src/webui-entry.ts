@@ -12,6 +12,7 @@ import {
 } from "./compositions.ts";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { disposeRpcComposition } from "./rpc/lifecycle.ts";
+import { pluginInventoryKey } from "./runtime/plugin-inventory-service.ts";
 import { loadStartupConfiguration, resolveStartupRuntime } from "./startup.ts";
 import { WebUiServer } from "./webui.ts";
 
@@ -38,7 +39,7 @@ try {
 			...(await resolveCompositionEntries("webui", {
 				cwd: allowedRoot,
 				agentDir,
-				includeProjectComposition: projectTrusted,
+				includeProjectComposition: true,
 				allowedRoot,
 			})),
 			...(await resolveManagedCompositionEntries(agentDir)),
@@ -47,6 +48,7 @@ try {
 		projectTrusted,
 	});
 	await loader.load();
+	context.require(pluginInventoryKey).set(loader.tree.snapshot());
 	const configuration = await loadStartupConfiguration(allowedRoot, process.env, agentDir);
 	const runtime = resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
 	server = new WebUiServer({
@@ -61,6 +63,10 @@ try {
 		port,
 		token,
 		allowRemote,
+		onProjectTrustChange: async (trusted) => {
+			if (trusted) await loader?.loadTrustedProjectEntries();
+			if (loader && context) context.require(pluginInventoryKey).set(loader.tree.snapshot());
+		},
 	});
 	const address = await server.listen();
 	process.stderr.write(`WebUI listening on http://${address.host}:${address.port}\n`);

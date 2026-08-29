@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/plugin-loader",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Namespace plugin definition validation for di-code",
 	"private": false,
 	"type": "module",
@@ -24,7 +24,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@di-code/plugin-runtime": "0.2.1",
+		"@di-code/plugin-runtime": "0.2.2",
 		"yaml": "2.9.0"
 	}
 }

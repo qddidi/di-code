@@ -407,13 +407,19 @@ export class RpcDispatcher {
 					});
 				case "get_usage":
 					return this.success(request.id, { method: "get_usage", usage: this.host().usage() });
-				case "list_skills":
+				case "list_skills": {
+					const host = this.host();
+					const ui = host.ui();
+					const skills = ui.availableSkills.map(({ name, description, scope }) => ({ name, description, scope }));
+					const projectResourcesDetected = host
+						.startupStatus()
+						.resourceDiagnostics.some((diagnostic) => diagnostic.kind === "skill" && diagnostic.stage === "trust");
 					return this.success(request.id, {
 						method: "list_skills",
-						skills: this.host()
-							.ui()
-							.availableSkills.map(({ name, description, scope }) => ({ name, description, scope })),
+						skills,
+						projectResourcesDetected,
 					});
+				}
 				case "get_resources":
 					return this.success(request.id, {
 						method: "get_resources",
