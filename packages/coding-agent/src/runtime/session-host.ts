@@ -134,6 +134,8 @@ export interface SessionHost {
 	readonly toolPolicy: () => ToolPolicySnapshot | undefined;
 	readonly setToolPolicyMode: (mode: ToolPolicyMode, signal?: AbortSignal) => Promise<ToolPolicySnapshot>;
 	readonly planMode: () => import("@di-code/plan-mode").PlanModeProjection | undefined;
+	readonly projections: () => readonly import("@di-code/plugin-sdk").SessionProjectionSnapshot[];
+	readonly extensions: () => import("@di-code/plugin-sdk").SessionExtensionFacade | undefined;
 	readonly planCommand: (args: string) => Promise<string>;
 	readonly ui: () => SessionHostUi;
 	readonly subscribe: (listener: SessionHostListener) => () => void;
@@ -173,6 +175,8 @@ export interface SessionHostUi {
 	readonly navigateTree: SessionHost["navigateTree"];
 	readonly compact: SessionHost["compact"];
 	readonly planMode: SessionHost["planMode"];
+	readonly projections: SessionHost["projections"];
+	readonly extensions: SessionHost["extensions"];
 	readonly planCommand: SessionHost["planCommand"];
 }
 
@@ -947,6 +951,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		toolPolicy: () => current().session.toolPolicySnapshot,
 		setToolPolicyMode: (mode, signal) => current().session.setToolPolicyMode(mode, signal),
 		planMode: () => current().session.planModeProjection,
+		projections: () => current().session.projections(),
+		extensions: () => current().session.extensions(),
 		planCommand: (args) => current().session.planModeCommand(args),
 		ui: () => {
 			const session = current().session;
@@ -1001,6 +1007,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				navigateTree: api.navigateTree,
 				compact: api.compact,
 				planMode: api.planMode,
+				projections: api.projections,
+				extensions: api.extensions,
 				planCommand: api.planCommand,
 			} satisfies SessionHostUi;
 		},

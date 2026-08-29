@@ -1,6 +1,16 @@
 import { createServiceKey, type Disposer, type ServiceKey } from "@di-code/plugin-runtime";
 
-/** Stage 0 only freezes shapes; these facades have no host implementation yet. */
+import {
+	createSessionEventRegistry,
+	createSessionProjectionRegistry,
+	type SessionEventEnvelope,
+	type SessionEventRegistry,
+	type SessionProjectionRegistry,
+} from "./stage4-contracts.ts";
+import type { UserInteraction } from "./stage6-contracts.ts";
+import { createSessionExtensionRegistry, type SessionExtensionRegistry } from "./stage7-contracts.ts";
+
+/** Public runtime contracts shared by Session-scoped plugins. */
 export const PLUGIN_SDK_API_VERSION = 1 as const;
 export type PluginSdkApiVersion = typeof PLUGIN_SDK_API_VERSION;
 
@@ -15,6 +25,13 @@ export interface PluginOperationContext {
 export interface SessionPluginContext extends PluginOperationContext {
 	readonly sessionId: string;
 	readonly promptSections: PromptSectionRegistry;
+	readonly hooks: AgentHookRegistry;
+	readonly events: SessionEventRegistry;
+	readonly projections: SessionProjectionRegistry;
+	readonly extensions: SessionExtensionRegistry;
+	readonly interaction?: UserInteraction;
+	/** Appends a validated, versioned event through the host Session queue. */
+	readonly appendEvent: (event: SessionEventEnvelope, signal?: AbortSignal) => Promise<void>;
 	readonly onDispose: (disposer: () => void | Promise<void>) => void;
 }
 
@@ -33,6 +50,13 @@ export interface SessionPluginScope {
 	readonly signal: AbortSignal;
 	readonly capabilities: Readonly<SessionPluginCapabilities>;
 	readonly promptSections: PromptSectionRegistry;
+	readonly hooks: AgentHookRegistry;
+	readonly events: SessionEventRegistry;
+	readonly projections: SessionProjectionRegistry;
+	readonly extensions: SessionExtensionRegistry;
+	readonly interaction?: UserInteraction;
+	/** Appends a versioned event without exposing SessionManager internals. */
+	readonly appendEvent: (event: SessionEventEnvelope, signal?: AbortSignal) => Promise<void>;
 	readonly onDispose: (disposer: () => void | Promise<void>) => void;
 	readonly dispose: () => Promise<void>;
 }
@@ -62,6 +86,49 @@ export interface PromptSectionRegistry {
 	readonly snapshot: () => readonly PromptSectionRegistration[];
 }
 
+export interface AgentHookRegistry {
+	readonly register: (hook: AgentHookRegistration) => Disposer;
+	readonly snapshot: () => readonly AgentHookRegistration[];
+	readonly subscribe: (listener: (hook: AgentHookRegistration, active: boolean) => void) => Disposer;
+	readonly clear: () => void;
+}
+
+export function createAgentHookRegistry(): AgentHookRegistry {
+	const hooks: AgentHookRegistration[] = [];
+	const listeners = new Set<(hook: AgentHookRegistration, active: boolean) => void>();
+	return {
+		register(hook) {
+			if (hook.kind === "modifier" && hook.phase !== "pre_step")
+				throw new TypeError("Agent modifier hooks are only allowed in pre_step.");
+			hooks.push(hook);
+			for (const listener of listeners) listener(hook, true);
+			let active = true;
+			return () => {
+				if (!active) return;
+				active = false;
+				const index = hooks.indexOf(hook);
+				if (index >= 0) {
+					hooks.splice(index, 1);
+					for (const listener of listeners) listener(hook, false);
+				}
+			};
+		},
+		snapshot: () => Object.freeze([...hooks]),
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		clear() {
+			for (const hook of [...hooks]) {
+				hooks.splice(hooks.indexOf(hook), 1);
+				for (const listener of listeners) listener(hook, false);
+			}
+		},
+	};
+}
+
 export function createPromptSectionRegistry(): PromptSectionRegistry {
 	const sections = new Map<string, PromptSectionRegistration>();
 	const registry = {
@@ -86,12 +153,18 @@ export function createPromptSectionRegistry(): PromptSectionRegistry {
 }
 
 export interface SessionPluginFactory<Config = unknown> {
-	readonly create: (sessionId: string, config: Config) => Promise<SessionPluginScope>;
+	readonly create: (sessionId: string, config: Config, host?: SessionPluginHost) => Promise<SessionPluginScope>;
 	readonly dispose: () => Promise<void>;
+}
+
+/** Host-owned persistence boundary made available to a Session plugin scope. */
+export interface SessionPluginHost {
+	readonly appendEvent: (event: SessionEventEnvelope, signal?: AbortSignal) => Promise<void>;
 }
 
 export interface SessionPluginFactoryOptions {
 	readonly capabilities?: SessionPluginCapabilities;
+	readonly interaction?: UserInteraction;
 }
 
 export interface SessionPluginRegistration {
@@ -136,7 +209,7 @@ export function createSessionPluginFactory<Config = unknown>(
 	const capabilities = Object.freeze({ ...(options.capabilities ?? {}) });
 	let disposed = false;
 
-	const create = async (sessionId: string, config: Config): Promise<SessionPluginScope> => {
+	const create = async (sessionId: string, config: Config, host?: SessionPluginHost): Promise<SessionPluginScope> => {
 		if (disposed) throw new PluginLifecycleError("DISPOSED", "Session plugin factory has been disposed.");
 		if (typeof sessionId !== "string" || sessionId.length === 0)
 			throw new TypeError("Session plugin sessionId must be a non-empty string.");
@@ -144,6 +217,10 @@ export function createSessionPluginFactory<Config = unknown>(
 			throw new PluginLifecycleError("DUPLICATE", `Session plugin scope already exists: ${sessionId}`);
 		const controller = new AbortController();
 		const promptSections = createPromptSectionRegistry();
+		const hooks = createAgentHookRegistry();
+		const events = createSessionEventRegistry();
+		const projections = createSessionProjectionRegistry();
+		const extensions = createSessionExtensionRegistry(sessionId);
 		const disposers: Array<() => void | Promise<void>> = [];
 		let scopeDisposed = false;
 		let disposePromise: Promise<void> | undefined;
@@ -152,6 +229,16 @@ export function createSessionPluginFactory<Config = unknown>(
 			signal: controller.signal,
 			capabilities,
 			promptSections,
+			hooks,
+			events,
+			projections,
+			extensions,
+			...(options.interaction ? { interaction: options.interaction } : {}),
+			appendEvent:
+				host?.appendEvent ??
+				(async () => {
+					throw new Error("Session event persistence is unavailable.");
+				}),
 			onDispose(disposer) {
 				if (scopeDisposed) throw new PluginLifecycleError("DISPOSED", "Session plugin scope is disposed.");
 				disposers.push(disposer);
@@ -163,6 +250,10 @@ export function createSessionPluginFactory<Config = unknown>(
 					scopeDisposed = true;
 					controller.abort(new Error(`Session plugin scope ${sessionId} disposed`));
 					(promptSections as PromptSectionRegistry & { readonly clear: () => void }).clear();
+					hooks.clear();
+					events.clear();
+					projections.clear();
+					extensions.clear();
 					const errors: unknown[] = [];
 					for (const disposer of [...disposers].reverse()) {
 						try {

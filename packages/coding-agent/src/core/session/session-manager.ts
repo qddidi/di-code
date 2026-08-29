@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { JsonValue, Message } from "@di-code/ai";
-import type { SessionProjectionRegistry } from "@di-code/plugin-sdk";
+import type { SessionEventRegistry, SessionProjectionRegistry } from "@di-code/plugin-sdk";
 import { type BuiltSessionContext, buildSessionContext } from "../context-builder.ts";
 import {
 	appendSessionEntry,
@@ -29,12 +29,14 @@ export interface SessionManagerCreateOptions {
 	readonly createId?: () => string;
 	readonly appendOptions?: SessionAppendOptions;
 	readonly deferCreate?: boolean;
+	readonly eventRegistry?: SessionEventRegistry;
 }
 
 export interface SessionManagerOpenOptions {
 	readonly now?: () => number;
 	readonly createId?: () => string;
 	readonly appendOptions?: SessionAppendOptions;
+	readonly eventRegistry?: SessionEventRegistry;
 }
 
 function assertRecordId(id: string): void {
@@ -57,6 +59,7 @@ export class SessionManager {
 	private readonly now: () => number;
 	private readonly createId: () => string;
 	private readonly appendOptions: SessionAppendOptions;
+	private eventRegistry?: SessionEventRegistry;
 	private readonly sessionEntries: SessionEntry[];
 	private readonly entriesById = new Map<string, SessionEntry>();
 	private readonly childrenByParentId = new Map<string, string[]>();
@@ -75,6 +78,7 @@ export class SessionManager {
 		this.now = options.now ?? Date.now;
 		this.createId = options.createId ?? randomUUID;
 		this.appendOptions = options.appendOptions ?? {};
+		this.eventRegistry = options.eventRegistry;
 		this.fileCreated = fileCreated;
 	}
 
@@ -97,7 +101,7 @@ export class SessionManager {
 		return new SessionManager(
 			filePath,
 			{ header, entries: [], messages: [], diagnostics: [] },
-			{ now, createId, appendOptions: options.appendOptions },
+			{ now, createId, appendOptions: options.appendOptions, eventRegistry: options.eventRegistry },
 			!options.deferCreate,
 		);
 	}
@@ -198,6 +202,31 @@ export class SessionManager {
 
 	get diagnostics(): readonly SessionDiagnostic[] {
 		return structuredClone(this.sessionDiagnostics);
+	}
+
+	/** Binds the active plugin registry and diagnoses already-loaded extension events. */
+	bindEventRegistry(registry: SessionEventRegistry): void {
+		this.eventRegistry = registry;
+		for (let index = this.sessionDiagnostics.length - 1; index >= 0; index--)
+			if (this.sessionDiagnostics[index]?.kind === "event_validation") this.sessionDiagnostics.splice(index, 1);
+		for (const event of this.events) {
+			try {
+				registry.migrate({
+					namespace: event.namespace,
+					eventName: event.eventName,
+					schemaVersion: event.schemaVersion,
+					payload: event.payload,
+				});
+			} catch (error) {
+				this.sessionDiagnostics.push({
+					kind: "event_validation",
+					namespace: event.namespace,
+					eventName: event.eventName,
+					schemaVersion: event.schemaVersion,
+					reason: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 	}
 
 	get leafId(): string {
@@ -327,6 +356,16 @@ export class SessionManager {
 			payload: structuredClone(input.payload),
 			signal: input.signal,
 		};
+		const validated = this.eventRegistry?.migrate({
+			namespace: inputSnapshot.namespace,
+			eventName: inputSnapshot.eventName,
+			schemaVersion: inputSnapshot.schemaVersion,
+			payload: inputSnapshot.payload,
+		});
+		if (validated) {
+			inputSnapshot.schemaVersion = validated.schemaVersion;
+			inputSnapshot.payload = validated.payload;
+		}
 		const operation = this.appendQueue.then(async () => {
 			if (inputSnapshot.signal?.aborted)
 				throw inputSnapshot.signal.reason ?? new DOMException("The operation was aborted", "AbortError");

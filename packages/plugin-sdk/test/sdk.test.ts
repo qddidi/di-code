@@ -51,4 +51,19 @@ describe("plugin SDK root exports", () => {
 		expect(disposed).toEqual(["bad", "good"]);
 		await factory.dispose();
 	});
+
+	it("exposes only the host-owned event append boundary", async () => {
+		const appended: unknown[] = [];
+		const factory = createSessionPluginFactory(async (scope) => {
+			await scope.appendEvent({ namespace: "demo", eventName: "ready", schemaVersion: 1, payload: { ok: true } });
+		});
+		const scope = await factory.create("session", undefined, {
+			appendEvent: async (event) => {
+				appended.push(event);
+			},
+		});
+		expect(appended).toEqual([{ namespace: "demo", eventName: "ready", schemaVersion: 1, payload: { ok: true } }]);
+		await scope.dispose();
+		await factory.dispose();
+	});
 });

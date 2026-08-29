@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import type { CommandRegistry, InteractiveContextService } from "@di-code/builtins";
+import type { UserInteractionInput, UserInteractionResult } from "@di-code/plugin-sdk";
 import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
@@ -629,6 +630,36 @@ export class InteractiveMode {
 	private closeOverlay(): void {
 		this.overlay?.hide();
 		this.overlay = undefined;
+	}
+
+	/** Presents a structured choice for the host UserInteraction bridge. */
+	async requestInteraction(input: UserInteractionInput, signal?: AbortSignal): Promise<UserInteractionResult> {
+		const options = input.options ?? [];
+		if (options.length === 0) return { requestId: input.requestId, toolCallId: input.toolCallId, status: "cancelled" };
+		return await new Promise<UserInteractionResult>((resolve) => {
+			let settled = false;
+			const finish = (result: UserInteractionResult): void => {
+				if (settled) return;
+				settled = true;
+				signal?.removeEventListener("abort", abort);
+				this.closeOverlay();
+				resolve(result);
+			};
+			const abort = (): void =>
+				finish({ requestId: input.requestId, toolCallId: input.toolCallId, status: "cancelled" });
+			const list = new SelectList(
+				options.map((option) => ({ value: option.value, label: option.label, description: input.prompt })),
+			);
+			list.onSelect = (item) =>
+				finish({ requestId: input.requestId, toolCallId: input.toolCallId, status: "answered", value: item.value });
+			list.onCancel = abort;
+			if (signal?.aborted) {
+				abort();
+				return;
+			}
+			signal?.addEventListener("abort", abort, { once: true });
+			this.showOverlay(list, true);
+		});
 	}
 
 	private updateAutocompleteOverlay(): void {

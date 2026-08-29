@@ -291,7 +291,7 @@ export class RpcDispatcher {
 			this.onError(new Error("Skipped an unsafe extension projection."));
 			return;
 		}
-		this.emit({
+		const record: RpcEventRecord = {
 			version: RPC_PROTOCOL_VERSION,
 			kind: "event",
 			requestId: input.requestId ?? "projection",
@@ -304,7 +304,10 @@ export class RpcDispatcher {
 				version: input.version,
 				state: structuredClone(input.state),
 			},
-		});
+		};
+		this.events.push(record);
+		if (this.events.length > this.maxEvents) this.events.shift();
+		this.emit(record);
 	}
 
 	async dispatch(request: RpcRequest): Promise<RpcResponse> {
@@ -535,7 +538,7 @@ export class RpcDispatcher {
 					resolve(approved);
 				},
 			});
-			this.emit({
+			const record: RpcEventRecord = {
 				version: RPC_PROTOCOL_VERSION,
 				kind: "event",
 				requestId,
@@ -547,7 +550,10 @@ export class RpcDispatcher {
 					toolName,
 					arguments: typeof parameters === "object" && parameters !== null ? parameters : {},
 				},
-			});
+			};
+			this.events.push(record);
+			if (this.events.length > this.maxEvents) this.events.shift();
+			this.emit(record);
 		});
 	}
 
@@ -571,8 +577,10 @@ export class RpcDispatcher {
 				};
 			});
 		return await new Promise<UserInteractionResult>((resolve, reject) => {
+			let timer: ReturnType<typeof setTimeout> | undefined;
 			const abort = () => {
 				this.interactions.delete(requestId);
+				if (timer !== undefined) clearTimeout(timer);
 				reject(Object.assign(new Error("User interaction was cancelled."), { code: "CANCELLED" }));
 			};
 			if (signal?.aborted) return abort();
@@ -581,25 +589,30 @@ export class RpcDispatcher {
 				request,
 				resolve: (result) => {
 					signal?.removeEventListener("abort", abort);
+					if (timer !== undefined) clearTimeout(timer);
 					resolve(result);
 				},
 			});
 			if (input.timeoutMs !== undefined) {
-				setTimeout(() => {
+				timer = setTimeout(() => {
 					const current = this.interactions.get(requestId);
 					if (!current) return;
 					this.interactions.delete(requestId);
+					signal?.removeEventListener("abort", abort);
 					resolve({ requestId, toolCallId: input.toolCallId, status: "timeout" });
 				}, input.timeoutMs);
 			}
-			this.emit({
+			const record: RpcEventRecord = {
 				version: RPC_PROTOCOL_VERSION,
 				kind: "event",
 				requestId,
 				sessionId: this.activeSessionId(),
 				sequence: ++this.sequence,
 				event: { type: "interaction_request", interactionRequestId: requestId, ...request },
-			});
+			};
+			this.events.push(record);
+			if (this.events.length > this.maxEvents) this.events.shift();
+			this.emit(record);
 		});
 	}
 
@@ -1045,8 +1058,24 @@ export class RpcDispatcher {
 				)
 					this.negotiatedEvents.add(event);
 		if (this.negotiatedEvents.has("projection") && sessionHost(this.session)) {
-			const projection = this.session.planMode?.();
-			if (projection) this.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: projection });
+			const host = this.session;
+			const plan = host.planMode?.();
+			if (plan) this.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: plan });
+			for (const projection of host.projections?.() ?? [])
+				this.emitProjection({
+					namespace: projection.namespace,
+					projectionName: projection.projectionName,
+					version: projection.version,
+					state: projection.state,
+				});
+			const extensions = host.extensions?.();
+			if (extensions)
+				this.emitProjection({
+					namespace: "extension",
+					projectionName: "ui",
+					version: extensions.apiVersion,
+					state: { badges: extensions.badges, ui: extensions.ui },
+				});
 		}
 		return this.success(request.id, {
 			method: "get_capabilities",
@@ -1193,8 +1222,24 @@ export class RpcDispatcher {
 	}
 	private onSessionEvent(event: SessionHostEvent | AgentSessionEvent): void {
 		if (sessionHost(this.session) && this.negotiatedEvents.has("projection")) {
-			const projection = this.session.planMode?.();
-			if (projection) this.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: projection });
+			const host = this.session;
+			const plan = host.planMode?.();
+			if (plan) this.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: plan });
+			for (const projection of host.projections?.() ?? [])
+				this.emitProjection({
+					namespace: projection.namespace,
+					projectionName: projection.projectionName,
+					version: projection.version,
+					state: projection.state,
+				});
+			const extensions = host.extensions?.();
+			if (extensions)
+				this.emitProjection({
+					namespace: "extension",
+					projectionName: "ui",
+					version: extensions.apiVersion,
+					state: { badges: extensions.badges, ui: extensions.ui },
+				});
 		}
 		const operation = [...this.operations.values()].find((item) => item.status === "running");
 		const extended = event.type === "session_changed";

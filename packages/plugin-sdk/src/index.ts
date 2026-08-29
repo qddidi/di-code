@@ -41,6 +41,7 @@ export type {
 	AgentHookObserver,
 	AgentHookPhase,
 	AgentHookRegistration,
+	AgentHookRegistry,
 	AgentPreStepDecision,
 	AgentRequestAssembly,
 	AgentStepHook,
@@ -58,6 +59,7 @@ export type {
 	SessionPluginContext,
 	SessionPluginFactory,
 	SessionPluginFactoryOptions,
+	SessionPluginHost,
 	SessionPluginInitializer,
 	SessionPluginRegistration,
 	SessionPluginRegistry,
@@ -70,6 +72,7 @@ export type {
 } from "./stage0-contracts.ts";
 export {
 	AGENT_HOOK_API_VERSION,
+	createAgentHookRegistry,
 	createPromptSectionRegistry,
 	createSessionPluginFactory,
 	createSessionPluginRegistry,
@@ -115,5 +118,6 @@ export type {
 	ExtensionSurface,
 	ExtensionUiContribution,
 	SessionExtensionFacade,
+	SessionExtensionRegistry,
 } from "./stage7-contracts.ts";
-export { EXTENSION_FACADE_API_VERSION } from "./stage7-contracts.ts";
+export { createSessionExtensionRegistry, EXTENSION_FACADE_API_VERSION } from "./stage7-contracts.ts";

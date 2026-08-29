@@ -54,4 +54,19 @@ describe("UserInteraction", () => {
 			code: "INTERACTION_DISPOSED",
 		});
 	});
+
+	it("enforces timeout even when the provider ignores AbortSignal", async () => {
+		const interaction = createUserInteraction({
+			request: async () =>
+				await new Promise((resolve) =>
+					setTimeout(() => resolve({ requestId: "slow", status: "answered", value: "late" }), 20),
+				),
+		});
+		await expect(
+			interaction.request({ requestId: "slow", kind: "question", prompt: "Wait", timeoutMs: 1 }),
+		).rejects.toMatchObject({
+			code: "INTERACTION_TIMEOUT",
+		});
+		await interaction.dispose();
+	});
 });

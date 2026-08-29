@@ -194,6 +194,33 @@ describe("RpcDispatcher", () => {
 		await dispatcher.dispose();
 	});
 
+	it("replays negotiated projection and interaction events after disconnect", async () => {
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
+		const records: RpcServerMessage[] = [];
+		dispatcher.subscribe((record) => records.push(record));
+		await dispatcher.dispatch(
+			request("capabilities", "get_capabilities", { events: ["sequence", "projection", "interaction_request"] }),
+		);
+		dispatcher.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: { active: true } });
+		const pending = dispatcher.requestInteraction({
+			requestId: "resume-interaction",
+			kind: "question",
+			prompt: "Continue?",
+		});
+		const last = Math.max(...records.filter((record) => record.kind === "event").map((record) => record.sequence ?? 0));
+		const before = records.length;
+		await dispatcher.dispatch(request("resume", "resume_events", { lastSequence: last - 2 }));
+		expect(records.length).toBeGreaterThan(before);
+		expect(records.slice(before).some((record) => record.kind === "event" && record.event.type === "projection")).toBe(
+			true,
+		);
+		await dispatcher.dispatch(
+			request("answer", "respond_interaction", { requestId: "resume-interaction", status: "cancelled" }),
+		);
+		await pending;
+		await dispatcher.dispose();
+	});
+
 	it("completes pending interaction on timeout and dispatcher unload", async () => {
 		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
 		await dispatcher.dispatch(request("capabilities", "get_capabilities", { events: ["interaction_request"] }));

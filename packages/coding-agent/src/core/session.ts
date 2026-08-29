@@ -24,6 +24,7 @@ import type {
 } from "@di-code/ai";
 import type { ToolPolicyCapability, ToolPolicyMode, ToolPolicySnapshot } from "@di-code/builtins";
 import type { PlanModeController, PlanModeProjection } from "@di-code/plan-mode";
+import type { SessionExtensionFacade, SessionProjectionRegistry } from "@di-code/plugin-sdk";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
@@ -74,6 +75,8 @@ export interface AgentSessionOptions {
 	readonly toolPolicy?: ToolPolicyCapability;
 	readonly hooks?: readonly AgentHookRegistration[];
 	readonly planMode?: PlanModeController;
+	readonly projectionRegistry?: SessionProjectionRegistry;
+	readonly extensionFacade?: SessionExtensionFacade;
 	/** Called once when the owning product host releases this session scope. */
 	readonly onDispose?: () => void | Promise<void>;
 }
@@ -144,6 +147,8 @@ export class AgentSession {
 	private readonly onDispose?: AgentSessionOptions["onDispose"];
 	private readonly toolPolicy?: ToolPolicyCapability;
 	private readonly planModeController?: PlanModeController;
+	private readonly projectionRegistry?: SessionProjectionRegistry;
+	private readonly extensionFacade?: SessionExtensionFacade;
 	private disposed = false;
 
 	constructor(options: AgentSessionOptions) {
@@ -151,6 +156,8 @@ export class AgentSession {
 		this.onDispose = options.onDispose;
 		this.toolPolicy = options.toolPolicy;
 		this.planModeController = options.planMode;
+		this.projectionRegistry = options.projectionRegistry;
+		this.extensionFacade = options.extensionFacade;
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
 		this.skills = structuredClone(
@@ -422,6 +429,22 @@ export class AgentSession {
 		return this.planModeProjection;
 	}
 
+	projections(): readonly import("@di-code/plugin-sdk").SessionProjectionSnapshot[] {
+		if (!this.projectionRegistry || !this.sessionManager) return [];
+		return this.projectionRegistry.replay(
+			this.sessionManager.events.map((event) => ({
+				namespace: event.namespace,
+				eventName: event.eventName,
+				schemaVersion: event.schemaVersion,
+				payload: event.payload,
+			})),
+		);
+	}
+
+	extensions(): SessionExtensionFacade | undefined {
+		return this.extensionFacade;
+	}
+
 	async setToolPolicyMode(mode: ToolPolicyMode, signal?: AbortSignal): Promise<ToolPolicySnapshot> {
 		this.assertNotDisposed();
 		if (!this.toolPolicy?.setMode) throw new Error("Session tool policy is not dynamic.");
@@ -544,6 +567,11 @@ export class AgentSession {
 
 	subscribe(listener: AgentListener): () => void {
 		return this.agent.subscribe(listener);
+	}
+
+	/** Adds a lifecycle hook to the live Agent and returns an idempotent disposer. */
+	addHook(hook: AgentHookRegistration): () => void {
+		return this.agent.addHook(hook);
 	}
 
 	subscribeSession(listener: AgentSessionListener): () => void {

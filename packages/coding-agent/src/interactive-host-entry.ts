@@ -7,6 +7,7 @@ import {
 	modeRegistryKey,
 } from "@di-code/builtins";
 import type { PluginDefinition } from "@di-code/plugin-runtime";
+import { createUserInteraction } from "@di-code/plugin-sdk";
 import { ProcessTerminal } from "@di-code/tui";
 import { DEFAULT_LOCALE, translate } from "./i18n.ts";
 import { runInteractiveMode } from "./modes/interactive-entry.ts";
@@ -49,6 +50,13 @@ export const apply: PluginDefinition["apply"] = (context, _config, fiber) => {
 			? await runProviderOnboarding({ configuration, terminal: new ProcessTerminal(), agentDir: request.agentDir })
 			: resolveStartupRuntime(configuration.environment, configuration.providers, configuration.defaults);
 		if (!runtime) return 0;
+		let mode: import("./modes/interactive.ts").InteractiveMode | undefined;
+		const interaction = createUserInteraction({
+			request: (input, interactionSignal) => {
+				if (!mode) throw new Error("Interactive mode is not ready.");
+				return mode.requestInteraction(input, interactionSignal);
+			},
+		});
 		const host = await createSessionHost(context, {
 			cwd: request.cwd,
 			agentDir: request.agentDir,
@@ -62,6 +70,7 @@ export const apply: PluginDefinition["apply"] = (context, _config, fiber) => {
 			planMode: {
 				section: "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.",
 			},
+			interaction,
 			...(request.command.sessionPath ? { initialSessionPath: resolve(request.cwd, request.command.sessionPath) } : {}),
 		});
 		if (!host.state().activeSession) await host.createSession();
@@ -90,7 +99,6 @@ export const apply: PluginDefinition["apply"] = (context, _config, fiber) => {
 					},
 				})),
 		];
-		let mode: import("./modes/interactive.ts").InteractiveMode | undefined;
 		let selectedTheme = "dark";
 		const unbind = context.require(interactiveContextKey).bind({
 			sessionChoices: () => sessionChoices,
@@ -131,6 +139,7 @@ export const apply: PluginDefinition["apply"] = (context, _config, fiber) => {
 			return 0;
 		} finally {
 			unbind();
+			await interaction.dispose();
 			await host.dispose();
 		}
 	};

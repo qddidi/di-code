@@ -90,8 +90,18 @@ export function createUserInteraction(provider?: UserInteractionProvider): UserI
 				.request({ ...input, requestId }, controller.signal)
 				.then((result) => ({ ...result, requestId, toolCallId: input.toolCallId ?? result.toolCallId }));
 			pending.set(requestId, promise);
+			let timeoutRaceTimer: ReturnType<typeof setTimeout> | undefined;
 			try {
-				return await promise;
+				const timeoutResult =
+					input.timeoutMs === undefined
+						? undefined
+						: new Promise<never>((_, reject) => {
+								timeoutRaceTimer = setTimeout(() => {
+									controller.abort(new UserInteractionError("INTERACTION_TIMEOUT", "User interaction timed out."));
+									reject(new UserInteractionError("INTERACTION_TIMEOUT", "User interaction timed out."));
+								}, input.timeoutMs);
+							});
+				return await (timeoutResult ? Promise.race([promise, timeoutResult]) : promise);
 			} catch (cause) {
 				if (controller.signal.aborted) {
 					if (disposed) throw new UserInteractionError("INTERACTION_DISPOSED", "User interaction is disposed.");
@@ -102,6 +112,7 @@ export function createUserInteraction(provider?: UserInteractionProvider): UserI
 				throw cause;
 			} finally {
 				if (timeout !== undefined) clearTimeout(timeout);
+				if (timeoutRaceTimer !== undefined) clearTimeout(timeoutRaceTimer);
 				signal?.removeEventListener("abort", abort);
 				pending.delete(requestId);
 				controllers.delete(requestId);

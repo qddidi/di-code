@@ -21,7 +21,11 @@ import {
 import { createPlanModePlugin, type PlanModeController } from "@di-code/plan-mode";
 import { type Context, createServiceKey, type Disposer } from "@di-code/plugin-runtime";
 import {
+	createSessionEventRegistry,
+	createSessionExtensionRegistry,
 	createSessionPluginRegistry,
+	createSessionProjectionRegistry,
+	type SessionEventEnvelope,
 	type SessionPluginFactory,
 	type SessionPluginScope,
 	sessionPluginRegistryKey,
@@ -122,9 +126,24 @@ export function installAgentSessionFactory(context: Context): Disposer {
 			: undefined;
 		const sessionContext = context.child({ id: `session-${++nextSessionId}`, isolate: true });
 		sessionContexts.add(sessionContext);
-		let pluginScopes: SessionPluginScope[] = [];
-		const promptSections = createPromptSectionRegistry();
+		const sessionEvents = createSessionEventRegistry();
+		const sessionProjections = createSessionProjectionRegistry();
 		const pluginSessionId = options.sessionManager?.header.id ?? sessionContext.id;
+		const sessionExtensions = createSessionExtensionRegistry(pluginSessionId);
+		options.sessionManager?.bindEventRegistry(sessionEvents);
+		const memoryEvents: SessionEventEnvelope[] = [];
+		const appendEvent = async (event: SessionEventEnvelope, signal?: AbortSignal): Promise<void> => {
+			if (options.sessionManager) {
+				await options.sessionManager.appendEvent({ ...event, signal });
+				return;
+			}
+			if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+			memoryEvents.push(structuredClone(event));
+		};
+		let pluginScopes: SessionPluginScope[] = [];
+		const pluginHooks: import("@di-code/plugin-sdk").AgentHookRegistration[] = [];
+		const initialHookDisposers = new Map<import("@di-code/plugin-sdk").AgentHookRegistration, () => void>();
+		const promptSections = createPromptSectionRegistry();
 		const policy =
 			options.toolPolicy ??
 			createSessionToolPolicy({
@@ -157,14 +176,11 @@ export function installAgentSessionFactory(context: Context): Disposer {
 						eventName: entry.eventName,
 						schemaVersion: entry.schemaVersion,
 						payload: entry.payload,
-					})) ?? [];
+					})) ?? memoryEvents;
 			planMode = createPlanModePlugin(options.planMode).createController({
 				sessionId: pluginSessionId,
 				events,
-				appendEvent: async (event, signal) => {
-					if (!manager) return;
-					await manager.appendEvent({ ...event, signal });
-				},
+				appendEvent,
 				isBusy: () => session?.isStreaming ?? false,
 				promptSections,
 				interaction: options.interaction,
@@ -179,28 +195,42 @@ export function installAgentSessionFactory(context: Context): Disposer {
 					},
 				}
 			: policy;
-		const output = context.require(toolOutputKey);
-		const tools = Object.freeze([
-			...context.require(toolRegistryKey).snapshot({
-				workspace,
-				process: context.require(processCapabilityKey),
-				network: context.require(networkCapabilityKey),
-				policy: effectivePolicy,
-				approval,
-				output,
-				imageGeneration: context.get(imageGenerationCapabilityKey),
-				skills: skillCatalog,
-			}),
-			...(options.externalTools ?? []).map((tool) => ({
-				...tool,
-				execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
-					await effectivePolicy.authorize(tool.name, parameters, signal);
-					await approval.request(tool.name, parameters, signal);
-					return output.present(await tool.execute(toolCallId, parameters, signal));
-				},
-			})),
-			...(planMode ? [planMode.createExitTool()] : []),
-		]);
+		const cleanupFailed = async (): Promise<void> => {
+			sessionScopes.delete(pluginScopes);
+			await Promise.allSettled(pluginScopes.map((scope) => scope.dispose()));
+			await planMode?.dispose();
+			policy.dispose?.();
+			await sessionContext.dispose();
+			sessionContexts.delete(sessionContext);
+		};
+		let tools: readonly AgentSessionTool[];
+		try {
+			const output = context.require(toolOutputKey);
+			tools = Object.freeze([
+				...context.require(toolRegistryKey).snapshot({
+					workspace,
+					process: context.require(processCapabilityKey),
+					network: context.require(networkCapabilityKey),
+					policy: effectivePolicy,
+					approval,
+					output,
+					imageGeneration: context.get(imageGenerationCapabilityKey),
+					skills: skillCatalog,
+				}),
+				...(options.externalTools ?? []).map((tool) => ({
+					...tool,
+					execute: async (toolCallId: string, parameters: never, signal?: AbortSignal) => {
+						await effectivePolicy.authorize(tool.name, parameters, signal);
+						await approval.request(tool.name, parameters, signal);
+						return output.present(await tool.execute(toolCallId, parameters, signal));
+					},
+				})),
+				...(planMode ? [planMode.createExitTool()] : []),
+			]);
+		} catch (error) {
+			await cleanupFailed();
+			throw error;
+		}
 		sessionContext.set(sessionDependenciesKey, { tools });
 		try {
 			for (const section of context.require(promptRegistryKey).snapshotSections?.() ?? [])
@@ -214,57 +244,134 @@ export function installAgentSessionFactory(context: Context): Disposer {
 				})),
 			];
 			pluginScopes = await Promise.all(
-				registrations.map(({ factory, config }) => factory.create(pluginSessionId, config)),
+				registrations.map(({ factory, config }) =>
+					factory.create(pluginSessionId, config, {
+						appendEvent,
+					}),
+				),
 			);
 			for (const scope of pluginScopes) {
+				const scopeHooks = scope.hooks.snapshot();
 				const removers = scope.promptSections.snapshot().map((section) => promptSections.register(section));
+				const eventRemovers = new Map<import("@di-code/plugin-sdk").SessionEventDefinition, () => void>();
+				const projectionRemovers = new Map<import("@di-code/plugin-sdk").SessionProjectionDefinition, () => void>();
+				for (const definition of scope.events.snapshot())
+					eventRemovers.set(definition, sessionEvents.register(definition));
+				for (const definition of scope.projections.snapshot())
+					projectionRemovers.set(definition, sessionProjections.register(definition));
+				const unsubscribeEvents = scope.events.subscribe((definition, active) => {
+					if (active) eventRemovers.set(definition, sessionEvents.register(definition));
+					else {
+						eventRemovers.get(definition)?.();
+						eventRemovers.delete(definition);
+					}
+				});
+				const unsubscribeProjections = scope.projections.subscribe((definition, active) => {
+					if (active) projectionRemovers.set(definition, sessionProjections.register(definition));
+					else {
+						projectionRemovers.get(definition)?.();
+						projectionRemovers.delete(definition);
+					}
+				});
+				const badgeRemovers = new Map<string, () => void>();
+				const uiRemovers = new Map<string, () => void>();
+				const syncExtensions = (): void => {
+					for (const remove of badgeRemovers.values()) remove();
+					for (const remove of uiRemovers.values()) remove();
+					badgeRemovers.clear();
+					uiRemovers.clear();
+					for (const badge of scope.extensions.badges)
+						badgeRemovers.set(badge.id, sessionExtensions.registerBadge(badge));
+					for (const contribution of scope.extensions.ui)
+						uiRemovers.set(contribution.id, sessionExtensions.registerUi(contribution));
+				};
+				syncExtensions();
+				const unsubscribeExtensions = scope.extensions.subscribe(() => syncExtensions());
+				removers.push(unsubscribeEvents, unsubscribeProjections, unsubscribeExtensions, () => {
+					for (const remove of eventRemovers.values()) remove();
+					for (const remove of projectionRemovers.values()) remove();
+					eventRemovers.clear();
+					projectionRemovers.clear();
+					for (const remove of badgeRemovers.values()) remove();
+					for (const remove of uiRemovers.values()) remove();
+					badgeRemovers.clear();
+					uiRemovers.clear();
+				});
+				pluginHooks.push(...scopeHooks);
+				const hookDisposers = new Map<import("@di-code/agent").AgentHookRegistration, () => void>();
+				const unsubscribeHooks = scope.hooks.subscribe((hook, active) => {
+					if (!session) return;
+					const agentHook = hook as unknown as import("@di-code/agent").AgentHookRegistration;
+					if (active) hookDisposers.set(agentHook, session.addHook(agentHook));
+					else {
+						hookDisposers.get(agentHook)?.();
+						hookDisposers.delete(agentHook);
+					}
+				});
+				removers.push(unsubscribeHooks, () => {
+					for (const dispose of hookDisposers.values()) dispose();
+					hookDisposers.clear();
+				});
 				scope.onDispose(() => {
 					for (const remove of removers) remove();
+					for (const hook of scopeHooks) {
+						initialHookDisposers.get(hook)?.();
+						initialHookDisposers.delete(hook);
+					}
 				});
 			}
 			sessionScopes.add(pluginScopes);
 		} catch (error) {
-			await Promise.allSettled(pluginScopes.map((scope) => scope.dispose()));
-			await sessionContext.dispose();
-			sessionContexts.delete(sessionContext);
+			await cleanupFailed();
 			throw error;
 		}
-		session = new AgentSession({
-			...options,
-			...(prepareMessages ? { compaction: { ...(options.compaction ?? {}), prepareMessages } } : {}),
-			tools: sessionContext.require(sessionDependenciesKey).tools,
-			promptSections,
-			toolPolicy: policy,
-			getPromptSnapshot: () => ({
-				...(options.getPromptSnapshot?.() as object | undefined),
-				sessionId: pluginSessionId,
-				messageCount: options.sessionManager?.messages.length ?? 0,
-				leafId: options.sessionManager?.leafId,
-			}),
-			onDispose: async () => {
-				if (sessionScopes.has(pluginScopes)) sessionScopes.delete(pluginScopes);
-				const results = await Promise.allSettled(pluginScopes.map((scope) => scope.dispose()));
-				await sessionContext.dispose();
-				const errors = results
-					.filter((result): result is PromiseRejectedResult => result.status === "rejected")
-					.map((r) => r.reason);
-				if (errors.length > 0) throw new AggregateError(errors, "Session plugin scope disposal failed");
-			},
-			planMode,
-			hooks: planMode
-				? [
-						{
-							kind: "modifier",
-							phase: "pre_step",
-							onError: "fail",
-							run: async (_event, hookContext) => {
-								await planMode?.preStep(hookContext.signal);
-								return undefined;
-							},
-						},
-					]
-				: undefined,
-		});
+		const planHook: import("@di-code/agent").AgentHookRegistration | undefined = planMode
+			? {
+					kind: "modifier",
+					phase: "pre_step",
+					onError: "fail",
+					run: async (_event, hookContext) => {
+						await planMode?.preStep(hookContext.signal);
+						return undefined;
+					},
+				}
+			: undefined;
+		try {
+			session = new AgentSession({
+				...options,
+				...(prepareMessages ? { compaction: { ...(options.compaction ?? {}), prepareMessages } } : {}),
+				tools: sessionContext.require(sessionDependenciesKey).tools,
+				promptSections,
+				toolPolicy: policy,
+				getPromptSnapshot: () => ({
+					...(options.getPromptSnapshot?.() as object | undefined),
+					sessionId: pluginSessionId,
+					messageCount: options.sessionManager?.messages.length ?? 0,
+					leafId: options.sessionManager?.leafId,
+				}),
+				onDispose: async () => {
+					if (sessionScopes.has(pluginScopes)) sessionScopes.delete(pluginScopes);
+					const results = await Promise.allSettled(pluginScopes.map((scope) => scope.dispose()));
+					await sessionContext.dispose();
+					const errors = results
+						.filter((result): result is PromiseRejectedResult => result.status === "rejected")
+						.map((r) => r.reason);
+					if (errors.length > 0) throw new AggregateError(errors, "Session plugin scope disposal failed");
+				},
+				planMode,
+				projectionRegistry: sessionProjections,
+				extensionFacade: sessionExtensions,
+				hooks: [...(options.hooks ?? []), ...(planHook ? [planHook] : [])],
+			});
+			for (const hook of pluginHooks)
+				initialHookDisposers.set(
+					hook,
+					session.addHook(hook as unknown as import("@di-code/agent").AgentHookRegistration),
+				);
+		} catch (error) {
+			await cleanupFailed();
+			throw error;
+		}
 		return session;
 	});
 	return async () => {

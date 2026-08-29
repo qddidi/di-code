@@ -69,6 +69,13 @@ export type SessionDiagnostic =
 			readonly kind: "corrupt_record";
 			readonly lineNumber: number;
 			readonly reason: string;
+	  }
+	| {
+			readonly kind: "event_validation";
+			readonly namespace: string;
+			readonly eventName: string;
+			readonly schemaVersion: number;
+			readonly reason: string;
 	  };
 
 export interface LoadedSession {
