@@ -61,6 +61,7 @@ describe("interactive composition profile", () => {
 				interactive: {
 					isInteractiveTerminal: true,
 					startInteractiveMode: (options) => {
+						expect(options.commandRegistry.list().map((command) => command.name)).toContain("plan");
 						expect(options.providerOnboarding?.agentDir).toBe(agentDir);
 						expect(options.providerOnboarding?.configuration).toBeDefined();
 						expect(options.commandRegistry.list().map((command) => command.name)).not.toContain("plugin");

@@ -14,6 +14,8 @@ base -> mode -> ~/.di-code/composition.yml -> <work-root>/.di-code/composition.y
 
 CLI/RPC/Web 都调用同一个 `AgentSession`/`@di-code/agent` loop。一次 prompt 串行经历：追加 user message、调用 `Provider.stream()`、发布 message/tool 事件、校验工具参数、执行工具、追加 tool result，再请求下一轮，直到 stop reason。Provider 不执行工具，CLI/TUI/Web 不实现第二套循环。AbortSignal 会传播到 Provider、工具、MCP 和子进程。
 
+Agent loop 的生命周期 hook 使用 `apiVersion: 1`，按注册顺序串行运行 `request_prepare`、`pre_step`、`request_accept`、`tool_execute_before`、`step_complete`、`turn_complete`、`failed` 和 `cancelled`。观察型 hook 只能读取事件；修改型 hook 只允许在 `pre_step` 返回新的只读 request assembly/decision，不能通过共享对象修改请求。每个 hook 接收 `AbortSignal`，可声明超时和 `ignore`/`fail` 错误策略；监听器 disposer 幂等，失败会保持 Agent 的终态收敛。
+
 ## SessionHost
 
 `SessionHost` 按 principal 和真实 workspace 隔离 actor，集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表。Session factory 在创建时固定 immutable tool snapshot；之后禁用的工具不会被会话补回。`dispose()` 幂等，先取消活跃操作，再释放 listener、锁、MCP 和子 Context。
@@ -41,3 +43,10 @@ WebUI `/events` 在 ready 中返回 resume token；客户端记录 `Last-Event-I
 ## 安全边界
 
 信任控制项目 Composition、Skill 和 MCP 的 import eligibility，不是权限沙箱。插件、MCP Server、模型输出和项目文件都不可信。凭据只在服务端环境/settings 解析，脱敏后才进入诊断或 Web snapshot；任何新增协议、配置或用户可见行为都必须同步 validator、测试和文档。
+### Typed Session projection
+
+RPC capability negotiation advertises the `projection` event type. The dispatcher only emits versioned projection records after a client explicitly negotiates that capability; legacy clients therefore receive no unknown projection payload. Projection events participate in the existing sequence buffer and `resume_events` flow, including `snapshot_required` when the replay window has expired. Before publishing to RPC/SSE, projections must be JSON-like, at most 256 KiB, and contain no local path or credential-shaped keys; callers receive a redacted diagnostic rather than browser-visible data.
+Tool execution errors preserve host policy codes such as `POLICY_DENIED`, `POLICY_CANCELLED`, `POLICY_TIMEOUT`, and `POLICY_DISPOSED` in structured tool-result details; RPC/JSON consumers must not infer authorization from prompt text or catalog membership.
+# UserInteraction 通道
+
+RPC v1 可协商 `interaction_request` 事件，并用 `respond_interaction` 返回结构化回答；请求与 `requestId`/`toolCallId` 关联，重复回答不会改变第一次结果。断线、取消、超时和 dispatcher dispose 会结束 pending；未协商 UI 时通用交互返回 `INTERACTION_UNAVAILABLE`，工具审批保持拒绝安全默认。TUI、WebUI 和插件 SDK 只共享 facade 类型，不暴露 transport token、cookie、key 或 Session 内部对象。

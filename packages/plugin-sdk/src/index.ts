@@ -33,3 +33,87 @@ export {
 	WebSlotRegistry,
 	WebSlotRegistryError,
 } from "@di-code/plugin-runtime";
+export type {
+	AgentHookApiVersion,
+	AgentHookContext,
+	AgentHookEvent,
+	AgentHookModifier,
+	AgentHookObserver,
+	AgentHookPhase,
+	AgentHookRegistration,
+	AgentPreStepDecision,
+	AgentRequestAssembly,
+	AgentStepHook,
+	AgentStepPhase,
+	PluginErrorCode,
+	PluginOperationContext,
+	PluginSdkApiVersion,
+	PromptSection,
+	PromptSectionContext,
+	PromptSectionRegistration,
+	PromptSectionRegistry,
+	PromptSectionSnapshot,
+	RpcExtensionDescriptor,
+	SessionPluginCapabilities,
+	SessionPluginContext,
+	SessionPluginFactory,
+	SessionPluginFactoryOptions,
+	SessionPluginInitializer,
+	SessionPluginRegistration,
+	SessionPluginRegistry,
+	SessionPluginScope,
+	SessionToolPolicy,
+	SessionToolPolicyContext,
+	ToolPolicyErrorCode,
+	ToolPolicyMode,
+	ToolPolicySnapshot,
+} from "./stage0-contracts.ts";
+export {
+	AGENT_HOOK_API_VERSION,
+	createPromptSectionRegistry,
+	createSessionPluginFactory,
+	createSessionPluginRegistry,
+	PLUGIN_SDK_API_VERSION,
+	PluginLifecycleError,
+	sessionPluginRegistryKey,
+} from "./stage0-contracts.ts";
+export type {
+	SessionEventDefinition,
+	SessionEventEnvelope,
+	SessionEventMigrator,
+	SessionEventRegistry,
+	SessionEventValidator,
+	SessionProjectionDefinition,
+	SessionProjectionRegistry,
+	SessionProjectionSnapshot,
+} from "./stage4-contracts.ts";
+export {
+	createSessionEventRegistry,
+	createSessionProjectionRegistry,
+	SESSION_EVENT_API_VERSION,
+	SESSION_EVENT_MAX_PAYLOAD_BYTES,
+} from "./stage4-contracts.ts";
+export type {
+	UserInteraction,
+	UserInteractionInput,
+	UserInteractionIntent,
+	UserInteractionKind,
+	UserInteractionOption,
+	UserInteractionProvider,
+	UserInteractionQuestion,
+	UserInteractionResult,
+	UserInteractionStatus,
+} from "./stage6-contracts.ts";
+export {
+	createFakeInteractionProvider,
+	createUserInteraction,
+	USER_INTERACTION_API_VERSION,
+	UserInteractionError,
+} from "./stage6-contracts.ts";
+export type {
+	ExtensionStateBadge,
+	ExtensionSurface,
+	ExtensionUiContribution,
+	SessionExtensionFacade,
+} from "./stage7-contracts.ts";
+export { EXTENSION_FACADE_API_VERSION } from "./stage7-contracts.ts";

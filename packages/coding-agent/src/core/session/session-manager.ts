@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { JsonValue, Message } from "@di-code/ai";
+import type { SessionProjectionRegistry } from "@di-code/plugin-sdk";
 import { type BuiltSessionContext, buildSessionContext } from "../context-builder.ts";
 import {
 	appendSessionEntry,
@@ -13,6 +14,7 @@ import {
 	SESSION_FORMAT_VERSION,
 	type SessionDiagnostic,
 	type SessionEntry,
+	type SessionEventEntry,
 	type SessionHeader,
 	type SessionMessageEntry,
 	type SessionPluginEntry,
@@ -118,6 +120,22 @@ export class SessionManager {
 			this.sessionEntries
 				.filter((entry): entry is SessionMessageEntry => entry.type === "message")
 				.map((entry) => entry.message),
+		);
+	}
+
+	get events(): readonly SessionEventEntry[] {
+		return structuredClone(this.sessionEntries.filter((entry): entry is SessionEventEntry => entry.type === "event"));
+	}
+
+	/** Cold-reads the complete durable event log; no in-memory mirror is used as the source of truth. */
+	project(registry: SessionProjectionRegistry): readonly unknown[] {
+		return registry.replay(
+			this.events.map((event) => ({
+				namespace: event.namespace,
+				eventName: event.eventName,
+				schemaVersion: event.schemaVersion,
+				payload: event.payload,
+			})),
 		);
 	}
 
@@ -287,6 +305,55 @@ export class SessionManager {
 			return structuredClone(entry);
 		});
 
+		this.appendQueue = operation.then(
+			() => undefined,
+			() => undefined,
+		);
+		return operation;
+	}
+
+	/** Appends a versioned plugin event through the same queue and file lock as messages. */
+	appendEvent(input: {
+		readonly namespace: string;
+		readonly eventName: string;
+		readonly schemaVersion: number;
+		readonly payload: JsonValue;
+		readonly signal?: AbortSignal;
+	}): Promise<SessionEventEntry> {
+		const inputSnapshot = {
+			namespace: input.namespace,
+			eventName: input.eventName,
+			schemaVersion: input.schemaVersion,
+			payload: structuredClone(input.payload),
+			signal: input.signal,
+		};
+		const operation = this.appendQueue.then(async () => {
+			if (inputSnapshot.signal?.aborted)
+				throw inputSnapshot.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+			await this.ensureFileCreated();
+			const id = this.createId();
+			assertRecordId(id);
+			const expectedParentId = this.leafId;
+			const entry: SessionEventEntry = {
+				type: "event",
+				version: SESSION_FORMAT_VERSION,
+				id,
+				parentId: expectedParentId,
+				timestamp: createIsoTimestamp(this.now),
+				namespace: inputSnapshot.namespace,
+				eventName: inputSnapshot.eventName,
+				schemaVersion: inputSnapshot.schemaVersion,
+				payload: inputSnapshot.payload,
+			};
+			await appendSessionEntry(this.filePath, entry, expectedParentId, {
+				...this.appendOptions,
+				signal: inputSnapshot.signal,
+			});
+			this.sessionEntries.push(structuredClone(entry));
+			this.addToIndexes(entry);
+			this.activeLeafId = entry.id;
+			return structuredClone(entry);
+		});
 		this.appendQueue = operation.then(
 			() => undefined,
 			() => undefined,

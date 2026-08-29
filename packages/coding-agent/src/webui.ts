@@ -6,6 +6,7 @@ import { basename, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { commandRegistryKey, type ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
+import { createUserInteraction, type UserInteractionInput, type UserInteractionResult } from "@di-code/plugin-sdk";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
 import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "./rpc/protocol.ts";
@@ -18,6 +19,15 @@ import {
 	type StartupConfiguration,
 	type StartupRuntime,
 } from "./startup.ts";
+
+/** Web hosts expose the same structured interaction facade as RPC and TUI. */
+export interface WebInteractionFacade {
+	readonly request: (
+		input: Omit<UserInteractionInput, "requestId"> & { readonly requestId?: string },
+		signal?: AbortSignal,
+	) => Promise<UserInteractionResult>;
+	readonly answer: (requestId: string, result: Omit<UserInteractionResult, "requestId">) => boolean;
+}
 
 export interface WebUiServerOptions extends Omit<SessionHostBootstrapOptions, "cwd" | "principal" | "toolApproval"> {
 	readonly context: Context;
@@ -455,6 +465,13 @@ export class WebUiServer {
 			let requestApproval:
 				| ((toolName: string, parameters: unknown, signal?: AbortSignal) => Promise<boolean>)
 				| undefined;
+			let requestInteraction: WebInteractionFacade["request"] | undefined;
+			const interaction = createUserInteraction({
+				request: async (input, signal) => {
+					if (!requestInteraction) throw new Error("User interaction is unavailable.");
+					return await requestInteraction(input, signal);
+				},
+			});
 			const toolApproval: ToolApprovalCapability = {
 				request: async (toolName, parameters, signal) => {
 					if (permissionMode === "allow") return;
@@ -462,12 +479,16 @@ export class WebUiServer {
 					if (!requestApproval) throw new Error("Tool approval is unavailable.");
 					if (!(await requestApproval(toolName, parameters, signal))) throw new Error("Tool approval denied.");
 				},
+				get interaction() {
+					return requestInteraction ? { request: requestInteraction } : undefined;
+				},
 			};
 			const actor = await this.hostManager.get({
 				...hostOptions,
 				principal: client.principal,
 				cwd: allowed,
 				...(toolApproval ? { toolApproval } : {}),
+				interaction,
 			});
 			if (!actor.state().activeSession) await actor.createSession();
 			const product = createProductHost({
@@ -516,6 +537,7 @@ export class WebUiServer {
 			const actorDispatcher = dispatcher;
 			requestApproval = (toolName, parameters, signal) =>
 				actorDispatcher.requestToolApproval(toolName, parameters, signal);
+			requestInteraction = (input, signal) => actorDispatcher.requestInteraction(input, signal);
 			await actorDispatcher.dispatch({
 				version: RPC_PROTOCOL_VERSION,
 				kind: "request",
@@ -528,7 +550,9 @@ export class WebUiServer {
 						"snapshot_required",
 						"session_changed",
 						"tool_approval",
+						"interaction_request",
 						"product_audit",
+						"projection",
 					],
 				},
 			});
@@ -778,6 +802,9 @@ export class WebUiServer {
 			model: runtime?.model ?? this.options.model,
 			signal: this.options.signal,
 			compaction: this.options.compaction,
+			planMode: this.options.planMode ?? {
+				section: "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.",
+			},
 		};
 	}
 	private clientTempRoot(client: ClientState): string {

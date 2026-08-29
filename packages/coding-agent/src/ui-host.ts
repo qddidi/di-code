@@ -377,6 +377,9 @@ async function runUiHost(context: Context, input: unknown, start: UiHostStart, s
 		provider: runtime.provider,
 		model: runtime.model,
 		signal,
+		planMode: {
+			section: "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.",
+		},
 		...(request.command.sessionPath ? { initialSessionPath: resolve(request.cwd, request.command.sessionPath) } : {}),
 	});
 	if (!host.state().activeSession) await host.createSession();

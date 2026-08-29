@@ -1,6 +1,10 @@
 export interface BootData {
 	readonly protocolVersion: number;
-	readonly capabilities: { readonly methods: readonly string[]; readonly events: readonly string[] };
+	readonly capabilities: {
+		readonly methods: readonly string[];
+		readonly events: readonly string[];
+		readonly eventBufferSize?: number;
+	};
 	readonly state: { readonly modelId: string; readonly messageCount: number };
 	readonly runtime: { readonly providerId: string; readonly modelId: string };
 	readonly workspaceId: string;
@@ -180,7 +184,16 @@ export interface PluginSummary {
 	readonly capabilities: readonly string[];
 }
 
-export type WebSlotId = "app.sidebar" | "session.tree" | "conversation.node" | "conversation.tool" | "settings.panel";
+export type WebSlotId =
+	| "app.sidebar"
+	| "session.tree"
+	| "conversation.node"
+	| "conversation.tool"
+	| "settings.panel"
+	| "session.badge"
+	| "session.controls"
+	| "review.panel"
+	| "composer.placeholder";
 export interface WebContribution {
 	readonly id: string;
 	readonly slot: WebSlotId | string;

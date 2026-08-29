@@ -21,12 +21,135 @@ import {
 	workspace,
 } from "@di-code/builtins";
 import { createRootContext } from "@di-code/plugin-runtime";
+import { createSessionPluginFactory, sessionPluginRegistryKey } from "@di-code/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { SessionManager } from "../src/core/session/session-manager.ts";
 import { AgentSession } from "../src/core/session.ts";
 import { installAgentSessionFactory } from "../src/runtime/session-factory.ts";
 
 describe("composition AgentSessionFactory", () => {
+	it("lets a Session plugin switch its prompt section from the Session snapshot", async () => {
+		const root = process.cwd();
+		let mode = "normal";
+		let generated = 0;
+		const prompts: string[] = [];
+		const plugin = createSessionPluginFactory((scope) => {
+			scope.promptSections.register({
+				name: "test.mode",
+				order: 10,
+				owner: "test-plugin",
+				generate: ({ session }) => {
+					generated += 1;
+					return (session as { readonly mode: string }).mode;
+				},
+			});
+		});
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "text", text: "one" }] },
+				{ type: "success", content: [{ type: "text", text: "two" }] },
+				{ type: "success", content: [{ type: "text", text: "three" }] },
+			],
+		});
+		const provider = {
+			...faux.provider,
+			stream(
+				model: typeof faux.model,
+				request: Parameters<typeof faux.provider.stream>[1],
+				options?: Parameters<typeof faux.provider.stream>[2],
+			) {
+				prompts.push(request.systemPrompt ?? "");
+				return faux.provider.stream(model, request, options);
+			},
+		};
+		const context = createRootContext({ id: "session-prompt-plugin", mode: "test", trustedProject: true });
+		try {
+			for (const definition of [providerRegistry, toolRegistry]) await context.plugin(definition, undefined);
+			await context.plugin(workspace, { allowedRoot: root });
+			for (const definition of [
+				processCapability,
+				networkCapability,
+				toolApproval,
+				toolPolicy,
+				toolOutput,
+				toolRead,
+				contextBudget,
+				compactionBasic,
+				systemPrompt,
+				agentSession,
+			])
+				await context.plugin(definition, undefined);
+			const removeFactory = installAgentSessionFactory(context);
+			try {
+				const session = (await context.require(agentSessionKey).create({
+					allowedRoot: root,
+					provider,
+					model: faux.model,
+					sessionPlugins: [{ factory: plugin, config: undefined }],
+					getPromptSnapshot: () => ({ mode }),
+				})) as AgentSession;
+				await session.prompt("first");
+				mode = "plan";
+				await session.prompt("second");
+				await plugin.dispose();
+				await session.prompt("third");
+				await session.dispose();
+				expect(generated).toBe(2);
+				expect(prompts).toEqual(["normal", "plan", ""]);
+			} finally {
+				await removeFactory();
+			}
+		} finally {
+			await context.dispose();
+		}
+	});
+	it("creates isolated Session plugin scopes and cleans them on session disposal and factory unload", async () => {
+		const root = process.cwd();
+		const seen: string[] = [];
+		const factory = createSessionPluginFactory((scope) => {
+			seen.push(scope.sessionId);
+			scope.onDispose(() => {
+				seen.push(`disposed:${scope.sessionId}`);
+			});
+		});
+		const context = createRootContext({ id: "session-plugin-factory", mode: "test", trustedProject: true });
+		try {
+			for (const definition of [providerRegistry, toolRegistry]) await context.plugin(definition, undefined);
+			await context.plugin(workspace, { allowedRoot: root });
+			for (const definition of [
+				processCapability,
+				networkCapability,
+				toolApproval,
+				toolPolicy,
+				toolOutput,
+				toolRead,
+				contextBudget,
+				compactionBasic,
+				systemPrompt,
+				agentSession,
+			])
+				await context.plugin(definition, undefined);
+			const removeFactory = installAgentSessionFactory(context);
+			const registrationDispose = context
+				.require(sessionPluginRegistryKey)
+				.register({ name: "test.scope", factory, config: undefined });
+			const faux = createFauxProvider({ responses: [] });
+			const first = (await context
+				.require(agentSessionKey)
+				.create({ allowedRoot: root, provider: faux.provider, model: faux.model })) as AgentSession;
+			const second = (await context
+				.require(agentSessionKey)
+				.create({ allowedRoot: root, provider: faux.provider, model: faux.model })) as AgentSession;
+			await first.dispose();
+			expect(seen.filter((value) => value.startsWith("disposed:")).length).toBe(1);
+			await second.dispose();
+			await registrationDispose();
+			await removeFactory();
+			expect(seen.filter((value) => value.startsWith("disposed:")).length).toBe(2);
+		} finally {
+			await context.dispose();
+		}
+	});
 	it("uses the registered tool snapshot and releases the factory scope", async () => {
 		const root = process.cwd();
 		const faux = createFauxProvider({

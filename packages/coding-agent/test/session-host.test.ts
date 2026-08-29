@@ -81,6 +81,31 @@ async function setup(
 }
 
 describe("SessionHost", () => {
+	it("persists Session policy mode and restores it from the event log", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-policy-root-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-policy-agent-"));
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "ok" }] }] });
+		const { context, host, removeFactory } = await setup(root, agentDir, faux);
+		try {
+			const session = await host.createSession();
+			expect(host.toolPolicy()).toMatchObject({ mode: "normal", revision: 0, sessionId: session.id });
+			await host.setToolPolicyMode("read_only");
+			expect(host.toolPolicy()).toMatchObject({ mode: "read_only", revision: 1 });
+			const inspected = await host.inspectSession(session.id);
+			expect(inspected.events?.at(-1)?.payload).toEqual({ mode: "read_only" });
+			await host.closeSession();
+			await host.openSession(session.id);
+			expect(host.toolPolicy()).toMatchObject({ mode: "read_only", revision: 0 });
+			await host.branchSession(session.id);
+			expect(host.toolPolicy()).toMatchObject({ mode: "read_only", revision: 0 });
+		} finally {
+			await host.dispose();
+			await removeFactory();
+			await context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
 	it("keeps Web-style tool approvals scoped to the host that created the session", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-host-root-"));
 		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-agent-"));

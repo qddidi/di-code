@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AssistantMessage, ImageContent, Message } from "@di-code/ai";
 import type { CommandRegistry } from "@di-code/builtins";
 import { redactSensitiveText } from "@di-code/plugin-runtime";
+import type { UserInteractionInput, UserInteractionResult } from "@di-code/plugin-sdk";
 import type { SessionTreeNode } from "../core/session/types.ts";
 import type { AgentSessionEvent, AgentSessionListener } from "../core/session.ts";
 import type { ProductHost } from "../runtime/product-host.ts";
@@ -24,6 +25,9 @@ import {
 	type RpcSessionState,
 	type RpcSuccessResult,
 } from "./protocol.ts";
+
+const MAX_PROJECTION_BYTES = 256 * 1024;
+const FORBIDDEN_PROJECTION_KEYS = /(?:^|[_-])(path|cwd|root|token|secret|authorization|api[_-]?key)(?:$|[_-])/iu;
 
 /** Minimum legacy session shape retained for direct RpcServer embedding. */
 export interface RpcSession {
@@ -208,6 +212,10 @@ export class RpcDispatcher {
 	private readonly methods?: RpcMethodCatalog;
 	private readonly onError: (error: Error) => void;
 	private readonly approvals = new Map<string, { readonly resolve: (approved: boolean) => void }>();
+	private readonly interactions = new Map<
+		string,
+		{ resolve: (result: UserInteractionResult) => void; readonly request: UserInteractionInput }
+	>();
 	private readonly maxEvents: number;
 	private productState: RpcProductState;
 	private readonly productHost?: ProductHost;
@@ -270,6 +278,35 @@ export class RpcDispatcher {
 		return () => this.listeners.delete(listener);
 	}
 
+	/** Publishes a versioned projection only to clients that negotiated projection events. */
+	emitProjection(input: {
+		readonly namespace: string;
+		readonly projectionName: string;
+		readonly version: number;
+		readonly state: unknown;
+		readonly requestId?: string;
+	}): void {
+		if (!this.negotiatedEvents.has("projection")) return;
+		if (!isBrowserSafeProjection(input.state)) {
+			this.onError(new Error("Skipped an unsafe extension projection."));
+			return;
+		}
+		this.emit({
+			version: RPC_PROTOCOL_VERSION,
+			kind: "event",
+			requestId: input.requestId ?? "projection",
+			sessionId: this.activeSessionId(),
+			sequence: ++this.sequence,
+			event: {
+				type: "projection",
+				namespace: input.namespace,
+				projectionName: input.projectionName,
+				version: input.version,
+				state: structuredClone(input.state),
+			},
+		});
+	}
+
 	async dispatch(request: RpcRequest): Promise<RpcResponse> {
 		this.pruneOperations();
 		if (this.disposed) return this.failure(request.id, "DISPOSED", "RPC dispatcher has been disposed.");
@@ -304,6 +341,15 @@ export class RpcDispatcher {
 		this.unsubscribeProduct?.();
 		for (const operation of this.operations.values())
 			if (operation.status === "queued" || operation.status === "running") operation.controller.abort();
+		for (const pending of this.approvals.values()) pending.resolve(false);
+		this.approvals.clear();
+		for (const pending of this.interactions.values())
+			pending.resolve({
+				requestId: pending.request.requestId,
+				toolCallId: pending.request.toolCallId,
+				status: "disposed",
+			});
+		this.interactions.clear();
 		await Promise.allSettled([...this.operations.values()].map((operation) => operation.promise));
 		await this.attachments.dispose();
 		this.listeners.clear();
@@ -437,6 +483,22 @@ export class RpcDispatcher {
 						approvalId: request.params.approvalId,
 						approved: request.params.approved,
 					});
+				case "respond_interaction": {
+					const interactionId = request.params.requestId as string;
+					const pending = this.interactions.get(interactionId);
+					if (pending) {
+						this.interactions.delete(interactionId);
+						pending.resolve({
+							requestId: interactionId,
+							toolCallId: pending.request.toolCallId,
+							status: request.params.status as UserInteractionResult["status"],
+							...(typeof request.params.approved === "boolean" ? { approved: request.params.approved } : {}),
+							...(typeof request.params.value === "string" ? { value: request.params.value } : {}),
+							...(typeof request.params.feedback === "string" ? { feedback: request.params.feedback } : {}),
+						});
+					}
+					return this.success(request.id, { method: "respond_interaction", requestId: interactionId });
+				}
 				case "run_command":
 					return this.failure(request.id, "METHOD_NOT_FOUND", "Command execution requires operation dispatch.");
 				default:
@@ -449,7 +511,14 @@ export class RpcDispatcher {
 
 	/** Waits for the browser to approve a specific tool invocation. */
 	async requestToolApproval(toolName: string, parameters: unknown, signal?: AbortSignal): Promise<boolean> {
-		if (!this.negotiatedEvents.has("tool_approval")) return true;
+		if (!this.negotiatedEvents.has("tool_approval") && !this.negotiatedEvents.has("interaction_request")) return false;
+		if (this.negotiatedEvents.has("interaction_request")) {
+			const result = await this.requestInteraction(
+				{ kind: "approval", prompt: `Allow tool ${toolName}?`, toolCallId: randomUUID(), intent: "tool-approval" },
+				signal,
+			);
+			return result.status === "answered" && result.approved === true;
+		}
 		const approvalId = randomUUID();
 		const requestId =
 			[...this.operations.values()].find((operation) => operation.status === "running")?.requestId ?? approvalId;
@@ -478,6 +547,58 @@ export class RpcDispatcher {
 					toolName,
 					arguments: typeof parameters === "object" && parameters !== null ? parameters : {},
 				},
+			});
+		});
+	}
+
+	/** Requests a structured user response through the negotiated interaction channel. */
+	async requestInteraction(
+		input: Omit<UserInteractionInput, "requestId"> & { readonly requestId?: string },
+		signal?: AbortSignal,
+	): Promise<UserInteractionResult> {
+		if (!this.negotiatedEvents.has("interaction_request")) {
+			throw Object.assign(new Error("No user interaction channel is available."), { code: "INTERACTION_UNAVAILABLE" });
+		}
+		const requestId = input.requestId ?? randomUUID();
+		const request: UserInteractionInput = { ...input, requestId };
+		const existing = this.interactions.get(requestId);
+		if (existing)
+			return await new Promise((resolve) => {
+				const original = existing.resolve;
+				existing.resolve = (result) => {
+					original(result);
+					resolve(result);
+				};
+			});
+		return await new Promise<UserInteractionResult>((resolve, reject) => {
+			const abort = () => {
+				this.interactions.delete(requestId);
+				reject(Object.assign(new Error("User interaction was cancelled."), { code: "CANCELLED" }));
+			};
+			if (signal?.aborted) return abort();
+			signal?.addEventListener("abort", abort, { once: true });
+			this.interactions.set(requestId, {
+				request,
+				resolve: (result) => {
+					signal?.removeEventListener("abort", abort);
+					resolve(result);
+				},
+			});
+			if (input.timeoutMs !== undefined) {
+				setTimeout(() => {
+					const current = this.interactions.get(requestId);
+					if (!current) return;
+					this.interactions.delete(requestId);
+					resolve({ requestId, toolCallId: input.toolCallId, status: "timeout" });
+				}, input.timeoutMs);
+			}
+			this.emit({
+				version: RPC_PROTOCOL_VERSION,
+				kind: "event",
+				requestId,
+				sessionId: this.activeSessionId(),
+				sequence: ++this.sequence,
+				event: { type: "interaction_request", interactionRequestId: requestId, ...request },
 			});
 		});
 	}
@@ -860,11 +981,27 @@ export class RpcDispatcher {
 			description: skill.description,
 			kind: "skill" as const,
 		}));
+		if (sessionHost(this.session) && !commands.some((command) => command.name === "plan")) {
+			commands.push({ name: "plan", description: "Enter or leave plan mode.", kind: "command" });
+		}
 		return [...commands, ...skills].sort((left, right) => left.name.localeCompare(right.name));
 	}
 	private async runCommand(request: RpcRequest, signal: AbortSignal): Promise<RpcSuccessResult> {
 		const name = request.params.name as string;
 		const args = (request.params.args as string | undefined) ?? "";
+		if (name === "plan" && sessionHost(this.session)) {
+			await this.session.planCommand(args);
+			const projection = this.session.planMode();
+			if (projection)
+				this.emitProjection({
+					namespace: "plan",
+					projectionName: "mode",
+					version: 1,
+					state: projection,
+					requestId: request.id,
+				});
+			return { method: "run_command", command: name, action: { command: name, args } };
+		}
 		if (!this.commandRegistry?.list().some((command) => command.name === name))
 			throw new RpcProtocolError("NOT_FOUND", `Unknown command: /${name}`, request.id);
 		let action: RpcCommandAction | undefined;
@@ -901,10 +1038,16 @@ export class RpcDispatcher {
 						"snapshot_required",
 						"session_changed",
 						"tool_approval",
+						"interaction_request",
 						"product_audit",
+						"projection",
 					].includes(event)
 				)
 					this.negotiatedEvents.add(event);
+		if (this.negotiatedEvents.has("projection") && sessionHost(this.session)) {
+			const projection = this.session.planMode?.();
+			if (projection) this.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: projection });
+		}
 		return this.success(request.id, {
 			method: "get_capabilities",
 			methods: RPC_METHODS_FOR_CAPABILITIES,
@@ -994,6 +1137,7 @@ export class RpcDispatcher {
 				},
 				transcript: snapshot.transcript,
 				tree: snapshot.tree,
+				...(snapshot.events ? { events: snapshot.events } : {}),
 				stats: snapshot.stats,
 				readOnly: true,
 			},
@@ -1048,6 +1192,10 @@ export class RpcDispatcher {
 		});
 	}
 	private onSessionEvent(event: SessionHostEvent | AgentSessionEvent): void {
+		if (sessionHost(this.session) && this.negotiatedEvents.has("projection")) {
+			const projection = this.session.planMode?.();
+			if (projection) this.emitProjection({ namespace: "plan", projectionName: "mode", version: 1, state: projection });
+		}
 		const operation = [...this.operations.values()].find((item) => item.status === "running");
 		const extended = event.type === "session_changed";
 		if (extended && !this.negotiatedEvents.has("session_changed")) return;
@@ -1074,6 +1222,24 @@ export class RpcDispatcher {
 				this.onError(errorFrom(cause));
 			}
 		}
+	}
+}
+
+function isBrowserSafeProjection(value: unknown): boolean {
+	const visit = (candidate: unknown): boolean => {
+		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") return true;
+		if (typeof candidate === "number") return Number.isFinite(candidate);
+		if (Array.isArray(candidate)) return candidate.every(visit);
+		if (typeof candidate !== "object") return false;
+		for (const [key, item] of Object.entries(candidate as Record<string, unknown>))
+			if (FORBIDDEN_PROJECTION_KEYS.test(key) || !visit(item)) return false;
+		return true;
+	};
+	if (!visit(value)) return false;
+	try {
+		return Buffer.byteLength(JSON.stringify(value), "utf8") <= MAX_PROJECTION_BYTES;
+	} catch {
+		return false;
 	}
 }
 

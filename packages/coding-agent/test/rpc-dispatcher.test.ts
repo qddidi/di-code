@@ -5,6 +5,7 @@ import type { AgentSessionEvent, AgentSessionListener } from "../src/core/sessio
 import { RpcDispatcher, type RpcSession } from "../src/rpc/dispatcher.ts";
 import { parseRpcRequest, RPC_PROTOCOL_VERSION, type RpcRequest, type RpcServerMessage } from "../src/rpc/protocol.ts";
 import type { ProductHost } from "../src/runtime/product-host.ts";
+import type { SessionHost } from "../src/runtime/session-host.ts";
 
 function request(id: string, method: RpcRequest["method"], params: Record<string, unknown> = {}): RpcRequest {
 	return { version: RPC_PROTOCOL_VERSION, kind: "request", id, method, params };
@@ -70,6 +71,43 @@ class DeferredSession implements RpcSession {
 }
 
 describe("RpcDispatcher", () => {
+	it("exposes plan command and projection for SessionHost clients", async () => {
+		let received = "";
+		let projection = { active: false, pending: false };
+		const host = {
+			planMode: () => projection,
+			planCommand: async (args: string) => {
+				received = args;
+				projection = { active: args !== "off", pending: false };
+				return projection.active ? "Plan mode enabled." : "Plan mode disabled.";
+			},
+			state: () => ({
+				disposed: false,
+				workspace: ".",
+				busy: false,
+				operations: [],
+				activeSession: { id: "s", cwd: ".", label: "s" },
+			}),
+			ui: () => ({ availableSkills: [] }),
+			subscribe: () => () => undefined,
+		} as unknown as SessionHost;
+		const dispatcher = new RpcDispatcher({ session: host });
+		const capabilities = await dispatcher.dispatch(
+			request("capabilities", "get_capabilities", { events: ["projection"] }),
+		);
+		expect(capabilities).toMatchObject({ ok: true });
+		const listed = await dispatcher.dispatch(request("list", "list_commands"));
+		expect(listed).toMatchObject({ ok: true });
+		const listedCommands = (
+			listed as unknown as { readonly result: { readonly commands: readonly { readonly name: string }[] } }
+		).result.commands;
+		expect(listedCommands.some((command) => command.name === "plan")).toBe(true);
+		const executed = await dispatcher.dispatch(request("run", "run_command", { name: "plan", args: "off" }));
+		expect(executed).toMatchObject({ ok: true, result: { command: "plan" } });
+		expect(received).toBe("off");
+		await dispatcher.dispose();
+	});
+
 	it("lists and executes composition-registered commands", async () => {
 		const commands = createCommandRegistry();
 		let receivedArgs: string | undefined;
@@ -111,6 +149,60 @@ describe("RpcDispatcher", () => {
 		await dispatcher.dispatch(request("approve", "approve_tool", { approvalId, approved: true }));
 		await expect(pending).resolves.toBe(true);
 		await dispatcher.dispose();
+	});
+
+	it("routes structured interactions and makes duplicate responses idempotent", async () => {
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
+		const records: RpcServerMessage[] = [];
+		dispatcher.subscribe((record) => records.push(record));
+		await dispatcher.dispatch(request("capabilities", "get_capabilities", { events: ["interaction_request"] }));
+		const pending = dispatcher.requestInteraction({
+			requestId: "interaction-1",
+			kind: "question",
+			prompt: "Continue?",
+			intent: "plan-review",
+		});
+		const event = records.find((record) => record.kind === "event" && record.event.type === "interaction_request");
+		expect(event).toMatchObject({ event: { interactionRequestId: "interaction-1", prompt: "Continue?" } });
+		await dispatcher.dispatch(
+			request("answer-1", "respond_interaction", { requestId: "interaction-1", status: "answered", value: "continue" }),
+		);
+		await dispatcher.dispatch(
+			request("answer-2", "respond_interaction", { requestId: "interaction-1", status: "answered", value: "cancel" }),
+		);
+		await expect(pending).resolves.toMatchObject({ status: "answered", value: "continue" });
+		await dispatcher.dispose();
+	});
+
+	it("fails interaction fast without a negotiated UI channel and denies approval by default", async () => {
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
+		await expect(dispatcher.requestInteraction({ kind: "question", prompt: "No UI" })).rejects.toMatchObject({
+			code: "INTERACTION_UNAVAILABLE",
+		});
+		await expect(dispatcher.requestToolApproval("write", { path: "x" })).resolves.toBe(false);
+		await dispatcher.dispose();
+	});
+
+	it("does not publish projections containing local paths or credentials", async () => {
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
+		const records: RpcServerMessage[] = [];
+		dispatcher.subscribe((record) => records.push(record));
+		await dispatcher.dispatch(request("capabilities", "get_capabilities", { events: ["projection"] }));
+		dispatcher.emitProjection({ namespace: "plan", projectionName: "state", version: 1, state: { cwd: "C:/private" } });
+		dispatcher.emitProjection({ namespace: "plan", projectionName: "state", version: 1, state: { status: "active" } });
+		expect(records.filter((record) => record.kind === "event" && record.event.type === "projection")).toHaveLength(1);
+		await dispatcher.dispose();
+	});
+
+	it("completes pending interaction on timeout and dispatcher unload", async () => {
+		const dispatcher = new RpcDispatcher({ session: new DeferredSession() });
+		await dispatcher.dispatch(request("capabilities", "get_capabilities", { events: ["interaction_request"] }));
+		await expect(
+			dispatcher.requestInteraction({ requestId: "timeout", kind: "question", prompt: "Wait", timeoutMs: 1 }),
+		).resolves.toMatchObject({ status: "timeout" });
+		const pending = dispatcher.requestInteraction({ requestId: "dispose", kind: "question", prompt: "Close" });
+		await dispatcher.dispose();
+		await expect(pending).resolves.toMatchObject({ status: "disposed" });
 	});
 
 	it("tracks cancellable ProductHost changes and forwards redacted audit events", async () => {

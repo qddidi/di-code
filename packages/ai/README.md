@@ -32,6 +32,8 @@ for await (const event of stream) {
 
 Provider 可以通过 `StreamEvent` 的原子 `image` 事件返回助手生成图片。图片数据使用不带前缀的 Base64，并会出现在最终 `AssistantMessage.content` 中；适配器应在发出事件前完成下载和 MIME 校验。对非流式生图服务，使用下方的 Images API 适配器或由插件实现自定义 Provider。
 
+Provider 接收的 `Context.systemPrompt` 是 Agent 在每次请求前组装的最终文本。动态 section 不改变既有 Provider schema；支持提示词缓存的适配器继续使用稳定的 `StreamOptions.sessionId` 作为缓存键，section 内容变化只影响对应请求内容。
+
 `generateOpenAIImages` 和 `createOpenAIImagesProvider` 提供独立的 OpenAI Images 兼容适配器。它们调用 `/images/generations`，接受 `b64_json` 或图片 URL，并统一返回已校验的 `ImageContent`；`baseUrl` 和模型 ID 可覆盖，因此第三方兼容网关无需修改 AI 公共协议。
 
 需要工具执行和完整对话历史时，请配合 [`@di-code/agent`](https://www.npmjs.com/package/@di-code/agent)。

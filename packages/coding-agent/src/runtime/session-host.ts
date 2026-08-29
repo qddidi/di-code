@@ -9,8 +9,11 @@ import {
 	runtimeSelectionKey,
 	sessionStoreRegistryKey,
 	type ToolApprovalCapability,
+	type ToolPolicyMode,
+	type ToolPolicySnapshot,
 } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
+import type { UserInteraction } from "@di-code/plugin-sdk";
 import { SessionManager } from "../core/session/session-manager.ts";
 import type { SessionTreeNode } from "../core/session/types.ts";
 import {
@@ -49,6 +52,7 @@ export interface SessionSnapshot {
 	readonly tree: readonly SessionTreeNode[];
 	readonly stats: SessionStats;
 	readonly readOnly: true;
+	readonly events?: readonly import("../core/session/types.ts").SessionEventEntry[];
 }
 
 export interface SessionHostState {
@@ -85,6 +89,10 @@ export interface SessionHostBootstrapOptions {
 	readonly compaction?: AgentSessionCompactionOptions;
 	/** Per-host approval boundary captured by each created AgentSession. */
 	readonly toolApproval?: ToolApprovalCapability;
+	readonly toolPolicy?: import("@di-code/builtins").ToolPolicyCapability;
+	/** Structured user interaction boundary for session-scoped tools. */
+	readonly interaction?: UserInteraction;
+	readonly planMode?: { readonly section: string };
 	/** Optional managed JSONL file to open before the host is returned. */
 	readonly initialSessionPath?: string;
 }
@@ -123,6 +131,10 @@ export interface SessionHost {
 	/** Reloads Skills, context and MCP tools after an explicit product-configuration change. */
 	readonly refreshResources: (projectTrusted?: boolean, signal?: AbortSignal) => Promise<void>;
 	readonly usage: () => SessionUsage;
+	readonly toolPolicy: () => ToolPolicySnapshot | undefined;
+	readonly setToolPolicyMode: (mode: ToolPolicyMode, signal?: AbortSignal) => Promise<ToolPolicySnapshot>;
+	readonly planMode: () => import("@di-code/plan-mode").PlanModeProjection | undefined;
+	readonly planCommand: (args: string) => Promise<string>;
 	readonly ui: () => SessionHostUi;
 	readonly subscribe: (listener: SessionHostListener) => () => void;
 	readonly dispose: () => Promise<void>;
@@ -160,6 +172,8 @@ export interface SessionHostUi {
 	readonly setCompactionEnabled: SessionHost["setCompactionEnabled"];
 	readonly navigateTree: SessionHost["navigateTree"];
 	readonly compact: SessionHost["compact"];
+	readonly planMode: SessionHost["planMode"];
+	readonly planCommand: SessionHost["planCommand"];
 }
 
 export class SessionHostError extends Error {
@@ -482,6 +496,9 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			externalTools: resources.externalTools,
 			compaction: options.compaction,
 			toolApproval: options.toolApproval,
+			toolPolicy: options.toolPolicy,
+			interaction: options.interaction,
+			planMode: options.planMode,
 		});
 		if (!(created instanceof AgentSession))
 			throw new SessionHostError("INTERNAL", "SessionFactory returned an incompatible session.");
@@ -669,6 +686,7 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				tree: manager.getTree(),
 				stats: statsFor(manager),
 				readOnly: true,
+				events: manager.events,
 			};
 		},
 		renameSession: async (id, label) => {
@@ -727,11 +745,16 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			if (!(branch instanceof SessionManager)) throw new SessionHostError("INTERNAL", "Invalid SessionManager.");
 			const selected = entryId ? source.getEntry(entryId) : undefined;
 			if (entryId && !selected) throw new SessionHostError("NOT_FOUND", "Session tree entry was not found.");
-			const messages = source
-				.getBranch(entryId ?? source.leafId)
-				.filter((entry) => entry.type === "message")
-				.map((entry) => entry.message);
-			for (const message of messages) await branch.appendMessage(message);
+			for (const entry of source.getBranch(entryId ?? source.leafId)) {
+				if (entry.type === "message") await branch.appendMessage(entry.message);
+				else if (entry.type === "event")
+					await branch.appendEvent({
+						namespace: entry.namespace,
+						eventName: entry.eventName,
+						schemaVersion: entry.schemaVersion,
+						payload: entry.payload,
+					});
+			}
 			return await openManager(branch);
 		},
 		closeSession: async () => {
@@ -921,6 +944,10 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			});
 		},
 		usage: () => current().session.usage,
+		toolPolicy: () => current().session.toolPolicySnapshot,
+		setToolPolicyMode: (mode, signal) => current().session.setToolPolicyMode(mode, signal),
+		planMode: () => current().session.planModeProjection,
+		planCommand: (args) => current().session.planModeCommand(args),
 		ui: () => {
 			const session = current().session;
 			return {
@@ -973,6 +1000,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 				setCompactionEnabled: api.setCompactionEnabled,
 				navigateTree: api.navigateTree,
 				compact: api.compact,
+				planMode: api.planMode,
+				planCommand: api.planCommand,
 			} satisfies SessionHostUi;
 		},
 		subscribe: (listener) => {

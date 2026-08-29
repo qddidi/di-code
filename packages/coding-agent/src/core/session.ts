@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { AgentTool, AgentToolResult } from "@di-code/agent";
+import type { AgentHookRegistration, AgentTool, AgentToolResult } from "@di-code/agent";
 import {
 	Agent,
 	type AgentListener,
 	type ContextBudget,
 	estimateContextTokens,
 	generateCompactionSummary,
+	type PromptSectionRegistry,
 	prepareCompaction,
 	resolveContextBudget,
 	shouldCompact,
@@ -21,6 +22,8 @@ import type {
 	Usage,
 	UserContent,
 } from "@di-code/ai";
+import type { ToolPolicyCapability, ToolPolicyMode, ToolPolicySnapshot } from "@di-code/builtins";
+import type { PlanModeController, PlanModeProjection } from "@di-code/plan-mode";
 import { createSkillCatalog, resolveSkillInvocation, type SkillCatalog } from "@di-code/skills";
 import type { SkillResource } from "./resources/types.ts";
 import type { SessionManager } from "./session/session-manager.ts";
@@ -61,10 +64,16 @@ export interface AgentSessionOptions {
 	/** Valid initial override for the selected model's thinking level. */
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly systemPrompt?: string;
+	readonly promptSections?: PromptSectionRegistry;
+	/** Returns an immutable, session-owned snapshot for dynamic prompt generators. */
+	readonly getPromptSnapshot?: () => unknown;
 	readonly skills?: readonly SkillResource[];
 	readonly now?: () => number;
 	readonly sessionManager?: SessionManager;
 	readonly compaction?: AgentSessionCompactionOptions;
+	readonly toolPolicy?: ToolPolicyCapability;
+	readonly hooks?: readonly AgentHookRegistration[];
+	readonly planMode?: PlanModeController;
 	/** Called once when the owning product host releases this session scope. */
 	readonly onDispose?: () => void | Promise<void>;
 }
@@ -133,11 +142,15 @@ export class AgentSession {
 	private readonly sessionListeners = new Set<AgentSessionListener>();
 	private readonly agentUnsubscribers: Array<() => void> = [];
 	private readonly onDispose?: AgentSessionOptions["onDispose"];
+	private readonly toolPolicy?: ToolPolicyCapability;
+	private readonly planModeController?: PlanModeController;
 	private disposed = false;
 
 	constructor(options: AgentSessionOptions) {
 		this.allowedRootValue = options.allowedRoot;
 		this.onDispose = options.onDispose;
+		this.toolPolicy = options.toolPolicy;
+		this.planModeController = options.planMode;
 		this.sessionManager = options.sessionManager;
 		this.provider = options.provider;
 		this.skills = structuredClone(
@@ -200,6 +213,9 @@ export class AgentSession {
 			now: this.now,
 			initialMessages: options.sessionManager?.messages,
 			initialContextMessages: initialContext?.messages,
+			promptSections: options.promptSections,
+			getPromptSnapshot: options.getPromptSnapshot,
+			hooks: options.hooks,
 		});
 		this.agentUnsubscribers.push(
 			this.agent.subscribe(async (event) => {
@@ -239,6 +255,8 @@ export class AgentSession {
 	async dispose(): Promise<void> {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.toolPolicy?.dispose?.();
+		await this.planModeController?.dispose();
 		for (const unsubscribe of this.agentUnsubscribers.splice(0)) unsubscribe();
 		this.sessionListeners.clear();
 		await this.onDispose?.();
@@ -375,6 +393,39 @@ export class AgentSession {
 
 	get sessionLeafId(): string | undefined {
 		return this.sessionManager?.leafId;
+	}
+
+	get toolPolicySnapshot(): ToolPolicySnapshot | undefined {
+		return this.toolPolicy?.snapshot?.();
+	}
+
+	get planModeProjection(): PlanModeProjection | undefined {
+		return this.planModeController?.get();
+	}
+
+	planModeCommand(args: string): Promise<string> {
+		if (!this.planModeController) return Promise.reject(new Error("Plan mode is unavailable."));
+		return this.planModeController.command(args, async (message) => {
+			if (this.promptActive) {
+				await this.steer(message);
+				return;
+			}
+			await this.prompt(message);
+		});
+	}
+
+	planCommand(args: string): Promise<string> {
+		return this.planModeCommand(args);
+	}
+
+	planMode(): PlanModeProjection | undefined {
+		return this.planModeProjection;
+	}
+
+	async setToolPolicyMode(mode: ToolPolicyMode, signal?: AbortSignal): Promise<ToolPolicySnapshot> {
+		this.assertNotDisposed();
+		if (!this.toolPolicy?.setMode) throw new Error("Session tool policy is not dynamic.");
+		return await this.toolPolicy.setMode(mode, signal);
 	}
 
 	get usage(): SessionUsage {

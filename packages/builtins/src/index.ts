@@ -1,7 +1,7 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Agent, AgentEvent } from "@di-code/agent";
+import type { Agent, AgentEvent, PromptSectionRegistration } from "@di-code/agent";
 import { Agent as AgentImpl } from "@di-code/agent";
 import type { AssistantMessage, FauxResponse, Message, Model, Provider, ThinkingLevel, Usage } from "@di-code/ai";
 import {
@@ -28,6 +28,7 @@ import type {
 	ToolPolicyCapability,
 	WorkspaceCapability,
 } from "./tool-capabilities.ts";
+import { createSessionToolPolicy } from "./tool-capabilities.ts";
 import { createEditTool } from "./tool-edit-implementation.ts";
 import { createGenerateImageTool } from "./tool-generate-image-implementation.ts";
 import { createGlobTool } from "./tool-glob-implementation.ts";
@@ -100,10 +101,12 @@ export interface SessionStoreRegistry {
 
 export interface PromptRegistry {
 	readonly register: (name: string, get: (input?: unknown) => string | Promise<string>) => () => void;
+	readonly registerSection?: (section: PromptSectionRegistration) => () => void;
 	readonly snapshot: () => readonly {
 		readonly name: string;
 		readonly get: (input?: unknown) => string | Promise<string>;
 	}[];
+	readonly snapshotSections?: () => readonly PromptSectionRegistration[];
 }
 
 export interface CompactionRegistry {
@@ -419,6 +422,7 @@ function createNamedRegistry<T>(
 	kind: "prompt" | "compaction" | "resource",
 ): PromptRegistry | CompactionRegistry | ResourceRegistry {
 	const entries = new Map<string, T>();
+	const sections = new Map<string, PromptSectionRegistration>();
 	return {
 		register(name: string, value: T) {
 			if (entries.has(name)) throw new Error(`Duplicate ${kind} registration: ${name}`);
@@ -427,6 +431,18 @@ function createNamedRegistry<T>(
 				if (entries.get(name) === value) entries.delete(name);
 			};
 		},
+		...(kind === "prompt"
+			? {
+					registerSection(section: PromptSectionRegistration) {
+						if (sections.has(section.name)) throw new Error(`Duplicate prompt section: ${section.name}`);
+						sections.set(section.name, section);
+						return () => {
+							if (sections.get(section.name) === section) sections.delete(section.name);
+						};
+					},
+					snapshotSections: () => Object.freeze([...sections.values()]),
+				}
+			: {}),
 		snapshot: () =>
 			[...entries.entries()].map(([name, value]) => ({
 				name,
@@ -591,6 +607,7 @@ export function createBuiltinCommandRegistry(): CommandRegistry {
 		["usage", "Show usage"],
 		["retry", "Retry the last prompt"],
 		["steer", "Steer the running Agent"],
+		["plan", "Enter or leave plan mode"],
 	] as const)
 		registry.register(commandDefinition(name, description));
 	return registry;
@@ -681,7 +698,7 @@ export const toolPolicy: PluginDefinition = {
 	name: "tool-policy",
 	version: "0.1.7",
 	apply(context) {
-		context.set(toolPolicyKey, { authorize: () => undefined });
+		context.set(toolPolicyKey, createSessionToolPolicy({ sessionId: "composition" }));
 	},
 };
 
@@ -1247,6 +1264,7 @@ export const commandInteractiveCore: PluginDefinition = {
 				["help", "Show available commands"],
 				["clear", "Clear visible messages"],
 				["steer", "Steer the running Agent"],
+				["plan", "Enter or leave plan mode"],
 			],
 			fiber,
 		);

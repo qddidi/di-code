@@ -5,6 +5,7 @@ import {
 	type LoadedSession,
 	SESSION_FORMAT_VERSION,
 	type SessionEntry,
+	type SessionEventEntry,
 	type SessionHeader,
 	SessionLoadError,
 	type SessionMessageEntry,
@@ -15,6 +16,7 @@ import {
 
 type JsonObject = Record<string, unknown>;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_SESSION_EVENT_PAYLOAD_BYTES = 256 * 1024;
 
 function isObject(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -51,6 +53,10 @@ function isJsonValue(value: unknown): boolean {
 	if (typeof value === "number") return Number.isFinite(value);
 	if (Array.isArray(value)) return value.every(isJsonValue);
 	return isObject(value) && Object.values(value).every(isJsonValue);
+}
+
+function isBoundedJsonValue(value: unknown): value is import("@di-code/ai").JsonValue {
+	return isJsonValue(value) && Buffer.byteLength(JSON.stringify(value), "utf8") <= MAX_SESSION_EVENT_PAYLOAD_BYTES;
 }
 
 function isProviderReplay(value: unknown): boolean {
@@ -198,7 +204,10 @@ function decodeHeader(value: unknown, filePath: string): SessionHeader {
 }
 
 function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; readonly reason?: string } {
-	if (!isObject(value) || (value.type !== "message" && value.type !== "summary" && value.type !== "plugin")) {
+	if (
+		!isObject(value) ||
+		(value.type !== "message" && value.type !== "summary" && value.type !== "plugin" && value.type !== "event")
+	) {
 		return { reason: 'record type must be "message", "summary", or "plugin"' };
 	}
 	if (value.version !== SESSION_FORMAT_VERSION) return { reason: `record version must be ${SESSION_FORMAT_VERSION}` };
@@ -222,6 +231,20 @@ function decodeSessionEntry(value: unknown): { readonly entry?: SessionEntry; re
 		)
 			return { reason: "record plugin fields are invalid" };
 		return { entry: value as unknown as SessionPluginEntry };
+	}
+	if (value.type === "event") {
+		if (
+			typeof value.namespace !== "string" ||
+			!/^[a-z0-9][a-z0-9._-]*$/.test(value.namespace) ||
+			typeof value.eventName !== "string" ||
+			!/^[a-z0-9][a-z0-9._-]*$/.test(value.eventName) ||
+			typeof value.schemaVersion !== "number" ||
+			!Number.isSafeInteger(value.schemaVersion) ||
+			value.schemaVersion < 0 ||
+			!isBoundedJsonValue(value.payload)
+		)
+			return { reason: "record event fields are invalid or payload exceeds the limit" };
+		return { entry: value as unknown as SessionEventEntry };
 	}
 	if (typeof value.summary !== "string" || value.summary.trim().length === 0) {
 		return { reason: "record summary must be a non-empty string" };
@@ -345,6 +368,7 @@ export interface SessionAppendOptions {
 	readonly lockRetryMs?: number;
 	readonly now?: () => number;
 	readonly sleep?: (milliseconds: number) => Promise<void>;
+	readonly signal?: AbortSignal;
 }
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
@@ -386,6 +410,8 @@ async function acquireLock(filePath: string, options: SessionAppendOptions) {
 	const startedAt = now();
 
 	while (true) {
+		if (options.signal?.aborted)
+			throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 		try {
 			return { handle: await open(lockPath, "wx"), lockPath };
 		} catch (cause) {
@@ -433,6 +459,8 @@ export async function appendSessionEntry(
 	expectedParentId: string,
 	options: SessionAppendOptions = {},
 ): Promise<void> {
+	if (options.signal?.aborted)
+		throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 	const entrySnapshot = structuredClone(entry);
 	const decodedEntry = decodeSessionEntry(entrySnapshot);
 	if (!decodedEntry.entry) {

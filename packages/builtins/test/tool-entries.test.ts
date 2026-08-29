@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	createDefaultToolCapabilities,
 	createGenerateImageTool,
+	createSessionToolPolicy,
+	ToolPolicyError,
 	toolApproval,
 	toolApprovalKey,
 	toolEdit,
@@ -114,6 +116,77 @@ describe("tool composition entries", () => {
 		} finally {
 			await context.dispose();
 		}
+	});
+
+	it("enforces a denying policy before approval or tool execution", async () => {
+		const root = await createWorkspace();
+		const context = createRootContext({ id: "tool-policy-deny-baseline" });
+		const calls: string[] = [];
+		try {
+			await context.plugin(toolRegistry, undefined);
+			await context.plugin(workspace, { allowedRoot: root });
+			context.set(toolPolicyKey, {
+				authorize: () => {
+					calls.push("policy");
+					throw new Error("denied by baseline policy");
+				},
+			});
+			context.set(toolApprovalKey, { request: () => void calls.push("approval") });
+			await context.plugin(toolRead, undefined);
+			const read = context
+				.require(toolRegistryKey)
+				.snapshot({
+					...createDefaultToolCapabilities(root),
+					policy: context.require(toolPolicyKey),
+					approval: context.require(toolApprovalKey),
+				})
+				.find((tool) => tool.name === "read");
+			if (!read) throw new Error("read tool was not registered");
+
+			await expect(read.execute("read-denied", { path: "missing.txt" } as never)).rejects.toThrow(
+				"denied by baseline policy",
+			);
+			expect(calls).toEqual(["policy"]);
+		} finally {
+			await context.dispose();
+		}
+	});
+
+	it("keeps a per-session read-only boundary atomic and cancellation-aware", async () => {
+		const persisted: string[] = [];
+		let reads = 0;
+		const policy = createSessionToolPolicy({
+			sessionId: "session-a",
+			projection: () => {
+				reads++;
+				return { plan: true };
+			},
+			pluginState: () => {
+				reads++;
+				return { trusted: true };
+			},
+			persistMode: async (mode) => {
+				persisted.push(mode);
+			},
+		});
+		const write = () => policy.authorize("write", { path: "x" });
+		await Promise.all([policy.setMode?.("read_only"), policy.setMode?.("read_only")]);
+		expect(policy.snapshot?.()).toMatchObject({ mode: "read_only", revision: 1, sessionId: "session-a" });
+		expect(persisted).toEqual(["read_only"]);
+		expect(write).toThrow(/read-only/);
+		policy.authorize("read", {});
+		expect(reads).toBe(2);
+		const controller = new AbortController();
+		controller.abort(new Error("cancelled"));
+		const cancelled = () => Promise.resolve().then(() => policy.authorize("read", {}, controller.signal));
+		await expect(cancelled()).rejects.toBeInstanceOf(ToolPolicyError);
+		await expect(cancelled()).rejects.toMatchObject({ code: "POLICY_CANCELLED" });
+		const timed = createSessionToolPolicy({
+			sessionId: "session-timeout",
+			timeoutMs: 1,
+			persistMode: () => new Promise<void>(() => undefined),
+		});
+		await expect(timed.setMode?.("read_only")).rejects.toMatchObject({ code: "POLICY_TIMEOUT" });
 	});
 
 	it("returns generated images and stores them outside the workspace", async () => {

@@ -4,6 +4,7 @@ export const releasePackages = [
 	{ directory: "plugin-runtime", name: "@di-code/plugin-runtime" },
 	{ directory: "plugin-loader", name: "@di-code/plugin-loader" },
 	{ directory: "plugin-sdk", name: "@di-code/plugin-sdk" },
+	{ directory: "plan-mode", name: "@di-code/plan-mode" },
 	{ directory: "ai", name: "@di-code/ai" },
 	{ directory: "agent", name: "@di-code/agent" },
 	{ directory: "skills", name: "@di-code/skills" },

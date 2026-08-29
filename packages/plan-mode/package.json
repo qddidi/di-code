@@ -1,0 +1,31 @@
+{
+	"name": "@di-code/plan-mode",
+	"version": "0.2.1",
+	"description": "Reference plan-mode plugin for di-code",
+	"private": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest run --passWithNoTests"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@di-code/agent": "0.2.1",
+		"@di-code/ai": "0.2.1",
+		"@di-code/plugin-sdk": "0.2.1"
+	}
+}

@@ -85,7 +85,7 @@ describe("release package contract", () => {
 			"--dry-run",
 			targetVersion,
 		]);
-		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 12 packages`);
+		expect(result.stdout).toContain(`Version dry-run passed: ${root.version} -> ${targetVersion} for 13 packages`);
 		await expect(
 			execFileAsync(process.execPath, [
 				join(repositoryRoot, "scripts", "version-packages.mjs"),

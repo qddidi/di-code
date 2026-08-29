@@ -10,7 +10,7 @@ export interface WebSlotActions {
 export interface WebSlotProps {
 	readonly contribution: WebContribution;
 	readonly data: Readonly<Record<string, string | number | boolean | null>>;
-	readonly context: Readonly<{ sessionId?: string; toolName?: string; status?: string }>;
+	readonly context: Readonly<{ sessionId?: string; toolName?: string; status?: string; projections?: Readonly<Record<string, { readonly version: number; readonly state: unknown }>> }>;
 	readonly actions: WebSlotActions;
 	readonly signal: AbortSignal;
 }
@@ -22,6 +22,10 @@ const builtinComponents: Readonly<Record<string, ComponentRenderer>> = {
 	"builtin.assistant-badge": ({ data }) => <aside className="web-contribution-node" aria-label="Plugin contribution">{String(data.label ?? "Agent activity")}</aside>,
 	"builtin.tool-audit": ({ context, data }) => <span className="web-contribution-tool">{String(data.label ?? "Tool audit")}{context.toolName ? `: ${context.toolName}` : ""}</span>,
 	"builtin.plugin-diagnostics": ({ actions, data }) => <button className="web-contribution-link" type="button" onClick={actions.openSettings}>{String(data.label ?? "Plugin diagnostics")}</button>,
+	"builtin.extension-badge": ({ data }) => <span className="web-extension-badge" role="status">{String(data.label ?? "Extension")}</span>,
+	"builtin.extension-control": ({ actions, data }) => <button className="web-contribution-link" type="button" onClick={actions.openSettings}>{String(data.label ?? "Open extension")}</button>,
+	"builtin.review-panel": ({ actions, data }) => <section className="web-review-panel" aria-label="Extension review"><strong>{String(data.label ?? "Review")}</strong>{data.actionLabel ? <button type="button" onClick={actions.openSettings}>{String(data.actionLabel)}</button> : null}</section>,
+	"builtin.composer-placeholder": ({ data }) => <span className="web-composer-placeholder">{String(data.label ?? "Extension input")}</span>,
 };
 
 class ContributionBoundary extends Component<{ readonly children: React.ReactNode }, { readonly failed: boolean }> {

@@ -1,7 +1,7 @@
 import { createFauxProvider } from "@di-code/ai";
 import { describe, expect, it } from "vitest";
-import type { AgentContext, AgentEvent, AgentMessage } from "../src/index.ts";
-import { agentLoop } from "../src/index.ts";
+import type { AgentContext, AgentEvent, AgentHookRegistration, AgentMessage } from "../src/index.ts";
+import { agentLoop, createPromptSectionRegistry } from "../src/index.ts";
 
 function userMessage(text: string, timestamp = 10): Extract<AgentMessage, { role: "user" }> {
 	return { role: "user", content: [{ type: "text", text }], timestamp };
@@ -18,6 +18,157 @@ function context(messages: AgentMessage[] = []): AgentContext {
 }
 
 describe("agent loop contracts", () => {
+	it("assembles dynamic sections on every request with stable order and legacy prefix", async () => {
+		const faux = createFauxProvider({
+			responses: [
+				{ type: "success", content: [{ type: "tool_call", id: "call-1", name: "missing", arguments: {} }] },
+				{ type: "success", content: [{ type: "text", text: "done" }] },
+			],
+		});
+		const prompts: string[] = [];
+		const sessionIds: Array<string | undefined> = [];
+		const provider = {
+			...faux.provider,
+			stream(
+				model: typeof faux.model,
+				request: Parameters<typeof faux.provider.stream>[1],
+				options?: Parameters<typeof faux.provider.stream>[2],
+			) {
+				prompts.push(request.systemPrompt ?? "");
+				sessionIds.push(options?.sessionId);
+				return faux.provider.stream(model, request, options);
+			},
+		};
+		const registry = createPromptSectionRegistry();
+		registry.register({ name: "late", order: 20, owner: "test-plugin", generate: () => "late" });
+		registry.register({ name: "early", order: 10, owner: "test-plugin", generate: () => "early" });
+		const stream = agentLoop(userMessage("hello"), context(), {
+			provider,
+			model: faux.model,
+			sessionId: "cache-session",
+			promptSections: registry,
+			getPromptSnapshot: () => ({ mode: prompts.length === 0 ? "one" : "two" }),
+		});
+		await collect(stream);
+		expect(prompts).toEqual(["You are concise.\n\nearly\n\nlate", "You are concise.\n\nearly\n\nlate"]);
+		expect(sessionIds).toEqual(["cache-session", "cache-session"]);
+	});
+
+	it("rejects duplicate names and omits empty sections", async () => {
+		const registry = createPromptSectionRegistry();
+		const remove = registry.register({ name: "empty", order: 1, owner: "test", generate: () => "   " });
+		expect(() => registry.register({ name: "empty", order: 2, owner: "test", generate: () => "x" })).toThrow(
+			"Duplicate prompt section",
+		);
+		remove();
+	});
+	it("runs versioned hooks in registration order and preserves tool/request order", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "hello" }] }] });
+		const calls: string[] = [];
+		const hooks: AgentHookRegistration[] = [
+			{ kind: "observer", phase: "request_prepare", run: () => calls.push("prepare-1") },
+			{ kind: "observer", phase: "request_prepare", run: () => calls.push("prepare-2") },
+			{
+				kind: "modifier",
+				phase: "pre_step",
+				run: (event) => {
+					calls.push("pre-step");
+					if (!event.assembly) throw new Error("missing assembly");
+					return { type: "continue", assembly: { ...event.assembly, systemPrompt: "modified" } };
+				},
+			},
+			{ kind: "observer", phase: "request_accept", run: () => calls.push("accepted") },
+			{ kind: "observer", phase: "step_complete", run: () => calls.push("step") },
+			{ kind: "observer", phase: "turn_complete", run: () => calls.push("turn") },
+		];
+		const stream = agentLoop(userMessage("hello"), context(), { provider: faux.provider, model: faux.model, hooks });
+		await collect(stream);
+		expect(calls).toEqual(["prepare-1", "prepare-2", "pre-step", "accepted", "step", "turn"]);
+	});
+
+	it("isolates observer failures and recovers modifier failures as an error turn", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "unused" }] }] });
+		const observed: string[] = [];
+		const stream = agentLoop(userMessage("hello"), context(), {
+			provider: faux.provider,
+			model: faux.model,
+			hooks: [
+				{
+					kind: "observer",
+					phase: "request_prepare",
+					run: () => {
+						throw new Error("observer broke");
+					},
+				},
+				{ kind: "observer", phase: "failed", run: () => observed.push("failed") },
+				{
+					kind: "modifier",
+					phase: "pre_step",
+					run: () => {
+						throw new Error("modifier broke");
+					},
+				},
+			],
+		});
+		const events = await collect(stream);
+		const messages = await stream.result();
+		expect(observed).toEqual(["failed"]);
+		expect(messages.at(-1)).toMatchObject({ stopReason: "error", errorMessage: "modifier broke" });
+		expect(events.at(-1)?.type).toBe("agent_end");
+	});
+
+	it("passes AbortSignal to hooks and reports cancellation", async () => {
+		const controller = new AbortController();
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "unused" }] }] });
+		let cancelled = false;
+		const stream = agentLoop(
+			userMessage("hello"),
+			context(),
+			{
+				provider: faux.provider,
+				model: faux.model,
+				hooks: [
+					{
+						kind: "observer",
+						phase: "request_prepare",
+						run: (_event, hookContext) => {
+							expect(hookContext.signal).toBe(controller.signal);
+							controller.abort();
+						},
+					},
+					{
+						kind: "observer",
+						phase: "cancelled",
+						run: (_event, hookContext) => {
+							cancelled = hookContext.signal.aborted;
+						},
+					},
+				],
+			},
+			controller.signal,
+		);
+		const messages = await stream.result();
+		expect(cancelled).toBe(true);
+		expect(messages.at(-1)?.role).toBe("assistant");
+	});
+
+	it("turns a timed out modifier into a settled error turn", async () => {
+		const faux = createFauxProvider({ responses: [{ type: "success", content: [{ type: "text", text: "unused" }] }] });
+		const stream = agentLoop(userMessage("hello"), context(), {
+			provider: faux.provider,
+			model: faux.model,
+			hooks: [
+				{
+					kind: "modifier",
+					phase: "pre_step",
+					timeoutMs: 1,
+					run: () => new Promise(() => undefined),
+				},
+			],
+		});
+		const messages = await stream.result();
+		expect(messages.at(-1)).toMatchObject({ stopReason: "error", errorMessage: "Agent hook timed out." });
+	});
 	it("accepts context and preview-shaped lifecycle events", () => {
 		const contextValue: AgentContext = { messages: [] };
 		const event: AgentEvent = { type: "agent_start" };

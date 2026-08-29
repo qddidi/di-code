@@ -39,3 +39,6 @@ process.once("SIGINT", () => tui.stop());
 `TUI_THEMES` 和 `TuiTheme` 只描述 ANSI presentation colors；主题选择、Session、取消、重试和命令执行由产品层 Context/Registry 提供，TUI 不依赖 Provider 或 coding-agent。
 
 源码、示例和问题反馈：<https://github.com/qddidi/di-code>
+# Interaction facade
+
+`TuiInteractionFacade` is a presentation-only type shared by hosts. It carries structured question, choice, and approval requests and never exposes transport credentials or Session internals.

@@ -66,6 +66,7 @@ export const RPC_METHODS = [
 	"set_plugin_enabled",
 	"create_attachment",
 	"approve_tool",
+	"respond_interaction",
 ] as const;
 export type RpcMethod = (typeof RPC_METHODS)[number];
 
@@ -105,7 +106,17 @@ export type RpcExtendedEventName =
 	| "snapshot_required"
 	| "session_changed"
 	| "tool_approval"
-	| "product_audit";
+	| "interaction_request"
+	| "product_audit"
+	| "projection";
+
+export interface RpcProjectionEvent {
+	readonly type: "projection";
+	readonly namespace: string;
+	readonly projectionName: string;
+	readonly version: number;
+	readonly state: unknown;
+}
 
 export interface RpcProductState {
 	readonly projectTrusted: boolean;
@@ -193,7 +204,8 @@ export type RpcErrorCode =
 	| "INVALID_WORKSPACE"
 	| "UNAUTHORIZED"
 	| "INTERNAL_ERROR"
-	| "PROCESS_EXIT";
+	| "PROCESS_EXIT"
+	| "INTERACTION_UNAVAILABLE";
 
 const RPC_ERROR_CODES: ReadonlySet<RpcErrorCode> = new Set([
 	"PARSE_ERROR",
@@ -210,6 +222,7 @@ const RPC_ERROR_CODES: ReadonlySet<RpcErrorCode> = new Set([
 	"UNAUTHORIZED",
 	"INTERNAL_ERROR",
 	"PROCESS_EXIT",
+	"INTERACTION_UNAVAILABLE",
 ]);
 const LEGACY_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
 	"agent_start",
@@ -232,7 +245,9 @@ const EXTENDED_EVENT_TYPES = new Set([
 	"operation_update",
 	"session_changed",
 	"tool_approval",
+	"interaction_request",
 	"product_audit",
+	"projection",
 ]);
 const EXTENDED_EVENT_NAMES: ReadonlySet<RpcExtendedEventName> = new Set([
 	"sequence",
@@ -240,7 +255,9 @@ const EXTENDED_EVENT_NAMES: ReadonlySet<RpcExtendedEventName> = new Set([
 	"snapshot_required",
 	"session_changed",
 	"tool_approval",
+	"interaction_request",
 	"product_audit",
+	"projection",
 ]);
 const ASSISTANT_STOP_REASONS = new Set(["stop", "length", "tool_use", "error", "aborted"]);
 
@@ -277,9 +294,15 @@ export interface RpcEventRecord {
 				readonly projectTrusted?: boolean;
 		  }
 		| {
-				readonly type: "snapshot_required" | "operation_update" | "session_changed" | "tool_approval";
+				readonly type:
+					| "snapshot_required"
+					| "operation_update"
+					| "session_changed"
+					| "tool_approval"
+					| "interaction_request";
 				readonly [key: string]: unknown;
-		  };
+		  }
+		| RpcProjectionEvent;
 	readonly sessionId?: string;
 	readonly sequence?: number;
 }
@@ -534,6 +557,15 @@ export function parseRpcRequest(line: string): RpcRequest {
 			stringParam(params, "approvalId", id);
 			booleanParam(params, "approved", id);
 			break;
+		case "respond_interaction":
+			stringParam(params, "requestId", id);
+			if (typeof params.status !== "string" || !["answered", "cancelled", "timeout"].includes(params.status))
+				throw new RpcProtocolError("INVALID_PARAMS", "respond_interaction.status is invalid.", id);
+			if (params.approved !== undefined && typeof params.approved !== "boolean")
+				throw new RpcProtocolError("INVALID_PARAMS", "respond_interaction.approved must be boolean.", id);
+			if (params.value !== undefined) stringParam(params, "value", id, true);
+			if (params.feedback !== undefined) stringParam(params, "feedback", id, true);
+			break;
 	}
 	return { version: RPC_PROTOCOL_VERSION, kind: "request", id, method, params };
 }
@@ -677,6 +709,7 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 		case "set_locale":
 		case "set_permission_mode":
 		case "configure_custom_provider":
+		case "respond_interaction":
 			return;
 	}
 }
@@ -778,6 +811,15 @@ function assertEvent(event: Record<string, unknown>, type: string): void {
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC tool_approval event is invalid.");
 		return;
 	}
+	if (type === "interaction_request") {
+		if (
+			typeof event.interactionRequestId !== "string" ||
+			typeof event.kind !== "string" ||
+			typeof event.prompt !== "string"
+		)
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC interaction_request event is invalid.");
+		return;
+	}
 	if (type === "product_audit") {
 		if (
 			typeof event.action !== "string" ||
@@ -793,6 +835,17 @@ function assertEvent(event: Record<string, unknown>, type: string): void {
 			(event.projectTrusted !== undefined && typeof event.projectTrusted !== "boolean")
 		)
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC product_audit event is invalid.");
+		return;
+	}
+	if (type === "projection") {
+		if (
+			typeof event.namespace !== "string" ||
+			typeof event.projectionName !== "string" ||
+			!Number.isSafeInteger(event.version) ||
+			(event.version as number) < 0 ||
+			!("state" in event)
+		)
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC projection event is invalid.");
 		return;
 	}
 	if (type === "tool_execution_start") {

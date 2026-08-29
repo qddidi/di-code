@@ -42,6 +42,7 @@ interface ComposerProps {
 	readonly usage?: UsageSnapshot;
 	readonly commands: readonly CommandSummary[];
 	readonly restoredDraft?: { readonly id: string; readonly text: string };
+	readonly extensionPlaceholder?: React.ReactNode;
 }
 
 const permissionModes = [
@@ -62,7 +63,7 @@ function commandRequiresInput(command: CommandSummary): boolean {
 	return command.kind === "skill" || command.name === "steer";
 }
 
-export function Composer({ disabled = false, busy, attachments, imageInputSupported, onAddFiles, onRemoveAttachment, onSend, onSteer, onCancel, onCompact, onRunCommand, onRetry, onClear, onOpenSessions, onOpenTree, onOpenUsage, onOpenSettings, onLogout, onSetRuntime, onSetPermissionMode, onSetThinkingLevel, hero = false, modelLabel = "Model", activeRuntime, permissionMode, thinkingLevel, reasoningEfforts, retryable = false, runtimeOptions, usage, commands, restoredDraft }: ComposerProps): React.JSX.Element {
+export function Composer({ disabled = false, busy, attachments, imageInputSupported, onAddFiles, onRemoveAttachment, onSend, onSteer, onCancel, onCompact, onRunCommand, onRetry, onClear, onOpenSessions, onOpenTree, onOpenUsage, onOpenSettings, onLogout, onSetRuntime, onSetPermissionMode, onSetThinkingLevel, hero = false, modelLabel = "Model", activeRuntime, permissionMode, thinkingLevel, reasoningEfforts, retryable = false, runtimeOptions, usage, commands, restoredDraft, extensionPlaceholder }: ComposerProps): React.JSX.Element {
 	const { t } = useI18n();
 	const [text, setText] = useState("");
 	const [composing, setComposing] = useState(false);
@@ -174,6 +175,7 @@ export function Composer({ disabled = false, busy, attachments, imageInputSuppor
 	};
 	return <div className={`composer-wrap${hero ? " composer-hero" : ""}`}>
 		<div ref={composer} className="composer" onDragOver={(event) => { if (imageInputSupported) event.preventDefault(); }} onDrop={(event) => { if (!imageInputSupported) return; event.preventDefault(); void onAddFiles(event.dataTransfer.files); }}>
+			{extensionPlaceholder ? <div className="composer-extension-placeholder">{extensionPlaceholder}</div> : null}
 			<AttachmentTray attachments={attachments} onRemove={onRemoveAttachment} />
 			<textarea ref={textarea} aria-label={t("Message di-code")} aria-controls={menu === "commands" ? commandMenuId : undefined} aria-activedescendant={menu === "commands" && matchingCommands.length ? `${commandMenuId}-${selectedCommandIndex}` : undefined} placeholder={busy ? t("Steer di-code while it works") : hero ? t("Describe what you want to build") : t("Message di-code")} rows={1} disabled={disabled} value={text} onChange={(event) => { const next = event.target.value; setText(next); setSelectedCommandIndex(0); setMenu((current) => next.startsWith("/") ? "commands" : current === "commands" ? undefined : current); }} onPaste={(event) => { if (imageInputSupported && event.clipboardData.files.length) void onAddFiles(event.clipboardData.files); }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={(event) => {
 				if (menu === "commands" && matchingCommands.length && !composing) {

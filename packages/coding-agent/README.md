@@ -78,6 +78,8 @@ npm run dev
 npm run dev -- --interactive
 ```
 
+交互模式中可使用 `/plan` 进入 Plan Mode，`/plan <message>` 会先启用模式并提交该需求，`/plan off` 退出。命令会显示在 `/` 补全和 `/help` 列表中，不会把命令本身作为用户消息发送。
+
 ### 首次 Provider 向导
 
 在真实 TTY 中启动，且没有 `DI_CODE_PROVIDER`、默认 Provider 或唯一已配置 Provider 时，会自动打开向导。向导依次让你：
@@ -104,3 +106,6 @@ README 只保留最短启动路径，其他功能请按主题阅读 GitHub `docs
 - [插件使用指南](https://github.com/qddidi/di-code/tree/master/docs/插件使用指南.md)
 - [开发教程](https://github.com/qddidi/di-code/tree/master/docs/开发教程.md)
 - [运行时与 RPC 架构](https://github.com/qddidi/di-code/tree/master/docs/架构/运行时与RPC.md)
+# User interaction
+
+RPC/WebUI hosts expose versioned `interaction_request` events and accept `respond_interaction` replies. Requests correlate `requestId` and optional `toolCallId`; duplicate replies are idempotent, and unavailable channels fail fast. Legacy tool approval remains deny-by-default without a negotiated UI channel.

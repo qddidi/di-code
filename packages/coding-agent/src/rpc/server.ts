@@ -1,4 +1,5 @@
 import type { Readable, Writable } from "node:stream";
+import type { UserInteractionInput, UserInteractionResult } from "@di-code/plugin-sdk";
 import { RpcDispatcher, type RpcDispatcherOptions } from "./dispatcher.ts";
 import { JsonlLineDecoder, serializeJsonLine } from "./jsonl.ts";
 import { parseRpcRequest, RpcProtocolError, type RpcServerMessage, rpcErrorResponse } from "./protocol.ts";
@@ -44,6 +45,13 @@ export class RpcServer {
 
 	finished(): Promise<void> {
 		return this.finishedPromise;
+	}
+	/** Forwards a structured interaction request to the negotiated RPC client. */
+	requestInteraction(
+		input: Omit<UserInteractionInput, "requestId"> & { readonly requestId?: string },
+		signal?: AbortSignal,
+	): Promise<UserInteractionResult> {
+		return this.dispatcher.requestInteraction(input, signal);
 	}
 	start(): void {
 		if (this.started) throw new Error("RPC server is already started.");

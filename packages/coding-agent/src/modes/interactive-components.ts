@@ -10,6 +10,11 @@ export interface InteractiveViewState extends InteractiveState {
 	readonly theme: "dark" | "light";
 	readonly locale?: Locale;
 	readonly pasteImageShortcut?: string;
+	readonly planMode?: { readonly active: boolean; readonly pending: boolean };
+	readonly extensions?: readonly {
+		readonly label: string;
+		readonly tone: "neutral" | "info" | "success" | "warning" | "error";
+	}[];
 }
 
 interface Palette {
@@ -134,6 +139,13 @@ export class InteractiveChat implements Component {
 		const lines: string[] = [];
 		const colors = paletteFor(state.theme);
 		const markdownTheme = markdownThemeFor(colors);
+		for (const extension of state.extensions ?? [])
+			lines.push(
+				...renderLine(
+					paint(colors.dim, `[${extension.label}]`, extension.tone === "warning" || extension.tone === "error"),
+					width,
+				),
+			);
 		for (const [index, message] of state.messageItems.entries()) {
 			if (index > 0) lines.push(" ");
 			if (message.role === "file_change") {
@@ -274,12 +286,15 @@ export class InteractiveFooter implements Component {
 			colors.dim,
 			`${translate(state.locale ?? DEFAULT_LOCALE, "messages", String(state.messageItems.length))}  ${translate(state.locale ?? DEFAULT_LOCALE, "context")} ${formatTokenCount(state.usage.estimatedContextTokens)}/${formatTokenCount(state.usage.contextWindow)}  ${translate(state.locale ?? DEFAULT_LOCALE, "total")} ${formatTokenCount(state.usage.totalTokens)} ${translate(state.locale ?? DEFAULT_LOCALE, "tokens")}`,
 		);
-		const right = paint(colors.dim, `${state.model}  ${state.theme}`);
+		const plan = state.planMode;
+		const planLabel = plan?.pending ? "plan: pending" : plan?.active ? "plan: ON" : "plan: off";
+		const model = paint(colors.dim, `${state.model}  ${state.theme}`);
+		const right = plan ? `${paint(plan.active ? colors.accent : colors.dim, planLabel)}  ${model}` : model;
 		const status = width >= 60 ? alignEnds(`${left}  ${context}`, right, width) : `${left}  ${right}`;
 		const pasteImageShortcut = state.pasteImageShortcut ?? (process.platform === "win32" ? "Alt+V" : "Ctrl+V");
 		const hints =
 			width >= 60
-				? `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}   ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "pasteImage")}   Shift+Tab ${translate(state.locale ?? DEFAULT_LOCALE, "thinkingShortcut")}   Esc ${translate(state.locale ?? DEFAULT_LOCALE, "cancel")}   Ctrl+O ${translate(state.locale ?? DEFAULT_LOCALE, "model")}`
+				? `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}   ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "pasteImage")}   Alt+P Plan   Shift+Tab ${translate(state.locale ?? DEFAULT_LOCALE, "thinkingShortcut")}   Esc ${translate(state.locale ?? DEFAULT_LOCALE, "cancel")}   Ctrl+O ${translate(state.locale ?? DEFAULT_LOCALE, "model")}`
 				: `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}  ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "imageShortcut")}`;
 		return [...renderLine(status, width), ...renderLine(paint(colors.dim, hints), width)];
 	}

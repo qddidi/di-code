@@ -72,6 +72,7 @@ function builtinSlashCommands(locale: Locale): readonly SlashCommand[] {
 		{ name: "usage", description: t("showUsage") },
 		{ name: "retry", description: t("retryPrompt") },
 		{ name: "steer", description: t("steerAgent") },
+		{ name: "plan", description: "Enter or leave plan mode" },
 	];
 }
 
@@ -127,6 +128,10 @@ export interface InteractiveSessionChoice {
 }
 
 export type InteractiveSessionHandle = AgentSession | SessionHostUi;
+type PlanSessionHandle = {
+	readonly planCommand: (args: string) => Promise<string>;
+	readonly planMode: () => { readonly active: boolean; readonly pending: boolean } | undefined;
+};
 
 interface ContextSessionChoice {
 	readonly id: string;
@@ -247,6 +252,7 @@ export class InteractiveMode {
 			theme: this.theme,
 			locale: this.locale,
 			pasteImageShortcut: PASTE_IMAGE_SHORTCUT,
+			planMode: (this.session as InteractiveSessionHandle & Partial<PlanSessionHandle>).planMode?.(),
 		});
 		this.root = new InteractiveLayout({
 			header: new InteractiveHeader(readViewState),
@@ -313,6 +319,10 @@ export class InteractiveMode {
 
 	private handleCommand(data: string): boolean {
 		this.context?.keybindings();
+		if (matchesKey(data, Key.alt("p"))) {
+			void this.togglePlanMode();
+			return true;
+		}
 		if (matchesKey(data, Key.alt("s"))) {
 			void this.submitSteering(this.editor.getValue());
 			return true;
@@ -360,6 +370,23 @@ export class InteractiveMode {
 			return true;
 		}
 		return false;
+	}
+
+	private async togglePlanMode(): Promise<void> {
+		const planSession = this.session as InteractiveSessionHandle & Partial<PlanSessionHandle>;
+		if (!planSession.planCommand || !planSession.planMode) {
+			this.projection.setError("Plan mode is unavailable in this session.");
+			this.refresh();
+			return;
+		}
+		try {
+			const projection = planSession.planMode();
+			const message = await planSession.planCommand(projection?.active ? "off" : "");
+			this.projection.setStatus(message);
+		} catch (cause) {
+			this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+		}
+		this.refresh();
 	}
 
 	private async attachClipboardImage(): Promise<void> {
@@ -915,6 +942,25 @@ export class InteractiveMode {
 					else void this.submit(this.lastFailedPrompt, true);
 				} else this.projection.setStatus(translate(this.locale, "nothingToRetry"));
 				break;
+			case "plan":
+				{
+					const planSession = this.session as InteractiveSessionHandle & Partial<PlanSessionHandle>;
+					if (!planSession.planCommand || !planSession.planMode) {
+						this.projection.setError("Plan mode is unavailable in this session.");
+						break;
+					}
+					void planSession
+						.planCommand(_args)
+						.then((message) => {
+							this.projection.setStatus(`${message}${planSession.planMode?.()?.active ? " [plan]" : ""}`);
+							this.refresh();
+						})
+						.catch((cause) => {
+							this.projection.setError(cause instanceof Error ? cause.message : String(cause));
+							this.refresh();
+						});
+				}
+				return 0;
 			default:
 				this.projection.setError(`Unknown command: /${command}`);
 		}

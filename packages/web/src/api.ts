@@ -213,6 +213,18 @@ export async function loadWebContributions(): Promise<WebManifest> {
 	const result = await callRpc<{ readonly manifest: WebManifest }>("list_web_contributions");
 	return result.manifest;
 }
+
+export async function respondInteraction(
+	requestId: string,
+	result: {
+		readonly status: "answered" | "cancelled" | "timeout";
+		readonly value?: string;
+		readonly approved?: boolean;
+		readonly feedback?: string;
+	},
+): Promise<void> {
+	await callRpc("respond_interaction", { requestId, ...result });
+}
 export async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginSummary> {
 	const result = await callRpc<{ readonly plugin: PluginSummary }>("set_plugin_enabled", { pluginId, enabled });
 	return result.plugin;

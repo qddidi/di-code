@@ -9,6 +9,7 @@ import {
 	loadSessions,
 	rememberClient,
 	renameSession,
+	respondInteraction as sendInteractionResponse,
 	uploadAttachment,
 } from "./api.ts";
 import type {
@@ -40,6 +41,14 @@ export interface ConversationState {
 	readonly messages: readonly ConversationMessage[];
 	readonly tools: readonly ToolTrace[];
 	readonly approvals: readonly ToolApproval[];
+	readonly interactions: readonly {
+		readonly requestId: string;
+		readonly kind: string;
+		readonly prompt: string;
+		readonly intent?: string;
+		readonly options?: readonly { readonly value: string; readonly label: string }[];
+	}[];
+	readonly projections: Readonly<Record<string, { readonly version: number; readonly state: unknown }>>;
 	readonly contextFiles: readonly ContextFile[];
 	readonly commands: readonly CommandSummary[];
 	readonly tree: readonly SessionTreeNode[];
@@ -70,6 +79,15 @@ export interface ConversationState {
 	readonly addFiles: (files: FileList | readonly File[]) => Promise<void>;
 	readonly removeAttachment: (id: string) => void;
 	readonly approveTool: (approvalId: string, approved: boolean) => Promise<void>;
+	readonly respondInteraction: (
+		requestId: string,
+		result: {
+			readonly status: "answered" | "cancelled" | "timeout";
+			readonly value?: string;
+			readonly approved?: boolean;
+			readonly feedback?: string;
+		},
+	) => Promise<void>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -314,6 +332,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const [messages, setMessages] = useState<readonly ConversationMessage[]>([]);
 	const [tools, setTools] = useState<readonly ToolTrace[]>([]);
 	const [approvals, setApprovals] = useState<readonly ToolApproval[]>([]);
+	const [interactions, setInteractions] = useState<ConversationState["interactions"]>([]);
+	const [projections, setProjections] = useState<ConversationState["projections"]>({});
 	const [contextFiles, setContextFiles] = useState<readonly ContextFile[]>([]);
 	const [commands, setCommands] = useState<readonly CommandSummary[]>([]);
 	const [tree, setTree] = useState<readonly SessionTreeNode[]>([]);
@@ -355,6 +375,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		setMessages([]);
 		setTools([]);
 		setApprovals([]);
+		setInteractions([]);
+		setProjections({});
 		setContextFiles([]);
 		setCommands([]);
 		setTree([]);
@@ -492,6 +514,51 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 									},
 								],
 					);
+				return;
+			}
+			if (type === "interaction_request") {
+				const requestId =
+					typeof record.event.interactionRequestId === "string" ? record.event.interactionRequestId : undefined;
+				const prompt = typeof record.event.prompt === "string" ? record.event.prompt : undefined;
+				if (!requestId || !prompt) return;
+				setInteractions((current) =>
+					current.some((item) => item.requestId === requestId)
+						? current
+						: [
+								...current,
+								{
+									requestId,
+									kind: typeof record.event.kind === "string" ? record.event.kind : "question",
+									prompt,
+									...(typeof record.event.intent === "string" ? { intent: record.event.intent } : {}),
+									...(Array.isArray(record.event.options)
+										? {
+												options: record.event.options.filter(
+													(item): item is { value: string; label: string } =>
+														asRecord(item)?.value !== undefined &&
+														typeof asRecord(item)?.value === "string" &&
+														typeof asRecord(item)?.label === "string",
+												),
+											}
+										: {}),
+								},
+							],
+				);
+				return;
+			}
+			if (type === "projection") {
+				const namespace = typeof record.event.namespace === "string" ? record.event.namespace : undefined;
+				const projectionName =
+					typeof record.event.projectionName === "string" ? record.event.projectionName : undefined;
+				const version =
+					typeof record.event.version === "number" && Number.isSafeInteger(record.event.version)
+						? record.event.version
+						: undefined;
+				if (namespace && projectionName && version !== undefined && "state" in record.event)
+					setProjections((current) => ({
+						...current,
+						[`${namespace}:${projectionName}`]: { version, state: structuredClone(record.event.state) },
+					}));
 				return;
 			}
 			if (type === "compaction_start") {
@@ -837,6 +904,25 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			setError(cause instanceof Error ? cause.message : "Unable to submit tool approval.");
 		}
 	}, []);
+	const respondInteraction = useCallback(
+		async (
+			requestId: string,
+			result: {
+				readonly status: "answered" | "cancelled" | "timeout";
+				readonly value?: string;
+				readonly approved?: boolean;
+				readonly feedback?: string;
+			},
+		) => {
+			try {
+				await sendInteractionResponse(requestId, result);
+				setInteractions((current) => current.filter((item) => item.requestId !== requestId));
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : "Unable to answer interaction.");
+			}
+		},
+		[],
+	);
 	const newSession = useCallback(async () => {
 		const placeholderId = `pending-${crypto.randomUUID()}`;
 		const placeholder: SessionSummary = {
@@ -940,6 +1026,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		messages,
 		tools,
 		approvals,
+		interactions,
+		projections,
 		contextFiles,
 		commands,
 		tree,
@@ -971,5 +1059,6 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				return current.filter((item) => item.id !== id);
 			}),
 		approveTool,
+		respondInteraction,
 	};
 }

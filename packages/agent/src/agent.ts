@@ -9,7 +9,14 @@ import type {
 	UserMessage,
 } from "@di-code/ai";
 import { agentLoop } from "./agent-loop.ts";
-import type { AgentContext, AgentEvent, AgentTool, AgentToolResult } from "./types.ts";
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentHookRegistration,
+	AgentTool,
+	AgentToolResult,
+	PromptSectionRegistry,
+} from "./types.ts";
 
 export interface AgentOptions {
 	readonly provider: Provider;
@@ -21,6 +28,9 @@ export interface AgentOptions {
 	readonly initialMessages?: readonly Message[];
 	readonly initialContextMessages?: readonly Message[];
 	readonly thinkingLevel?: ThinkingLevel;
+	readonly hooks?: readonly AgentHookRegistration[];
+	readonly promptSections?: PromptSectionRegistry;
+	readonly getPromptSnapshot?: () => unknown;
 }
 
 /** Agent 事件监听器；返回 Promise 时，后续监听器会等待它完成。 */
@@ -67,12 +77,18 @@ export class Agent {
 	private readonly systemPrompt?: string;
 	private readonly now: () => number;
 	private readonly tools: readonly AgentTool<TSchema, AgentToolResult>[];
+	private readonly hooks: AgentHookRegistration[];
+	private readonly promptSections?: PromptSectionRegistry;
+	private readonly getPromptSnapshot?: AgentOptions["getPromptSnapshot"];
 	constructor(options: AgentOptions) {
 		this.provider = options.provider;
 		this.model = options.model;
 		this.thinkingLevel = options.thinkingLevel;
 		this.sessionId = options.sessionId;
 		this.tools = [...(options.tools ?? [])];
+		this.hooks = [...(options.hooks ?? [])];
+		this.promptSections = options.promptSections;
+		this.getPromptSnapshot = options.getPromptSnapshot;
 		const initialMessages = structuredClone([...(options.initialMessages ?? [])]);
 		this.transcriptMessages = initialMessages;
 		this.contextMessageState = createModelContext(options.initialContextMessages ?? initialMessages);
@@ -128,6 +144,18 @@ export class Agent {
 		};
 	}
 
+	/** Adds a versioned lifecycle hook and returns an idempotent disposer. */
+	addHook(hook: AgentHookRegistration): () => void {
+		this.hooks.push(hook);
+		let active = true;
+		return () => {
+			if (!active) return;
+			active = false;
+			const index = this.hooks.indexOf(hook);
+			if (index >= 0) this.hooks.splice(index, 1);
+		};
+	}
+
 	/**
 	 * 串行执行一次用户提示。模型失败与取消会返回对应的助手消息；监听器失败则拒绝此 Promise。
 	 */
@@ -173,6 +201,9 @@ export class Agent {
 				now: this.now,
 				thinkingLevel: this.thinkingLevel,
 				getSteeringMessages: () => this.steeringMessages.splice(0),
+				hooks: this.hooks,
+				promptSections: this.promptSections,
+				getPromptSnapshot: this.getPromptSnapshot,
 			},
 			signal,
 		);

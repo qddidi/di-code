@@ -46,6 +46,27 @@ function failedThinkingMessage(timestamp: number): Extract<Message, { role: "ass
 }
 
 describe("Agent state wrapper", () => {
+	it("disposes a failed hook and allows the next prompt to recover", async () => {
+		const faux = createFauxProvider({
+			responses: [{ type: "success", content: [{ type: "text", text: "recovered" }] }],
+		});
+		const agent = new Agent({ provider: faux.provider, model: faux.model });
+		const dispose = agent.addHook({
+			kind: "modifier",
+			phase: "pre_step",
+			run: () => {
+				throw new Error("plugin failed");
+			},
+		});
+
+		const failed = await agent.prompt("first");
+		dispose();
+		dispose();
+		const recovered = await agent.prompt("second");
+
+		expect(failed).toMatchObject({ stopReason: "error", errorMessage: "plugin failed" });
+		expect(recovered).toMatchObject({ stopReason: "stop", content: [{ type: "text", text: "recovered" }] });
+	});
 	it("uses initial messages in the next provider request", async () => {
 		const initialMessages: Message[] = [
 			{ role: "user", content: [{ type: "text", text: "old question" }], timestamp: 1 },

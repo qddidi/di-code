@@ -50,6 +50,7 @@ function singleLine(value: string): string {
 function textContent(entry: SessionEntry): string {
 	if (entry.type === "summary") return singleLine(entry.summary);
 	if (entry.type === "plugin") return singleLine(`plugin:${entry.pluginId}`);
+	if (entry.type === "event") return singleLine(`event:${entry.namespace}:${entry.eventName}`);
 	return singleLine(entry.message.content.map((content) => (content.type === "text" ? content.text : "")).join(" "));
 }
 
@@ -211,6 +212,7 @@ export class TreeSelector implements Component, Focusable {
 		const text = textContent(entry);
 		if (entry.type === "summary") return `${paint(YELLOW, "summary: ")}${text || paint(DIM, "(empty)")}`;
 		if (entry.type === "plugin") return `${paint(DIM, "plugin: ")}${text || paint(DIM, "(empty)")}`;
+		if (entry.type === "event") return `${paint(DIM, "event: ")}${text || paint(DIM, "(empty)")}`;
 		if (entry.message.role === "user") return `${paint(CYAN, "user: ")}${text || paint(DIM, "(empty)")}`;
 		if (entry.message.role === "assistant") {
 			if (text) return `${paint(GREEN, "assistant: ")}${text}`;

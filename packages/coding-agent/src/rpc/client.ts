@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import type { AssistantMessage, Model, ThinkingLevel } from "@di-code/ai";
+import type { UserInteractionResult } from "@di-code/plugin-sdk";
 import { JsonlLineDecoder, serializeJsonLine } from "./jsonl.ts";
 import {
 	type OperationState,
@@ -344,6 +345,13 @@ export class RpcClient {
 	): Promise<RpcAttachmentInfo> {
 		const result = await this.send("create_attachment", { name, contentType, data });
 		return result.attachment as RpcAttachmentInfo;
+	}
+
+	async respondInteraction(
+		requestId: string,
+		result: Omit<UserInteractionResult, "requestId" | "toolCallId">,
+	): Promise<void> {
+		await this.send("respond_interaction", { requestId, ...result });
 	}
 
 	close(): void {

@@ -39,7 +39,17 @@ export interface SessionPluginEntry extends SessionRecordBase {
 	readonly data: JsonValue;
 }
 
-export type SessionEntry = SessionMessageEntry | SessionSummaryEntry | SessionPluginEntry;
+/** Versioned extension event retained even when its plugin is unavailable. */
+export interface SessionEventEntry extends SessionRecordBase {
+	readonly type: "event";
+	readonly parentId: string;
+	readonly namespace: string;
+	readonly eventName: string;
+	readonly schemaVersion: number;
+	readonly payload: JsonValue;
+}
+
+export type SessionEntry = SessionMessageEntry | SessionSummaryEntry | SessionPluginEntry | SessionEventEntry;
 
 /** An immutable entry snapshot with its append-ordered descendants. */
 export interface SessionTreeNode {

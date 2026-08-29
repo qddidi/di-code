@@ -17,6 +17,7 @@ export { Spacer } from "./components/spacer.ts";
 export { Text } from "./components/text.ts";
 export { TruncatedText, type TruncatedTextOptions } from "./components/truncated-text.ts";
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+export type { TuiInteractionFacade } from "./interaction.ts";
 export {
 	type Keybinding,
 	type KeybindingConflict,

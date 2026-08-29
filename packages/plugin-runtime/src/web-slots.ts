@@ -1,7 +1,16 @@
 import type { Disposer, RegistryOwner } from "./index.ts";
 
 /** Stable Web extension slots. Unknown values are intentionally forward-compatible. */
-export type WebSlotId = "app.sidebar" | "session.tree" | "conversation.node" | "conversation.tool" | "settings.panel";
+export type WebSlotId =
+	| "app.sidebar"
+	| "session.tree"
+	| "conversation.node"
+	| "conversation.tool"
+	| "settings.panel"
+	| "session.badge"
+	| "session.controls"
+	| "review.panel"
+	| "composer.placeholder";
 
 export const WEB_EXTENSION_PROTOCOL_VERSION = 1 as const;
 export const WEB_SLOT_IDS: readonly WebSlotId[] = [
@@ -10,6 +19,10 @@ export const WEB_SLOT_IDS: readonly WebSlotId[] = [
 	"conversation.node",
 	"conversation.tool",
 	"settings.panel",
+	"session.badge",
+	"session.controls",
+	"review.panel",
+	"composer.placeholder",
 ];
 
 export interface WebContribution {
