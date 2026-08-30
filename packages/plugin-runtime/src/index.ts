@@ -26,7 +26,14 @@ export function isPluginStatus(value: unknown): value is PluginStatus {
 }
 
 export function isRuntimeMode(value: unknown): value is RuntimeMode {
-	return value === "interactive" || value === "print" || value === "json" || value === "rpc" || value === "test";
+	return (
+		value === "interactive" ||
+		value === "print" ||
+		value === "json" ||
+		value === "rpc" ||
+		value === "webui" ||
+		value === "test"
+	);
 }
 
 export interface PluginCapabilities {
@@ -429,7 +436,7 @@ export interface PluginDefinition<Config = unknown> {
 	readonly name: string;
 	readonly version?: string;
 	readonly apiVersion?: number;
-	readonly inject?: readonly string[];
+	/** Validates and normalizes Composition config before plugin setup begins. */
 	readonly Config?: ConfigSchema<Config>;
 	readonly capabilities?: PluginCapabilities;
 	readonly apply: PluginApply<Config>;
@@ -655,9 +662,10 @@ class RuntimeContext implements Context {
 
 	async plugin<TConfig>(definition: PluginDefinition<TConfig>, config: TConfig): Promise<Fiber> {
 		if (this.disposed) throw new Error(`Context ${this.id} is disposed`);
+		const parsedConfig = definition.Config ? definition.Config.parse(config) : config;
 		const fiber = new RuntimeFiber(this, definition.name, undefined, definition.capabilities);
 		this.registerFiber(fiber);
-		await fiber.start(definition.apply, config);
+		await fiber.start(definition.apply, parsedConfig);
 		return fiber;
 	}
 

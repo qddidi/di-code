@@ -127,13 +127,13 @@ describe("default compositions", () => {
 						apiVersion: 1,
 						plugins: ["./plugin"],
 						permissions: { filesystem: "none", network: [], process: [] },
-						capabilities: {},
+						capabilities: { filesystem: true },
 					},
 				}),
 			);
 			await writeFile(
 				join(source, "index.mjs"),
-				"export const apiVersion = 1; export const name = 'managed-plugin'; export const apply = () => undefined;",
+				"export const apiVersion = 1; export const name = 'managed-plugin'; export const capabilities = { process: true }; export const apply = () => undefined;",
 			);
 			const manager = new PluginInstallManager({ managedRoot: join(agentDir, "plugins", "installed") });
 			await manager.installLocal(source);
@@ -144,6 +144,7 @@ describe("default compositions", () => {
 			await manager.enable("managed-plugin");
 			const entries = await resolveManagedCompositionEntries(agentDir);
 			expect(entries.map((entry) => entry.id)).toEqual(["managed.managed-plugin"]);
+			expect(entries[0]?.capabilities).toEqual({ filesystem: true });
 			const imports: string[] = [];
 			const context = createRootContext({ id: "managed-composition" });
 			const baseEntries = await resolveDefaultComposition("base");
@@ -164,6 +165,8 @@ describe("default compositions", () => {
 				await loader.load();
 				expect(imports).toHaveLength(2);
 				expect(imports.some((name) => name.includes("managed-plugin"))).toBe(true);
+				expect(loader.tree.get("managed.managed-plugin")?.fiber?.capabilities.has("filesystem")).toBe(true);
+				expect(loader.tree.get("managed.managed-plugin")?.fiber?.capabilities.has("process")).toBe(false);
 			} finally {
 				await loader.dispose();
 				await context.dispose();

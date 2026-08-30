@@ -161,9 +161,20 @@ describe("RpcDispatcher", () => {
 			kind: "question",
 			prompt: "Continue?",
 			intent: "plan-review",
+			questions: [{ id: "plan", prompt: "# Plan\n\n1. Test" }],
 		});
 		const event = records.find((record) => record.kind === "event" && record.event.type === "interaction_request");
 		expect(event).toMatchObject({ event: { interactionRequestId: "interaction-1", prompt: "Continue?" } });
+		const state = await dispatcher.dispatch(request("state", "get_state", {}));
+		expect(state).toMatchObject({
+			ok: true,
+			result: {
+				method: "get_state",
+				state: {
+					interactions: [{ requestId: "interaction-1", intent: "plan-review", questions: [{ id: "plan" }] }],
+				},
+			},
+		});
 		await dispatcher.dispatch(
 			request("answer-1", "respond_interaction", { requestId: "interaction-1", status: "answered", value: "continue" }),
 		);

@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRootContext } from "@di-code/plugin-runtime";
 import { describe, expect, it } from "vitest";
@@ -16,7 +15,6 @@ import {
 	readPackagePluginManifest,
 	resolvePackagePluginExport,
 	topologicallySortEntries,
-	verifyWebBundle,
 } from "../src/index.ts";
 import * as fixture from "./fixtures/namespace-plugin.ts";
 
@@ -38,34 +36,6 @@ describe("namespace plugin loader contract", () => {
 	it("rejects missing package exports before import", async () => {
 		const rootPath = fileURLToPath(new URL("./fixtures/missing-export/", import.meta.url));
 		await expect(readPackagePluginManifest(rootPath)).rejects.toThrow(/not declared/iu);
-	});
-	it("verifies managed Web bundle source, hash, and CSP", async () => {
-		const root = await mkdtemp(join(tmpdir(), "di-code-web-bundle-"));
-		const bytes = Buffer.from("export const safe = true;", "utf8");
-		await writeFile(join(root, "bundle.js"), bytes);
-		const hash = createHash("sha256").update(bytes).digest("hex");
-		const manifest = {
-			apiVersion: 1 as const,
-			id: "web-bundle",
-			name: "web-bundle",
-			version: "1.0.0",
-			entry: "./plugin.js",
-			permissions: { filesystem: "none" as const, network: [], process: [] },
-			capabilities: { ui: true },
-			web: {
-				protocolVersion: 1 as const,
-				bundle: { source: "managed" as const, path: "bundle.js", sha256: hash, csp: "default-src 'self'" },
-				contributions: [],
-			},
-		};
-		await expect(verifyWebBundle(root, manifest)).resolves.toBeUndefined();
-		await expect(
-			verifyWebBundle(root, {
-				...manifest,
-				web: { ...manifest.web, bundle: { ...manifest.web.bundle, sha256: "b".repeat(64) } },
-			}),
-		).rejects.toThrow(/sha256/iu);
-		await rm(root, { recursive: true, force: true });
 	});
 	it("loads a real namespace export fixture without a default", () => {
 		const definition = getPluginDefinition(fixture);
@@ -176,6 +146,8 @@ describe("namespace plugin loader contract", () => {
 		});
 		expect((await loader.load()).get("project")?.status).toBe("skipped");
 		expect((await loader.loadTrustedProjectEntries()).get("project")?.status).toBe("active");
+		expect((await loader.unloadProjectEntries()).get("project")?.status).toBe("skipped");
+		expect(loader.tree.get("project")?.fiber).toBeUndefined();
 		await context.dispose();
 	});
 	it("reports real import failures with a skipped optional entry", async () => {
@@ -279,6 +251,33 @@ describe("Plugin installation and trust", () => {
 			await Promise.all([first.installLocal(firstSource), second.installLocal(secondSource)]);
 
 			expect((await first.list()).map((plugin) => plugin.id)).toEqual(["first-plugin", "second-plugin"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a malformed registry instead of treating installed plugins as absent", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-registry-corrupt-"));
+		try {
+			const managedRoot = join(root, "managed");
+			await mkdir(managedRoot, { recursive: true });
+			await writeFile(join(managedRoot, "registry.json"), "{not-json", "utf8");
+			const manager = new PluginInstallManager({ managedRoot });
+			await expect(manager.list()).rejects.toThrow(/registry is not valid JSON/iu);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("installs a scoped npm package", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-npm-scoped-"));
+		try {
+			const source = await writeManagedPluginSource(root, "@fixture/scoped-plugin");
+			const managedRoot = join(root, "managed");
+			const manager = new PluginInstallManager({ managedRoot });
+			const plugin = await manager.install(`npm:@fixture/scoped-plugin@file:${relative(managedRoot, source)}`);
+			expect(plugin.id).toBe("scoped-plugin");
+			expect((await manager.list()).map((entry) => entry.id)).toEqual(["scoped-plugin"]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

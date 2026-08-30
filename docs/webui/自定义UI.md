@@ -41,10 +41,6 @@ Web 扩展是插件 manifest 中的声明式 `web` contribution。浏览器只�
 
 声明字段以 `@di-code/plugin-runtime` 的 `WebManifest`/`WebContribution` 类型为准。不要在 contribution 中放密钥、绝对路径、任意 HTML、脚本 URL 或用户输入原文；需要动态数据时通过宿主提供的 action 和窄 RPC 获取。
 
-## Managed bundle
-
-若使用 `web.bundle`，必须声明 `source: "managed"`、包内相对 `path`、文件 `sha256` 和 CSP。Loader 在安装前确认路径不越界、SHA-256 摘要匹配，且 CSP 包含 `default-src 'self'`。bundle 不得通过 symlink 逃逸插件根目录。
-
 ## 开发与验证
 
 1. 在插件包中实现 namespace entry 和 manifest 声明。

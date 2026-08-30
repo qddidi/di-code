@@ -17,6 +17,7 @@ import {
 	type RpcErrorCode,
 	type RpcEventRecord,
 	type RpcMethod,
+	type RpcPendingInteraction,
 	type RpcProductState,
 	RpcProtocolError,
 	type RpcRequest,
@@ -939,6 +940,7 @@ export class RpcDispatcher {
 		return this.session;
 	}
 	private state(): RpcSessionState {
+		const interactions = this.pendingInteractions();
 		if (sessionHost(this.session)) {
 			const state = this.session.state();
 			const ui = state.activeSession ? this.session.ui() : undefined;
@@ -948,6 +950,7 @@ export class RpcDispatcher {
 				isStreaming: state.busy,
 				messageCount: state.activeSession ? this.session.transcript().length : 0,
 				sequence: this.sequence,
+				...(interactions.length > 0 ? { interactions } : {}),
 			};
 		}
 		return {
@@ -956,7 +959,32 @@ export class RpcDispatcher {
 			isStreaming: this.session.isStreaming,
 			messageCount: this.session.transcript.length,
 			sequence: this.sequence,
+			...(interactions.length > 0 ? { interactions } : {}),
 		};
+	}
+	private pendingInteractions(): readonly RpcPendingInteraction[] {
+		return [...this.interactions.values()].map(({ request }) => ({
+			requestId: request.requestId,
+			...(request.toolCallId ? { toolCallId: request.toolCallId } : {}),
+			kind: request.kind,
+			prompt: request.prompt,
+			...(request.intent ? { intent: request.intent } : {}),
+			...(request.options
+				? { options: request.options.map((option) => ({ value: option.value, label: option.label })) }
+				: {}),
+			...(request.questions
+				? {
+						questions: request.questions.map((question) => ({
+							id: question.id,
+							prompt: question.prompt,
+							...(question.options
+								? { options: question.options.map((option) => ({ value: option.value, label: option.label })) }
+								: {}),
+							...(question.allowFreeText === undefined ? {} : { allowFreeText: question.allowFreeText }),
+						})),
+					}
+				: {}),
+		}));
 	}
 	private activeSessionId(): string | undefined {
 		return sessionHost(this.session) ? this.session.state().activeSession?.id : this.session.sessionId;

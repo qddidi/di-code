@@ -30,6 +30,8 @@ await context.dispose();
 
 异步 `apply` 的 service 在 Fiber active 前不可见；apply 失败会回滚其贡献。`Fiber.dispose()` 会 abort signal、等待 in-flight setup、逆序运行 disposer、聚合 cleanup error，并且可重复调用。普通 child Context 继承父 service；`child({ isolate: true })` 不继承，用于 Session 等私有 scope。
 
+插件可选的 `Config.parse()` 会在创建 Fiber 和调用 `apply()` 前校验并规范化 Composition config；解析失败时不会创建或执行该插件。
+
 `EventBus<E>` 按 priority 降序和稳定注册顺序调度。非 critical handler 失败会被隔离并写入 diagnostic；critical handler 失败会终止 gate 并 reject。`CapabilityView` 要求 trusted project 和 plugin 声明 capability，但不构成 Node.js sandbox。诊断会脱敏 `token`、`secret`、`authorization` 和 `api_key` 文本。
 
 `ContributionRegistry` 及 provider、tool、command、session、renderer、RPC 和 resource contribution contract 会将注册所有权绑定到 Fiber；重复、保留和跨 kind namespace 冲突会失败。只使用 package 根入口，不导入 `src` 或 `dist` 私有路径。

@@ -79,7 +79,20 @@ describe("RPC protocol v1", () => {
 				ok: true,
 				result: {
 					method: "get_state",
-					state: { sessionId: "session-1", modelId: "faux-model", isStreaming: false, messageCount: 0 },
+					state: {
+						sessionId: "session-1",
+						modelId: "faux-model",
+						isStreaming: false,
+						messageCount: 0,
+						interactions: [
+							{
+								requestId: "plan-review",
+								kind: "choice",
+								prompt: "Approve?",
+								questions: [{ id: "plan", prompt: "# Plan" }],
+							},
+						],
+					},
 				},
 			}),
 		);

@@ -41,20 +41,12 @@ describe("WebSlotRegistry", () => {
 });
 
 describe("Web manifest validation", () => {
-	it("accepts versioned declarations and rejects unsafe bundle metadata", () => {
+	it("accepts versioned declarations", () => {
 		expect(
 			validateWebManifest({
 				protocolVersion: 1,
 				contributions: [contribution("ok", 0)],
-				bundle: { source: "builtin", csp: "default-src 'self'" },
 			}),
 		).toBe(true);
-		expect(
-			validateWebManifest({
-				protocolVersion: 1,
-				contributions: [],
-				bundle: { source: "managed", path: "../escape", sha256: "bad" },
-			}),
-		).toBe(false);
 	});
 });

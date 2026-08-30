@@ -27,7 +27,7 @@ process.once("SIGTERM", stop);
 
 try {
 	const projectTrusted = (await createProjectTrustStore(join(agentDir, "trust.json")).get(allowedRoot)) === true;
-	context = createRootContext({ id: "rpc-profile", mode: "rpc", trustedProject: projectTrusted });
+	context = createRootContext({ id: "rpc-profile", mode: "rpc", trustedProject: true });
 	loader = createCompositionLoader({
 		context,
 		entries: [

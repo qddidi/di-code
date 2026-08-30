@@ -109,7 +109,8 @@ function App(): React.JSX.Element {
 	}, [settingsOpen]);
 	if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
 	const busy = conversation.operation?.status === "queued" || conversation.operation?.status === "running";
-	const waitingForResponse = busy && conversation.operation?.kind !== "compact";
+	const streamingActive = conversation.messages.some((message) => message.status === "streaming");
+	const waitingForResponse = busy && conversation.operation?.kind !== "compact" && !streamingActive;
 	const planProjection = conversation.projections["plan:mode"]?.state;
 	const planMode = (() => {
 		if (typeof planProjection !== "object" || planProjection === null) return undefined;

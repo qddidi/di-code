@@ -84,6 +84,31 @@ export interface RpcSessionState {
 	readonly isStreaming: boolean;
 	readonly messageCount: number;
 	readonly sequence?: number;
+	/** Outstanding user decisions, included so a client can recover after a missed event. */
+	readonly interactions?: readonly RpcPendingInteraction[];
+}
+
+/** Browser-safe description of one pending structured user interaction. */
+export interface RpcPendingInteraction {
+	readonly requestId: string;
+	readonly toolCallId?: string;
+	readonly kind: string;
+	readonly prompt: string;
+	readonly intent?: string;
+	readonly options?: readonly RpcInteractionOption[];
+	readonly questions?: readonly RpcInteractionQuestion[];
+}
+
+export interface RpcInteractionOption {
+	readonly value: string;
+	readonly label: string;
+}
+
+export interface RpcInteractionQuestion {
+	readonly id: string;
+	readonly prompt: string;
+	readonly options?: readonly RpcInteractionOption[];
+	readonly allowFreeText?: boolean;
 }
 
 /** Metadata for an opaque attachment handle kept only by its live RPC actor. */
@@ -923,6 +948,45 @@ function assertState(value: unknown): void {
 		(state.messageCount as number) < 0
 	)
 		throw new RpcProtocolError("INVALID_REQUEST", "RPC get_state response has an invalid state.");
+	if (state.interactions !== undefined) {
+		if (!Array.isArray(state.interactions))
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC get_state interactions are invalid.");
+		for (const interaction of state.interactions) assertPendingInteraction(interaction);
+	}
+}
+function assertInteractionOptions(value: unknown): void {
+	if (!Array.isArray(value)) throw new RpcProtocolError("INVALID_REQUEST", "RPC interaction options are invalid.");
+	for (const option of value) {
+		const parsed = objectRecord(option);
+		if (!parsed || typeof parsed.value !== "string" || typeof parsed.label !== "string")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC interaction options are invalid.");
+	}
+}
+function assertPendingInteraction(value: unknown): void {
+	const interaction = objectRecord(value);
+	if (
+		!interaction ||
+		typeof interaction.requestId !== "string" ||
+		typeof interaction.kind !== "string" ||
+		typeof interaction.prompt !== "string"
+	)
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC pending interaction is invalid.");
+	if (interaction.toolCallId !== undefined && typeof interaction.toolCallId !== "string")
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC pending interaction is invalid.");
+	if (interaction.intent !== undefined && typeof interaction.intent !== "string")
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC pending interaction is invalid.");
+	if (interaction.options !== undefined) assertInteractionOptions(interaction.options);
+	if (interaction.questions === undefined) return;
+	if (!Array.isArray(interaction.questions))
+		throw new RpcProtocolError("INVALID_REQUEST", "RPC interaction questions are invalid.");
+	for (const question of interaction.questions) {
+		const parsed = objectRecord(question);
+		if (!parsed || typeof parsed.id !== "string" || typeof parsed.prompt !== "string")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC interaction questions are invalid.");
+		if (parsed.options !== undefined) assertInteractionOptions(parsed.options);
+		if (parsed.allowFreeText !== undefined && typeof parsed.allowFreeText !== "boolean")
+			throw new RpcProtocolError("INVALID_REQUEST", "RPC interaction questions are invalid.");
+	}
 }
 function assertAssistantMessage(value: unknown): void {
 	const message = objectRecord(value);

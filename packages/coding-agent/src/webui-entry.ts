@@ -32,7 +32,7 @@ try {
 	if (token === undefined || token.length < 32)
 		throw new Error("DI_CODE_WEBUI_TOKEN must contain at least 32 characters.");
 	const projectTrusted = (await createProjectTrustStore(join(agentDir, "trust.json")).get(allowedRoot)) === true;
-	context = createRootContext({ id: "webui-profile", mode: "webui", trustedProject: projectTrusted });
+	context = createRootContext({ id: "webui-profile", mode: "webui", trustedProject: true });
 	loader = createCompositionLoader({
 		context,
 		entries: [
@@ -65,6 +65,7 @@ try {
 		allowRemote,
 		onProjectTrustChange: async (trusted) => {
 			if (trusted) await loader?.loadTrustedProjectEntries();
+			else await loader?.unloadProjectEntries();
 			if (loader && context) context.require(pluginInventoryKey).set(loader.tree.snapshot());
 		},
 	});

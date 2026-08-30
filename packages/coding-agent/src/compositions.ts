@@ -170,6 +170,7 @@ export async function resolveManagedCompositionEntries(
 			.map(async (plugin) => ({
 				id: `managed.${plugin.id}`,
 				name: pathToFileURL(await resolvePackagePluginExport(plugin.installedPath, plugin.manifest.entry)).href,
+				capabilities: plugin.manifest.capabilities,
 				dependsOn: ["Bootstrap"],
 				required: false,
 			})),

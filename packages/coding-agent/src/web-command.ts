@@ -69,7 +69,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 	const allowedRoot = resolve(process.cwd());
 	const agentDir = resolve(join(homedir(), ".di-code"));
 	const projectTrusted = (await createProjectTrustStore(join(agentDir, "trust.json")).get(allowedRoot)) === true;
-	const context = createRootContext({ id: "web-profile", mode: "webui", trustedProject: projectTrusted });
+	const context = createRootContext({ id: "web-profile", mode: "webui", trustedProject: true });
 	const loader = createCompositionLoader({
 		context,
 		entries: [
@@ -105,6 +105,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 			developmentOrigin: developmentOrigin(),
 			onProjectTrustChange: async (trusted) => {
 				if (trusted) await loader.loadTrustedProjectEntries();
+				else await loader.unloadProjectEntries();
 				context.require(pluginInventoryKey).set(loader.tree.snapshot());
 			},
 		});

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { modeRegistryKey, rpcMethodRegistryKey, runtimeSelectionKey, workspaceCapabilityKey } from "@di-code/builtins";
+import { ProjectTrustStore } from "@di-code/plugin-loader";
 import type { PluginDefinition } from "@di-code/plugin-runtime";
 import { createUserInteraction } from "@di-code/plugin-sdk";
 import { RpcServer } from "./rpc/server.ts";
@@ -17,6 +18,9 @@ export const name = "rpc-server";
 export const version = "0.1.7";
 export const apply: PluginDefinition["apply"] = async (context, _config, fiber) => {
 	const selection = context.require(runtimeSelectionKey).selected();
+	const cwd = context.require(workspaceCapabilityKey).allowedRoot;
+	const agentDir = join(homedir(), ".di-code");
+	const projectTrusted = (await new ProjectTrustStore(join(agentDir, "trust.json")).get(cwd)) === true;
 	let server: RpcServer | undefined;
 	const interaction = createUserInteraction({
 		request: async (input, signal) => {
@@ -25,8 +29,8 @@ export const apply: PluginDefinition["apply"] = async (context, _config, fiber) 
 		},
 	});
 	const session = await createSessionHost(context, {
-		cwd: context.require(workspaceCapabilityKey).allowedRoot,
-		agentDir: join(homedir(), ".di-code"),
+		cwd,
+		agentDir,
 		provider: selection.provider,
 		model: selection.model,
 		planMode: {
@@ -36,9 +40,9 @@ export const apply: PluginDefinition["apply"] = async (context, _config, fiber) 
 	});
 	const product = createProductHost({
 		context,
-		cwd: context.require(workspaceCapabilityKey).allowedRoot,
-		agentDir: join(homedir(), ".di-code"),
-		projectTrusted: context.capabilities.trustedProject,
+		cwd,
+		agentDir,
+		projectTrusted,
 		provider: selection.provider,
 		model: selection.model,
 		runtimeSnapshot: () => {
@@ -69,7 +73,7 @@ export const apply: PluginDefinition["apply"] = async (context, _config, fiber) 
 	server = new RpcServer({
 		session,
 		methods: context.require(rpcMethodRegistryKey),
-		productState: { projectTrusted: context.capabilities.trustedProject },
+		productState: { projectTrusted },
 		productHost: product,
 		input: process.stdin,
 		output: process.stdout,

@@ -13,7 +13,7 @@
 ## Web
 
 - [WebUI 使用指南](webui/使用指南.md)：`di-code web`、`di-code-webui`、开发代理、工作区和 HTTP/SSE。
-- [WebUI 自定义 UI](webui/自定义UI.md)：插件声明式 Web slot、bundle 校验和前端扩展边界。
+- [WebUI 自定义 UI](webui/自定义UI.md)：插件声明式 Web slot 和前端扩展边界。
 - [自定义前端开发](webui/自定义前端.md)：从零实现 Web 前端、HTTP/SSE、RPC、附件和断线恢复。
 
 ## 终端与扩展

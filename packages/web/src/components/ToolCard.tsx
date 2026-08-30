@@ -1,12 +1,13 @@
-import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, X } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, Clock3, X } from "lucide-react";
 import type { ToolTrace } from "../types.ts";
+import { LoadingDots } from "./ActivityTimeline.tsx";
 
 function displayArguments(args: Record<string, unknown>): string {
 	return JSON.stringify(args, null, 2);
 }
 
 export function ToolCard({ tool }: { readonly tool: ToolTrace }): React.JSX.Element {
-	const icon = tool.status === "loading" ? <LoaderCircle className="spin" size={15} /> : tool.status === "success" ? <Check size={15} /> : tool.status === "timeout" ? <Clock3 size={15} /> : tool.status === "cancelled" ? <X size={15} /> : <CircleAlert size={15} />;
+	const icon = tool.status === "loading" ? <LoadingDots label="Running" /> : tool.status === "success" ? <Check size={15} /> : tool.status === "timeout" ? <Clock3 size={15} /> : tool.status === "cancelled" ? <X size={15} /> : <CircleAlert size={15} />;
 	const label = tool.status === "loading" ? "Running" : tool.status === "success" ? "Completed" : tool.status[0]?.toUpperCase() + tool.status.slice(1);
 	return <article className={`tool-card tool-${tool.status}`} aria-label={`${tool.name} tool ${label}`}>
 		<header className="tool-card-header"><span className="tool-icon">{icon}</span><strong>{tool.name}</strong><span className="tool-status">{label}</span></header>

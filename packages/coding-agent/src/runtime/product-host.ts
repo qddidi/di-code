@@ -131,13 +131,12 @@ export interface RpcPluginInfo {
 	readonly installedAt: string;
 	readonly capabilities: readonly string[];
 	readonly source?: "managed" | "project";
-	readonly status?: "active" | "failed" | "skipped" | "disabled";
+	readonly status?: "pending" | "active" | "failed" | "skipped" | "disabled";
 	readonly error?: string;
 }
 
 const BUILTIN_WEB_MANIFEST = Object.freeze({
 	protocolVersion: 1,
-	bundle: Object.freeze({ source: "builtin", csp: "default-src 'self'" }),
 	contributions: Object.freeze([
 		{
 			id: "workspace-status",
@@ -422,18 +421,29 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 	const listPlugins = async (): Promise<readonly RpcPluginInfo[]> => {
 		ensureOpen();
 		const manager = options.context.get(pluginManagerKey);
-		const managed = manager
-			? (await manager.list()).map((plugin) => ({
-					id: plugin.id,
-					version: plugin.manifest.version,
-					enabled: plugin.enabled,
-					installedAt: plugin.installedAt,
-					capabilities: Object.keys(plugin.manifest.capabilities).sort(),
-					source: "managed" as const,
-					status: plugin.enabled ? ("active" as const) : ("disabled" as const),
-				}))
-			: [];
 		const inventory = options.context.get(pluginInventoryKey)?.snapshot();
+		const managed = manager
+			? (await manager.list()).map((plugin) => {
+					const record = inventory?.get(`managed.${plugin.id}`);
+					const status: NonNullable<RpcPluginInfo["status"]> =
+						plugin.enabled && record?.status === "active"
+							? "active"
+							: !plugin.enabled && record?.status !== "active"
+								? "disabled"
+								: record?.status === "failed" || record?.status === "skipped"
+									? record.status
+									: "pending";
+					return {
+						id: plugin.id,
+						version: plugin.manifest.version,
+						enabled: plugin.enabled,
+						installedAt: plugin.installedAt,
+						capabilities: Object.keys(plugin.manifest.capabilities).sort(),
+						source: "managed" as const,
+						status,
+					};
+				})
+			: [];
 		const project =
 			options.includeProjectPluginInventory !== false
 				? (inventory?.entries
@@ -455,9 +465,11 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 		ensureOpen();
 		const manager = options.context.get(pluginManagerKey);
 		const contributions: WebContribution[] = [...BUILTIN_WEB_MANIFEST.contributions];
-		if (manager && projectTrusted) {
+		const inventory = options.context.get(pluginInventoryKey)?.snapshot();
+		if (manager) {
 			for (const plugin of await manager.list()) {
-				if (plugin.enabled && plugin.manifest.web) contributions.push(...plugin.manifest.web.contributions);
+				if (inventory?.get(`managed.${plugin.id}`)?.status === "active" && plugin.manifest.web)
+					contributions.push(...plugin.manifest.web.contributions);
 			}
 		}
 		return { ...BUILTIN_WEB_MANIFEST, contributions: Object.freeze(contributions) };

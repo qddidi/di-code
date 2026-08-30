@@ -59,6 +59,30 @@ describe("runtime Context, Registry and Fiber behavior", () => {
 		await root.dispose();
 	});
 
+	it("validates plugin config before creating a Fiber", async () => {
+		const root = createRootContext();
+		let applied = false;
+		await expect(
+			root.plugin(
+				{
+					name: "validated-plugin",
+					Config: {
+						parse: (input) => {
+							if (input !== "expected") throw new Error("invalid config");
+							return input;
+						},
+					},
+					apply: () => {
+						applied = true;
+					},
+				} satisfies PluginDefinition<string>,
+				"unexpected",
+			),
+		).rejects.toThrow("invalid config");
+		expect(applied).toBe(false);
+		await root.dispose();
+	});
+
 	it("isolates child services while normal children inherit", async () => {
 		const root = createRootContext();
 		const key = createServiceKey<string>("scope-service");

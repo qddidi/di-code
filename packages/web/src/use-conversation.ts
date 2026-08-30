@@ -47,6 +47,12 @@ export interface ConversationState {
 		readonly prompt: string;
 		readonly intent?: string;
 		readonly options?: readonly { readonly value: string; readonly label: string }[];
+		readonly questions?: readonly {
+			readonly id: string;
+			readonly prompt: string;
+			readonly options?: readonly { readonly value: string; readonly label: string }[];
+			readonly allowFreeText?: boolean;
+		}[];
 	}[];
 	readonly projections: Readonly<Record<string, { readonly version: number; readonly state: unknown }>>;
 	readonly contextFiles: readonly ContextFile[];
@@ -94,6 +100,83 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: undefined;
+}
+
+type PendingInteraction = ConversationState["interactions"][number];
+
+interface PendingUserMessage {
+	readonly requestId: string;
+	readonly message: ConversationMessage;
+}
+
+function interactionOptions(value: unknown): readonly { readonly value: string; readonly label: string }[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	return value.flatMap((item) => {
+		const option = asRecord(item);
+		return option && typeof option.value === "string" && typeof option.label === "string"
+			? [{ value: option.value, label: option.label }]
+			: [];
+	});
+}
+
+function interactionFromValue(value: unknown): PendingInteraction | undefined {
+	const interaction = asRecord(value);
+	if (
+		!interaction ||
+		typeof interaction.requestId !== "string" ||
+		typeof interaction.kind !== "string" ||
+		typeof interaction.prompt !== "string"
+	)
+		return undefined;
+	const questions = Array.isArray(interaction.questions)
+		? interaction.questions.flatMap((item) => {
+				const question = asRecord(item);
+				if (!question || typeof question.id !== "string" || typeof question.prompt !== "string") return [];
+				const options = interactionOptions(question.options);
+				return [
+					{
+						id: question.id,
+						prompt: question.prompt,
+						...(options ? { options } : {}),
+						...(typeof question.allowFreeText === "boolean" ? { allowFreeText: question.allowFreeText } : {}),
+					},
+				];
+			})
+		: undefined;
+	const options = interactionOptions(interaction.options);
+	return {
+		requestId: interaction.requestId,
+		kind: interaction.kind,
+		prompt: interaction.prompt,
+		...(typeof interaction.intent === "string" ? { intent: interaction.intent } : {}),
+		...(options ? { options } : {}),
+		...(questions ? { questions } : {}),
+	};
+}
+
+function sameUserMessage(left: ConversationMessage, right: ConversationMessage): boolean {
+	return (
+		left.role === "user" &&
+		right.role === "user" &&
+		left.text === right.text &&
+		(left.images?.length ?? 0) === (right.images?.length ?? 0)
+	);
+}
+
+function userMessageFromInput(text: string, attachments: readonly AttachmentInfo[]): ConversationMessage {
+	return {
+		role: "user",
+		text,
+		...(attachments.length
+			? {
+					images: attachments.flatMap((attachment) =>
+						attachment.previewUrl
+							? [{ src: attachment.previewUrl, mimeType: attachment.contentType, alt: attachment.name }]
+							: [],
+					),
+				}
+			: {}),
+	};
 }
 
 function textFromContent(content: unknown): string {
@@ -344,6 +427,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const [connected, setConnected] = useState(false);
 	const [error, setError] = useState<string>();
 	const pendingSessions = useRef<readonly SessionSummary[]>([]);
+	const pendingUserMessages = useRef<readonly PendingUserMessage[]>([]);
 	const lastCompactionError = useRef<string | undefined>(undefined);
 	const sequence = useRef(0);
 	const resumeToken = useRef<string | undefined>(undefined);
@@ -373,6 +457,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		pendingSessions.current = [];
 		setActiveSessionId(undefined);
 		setMessages([]);
+		pendingUserMessages.current = [];
 		setTools([]);
 		setApprovals([]);
 		setInteractions([]);
@@ -393,9 +478,13 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		const requestedWorkspace = workspaceId;
 		if (workspaceRef.current !== requestedWorkspace) return;
 		// The first request establishes the actor identity before the parallel snapshot reads begin.
-		const stateResult = await callRpc<{ readonly state: { readonly sessionId: string; readonly sequence?: number } }>(
-			"get_state",
-		);
+		const stateResult = await callRpc<{
+			readonly state: {
+				readonly sessionId: string;
+				readonly sequence?: number;
+				readonly interactions?: readonly unknown[];
+			};
+		}>("get_state");
 		const [sessionResult, transcript, usageResult, contextResult, commandResult, treeResult] = await Promise.all([
 			loadSessions(),
 			readAllPages(),
@@ -411,7 +500,17 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		setSessions([...pending, ...sessionResult.sessions]);
 		setActiveSessionId(stateResult.state.sessionId === "uninitialized" ? undefined : stateResult.state.sessionId);
 		sequence.current = Math.max(sequence.current, stateResult.state.sequence ?? 0);
-		setMessages(transcript.messages);
+		setInteractions(
+			(stateResult.state.interactions ?? []).flatMap((value) => {
+				const interaction = interactionFromValue(value);
+				return interaction ? [interaction] : [];
+			}),
+		);
+		const retainedPending = pendingUserMessages.current.filter(
+			(pendingMessage) => !transcript.messages.some((message) => sameUserMessage(message, pendingMessage.message)),
+		);
+		pendingUserMessages.current = retainedPending;
+		setMessages([...transcript.messages, ...retainedPending.map((item) => item.message)]);
 		setTools(transcript.tools);
 		setContextFiles(contextResult.files);
 		setCommands(commandResult.commands);
@@ -521,28 +620,10 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					typeof record.event.interactionRequestId === "string" ? record.event.interactionRequestId : undefined;
 				const prompt = typeof record.event.prompt === "string" ? record.event.prompt : undefined;
 				if (!requestId || !prompt) return;
+				const interaction = interactionFromValue({ ...record.event, requestId });
+				if (!interaction) return;
 				setInteractions((current) =>
-					current.some((item) => item.requestId === requestId)
-						? current
-						: [
-								...current,
-								{
-									requestId,
-									kind: typeof record.event.kind === "string" ? record.event.kind : "question",
-									prompt,
-									...(typeof record.event.intent === "string" ? { intent: record.event.intent } : {}),
-									...(Array.isArray(record.event.options)
-										? {
-												options: record.event.options.filter(
-													(item): item is { value: string; label: string } =>
-														asRecord(item)?.value !== undefined &&
-														typeof asRecord(item)?.value === "string" &&
-														typeof asRecord(item)?.label === "string",
-												),
-											}
-										: {}),
-								},
-							],
+					current.some((item) => item.requestId === requestId) ? current : [...current, interaction],
 				);
 				return;
 			}
@@ -765,28 +846,9 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			const requestId = crypto.randomUUID();
 			setError(undefined);
 			setOperation({ requestId, kind: "prompt", status: "queued" });
-			setMessages((current) => [
-				...current,
-				{
-					role: "user",
-					text,
-					...(attachments.length
-						? {
-								images: attachments.flatMap((attachment) =>
-									attachment.previewUrl
-										? [
-												{
-													src: attachment.previewUrl,
-													mimeType: attachment.contentType,
-													alt: attachment.name,
-												},
-											]
-										: [],
-								),
-							}
-						: {}),
-				},
-			]);
+			const userMessage = userMessageFromInput(text, attachments);
+			pendingUserMessages.current = [...pendingUserMessages.current, { requestId, message: userMessage }];
+			setMessages((current) => [...current, userMessage]);
 			try {
 				const result = await callRpc<{
 					readonly message?: { readonly stopReason?: string; readonly errorMessage?: string };
@@ -805,6 +867,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					});
 				} else setOperation(undefined);
 			} catch (cause) {
+				pendingUserMessages.current = pendingUserMessages.current.filter((item) => item.requestId !== requestId);
 				setError(cause instanceof Error ? cause.message : "Unable to send message.");
 			} finally {
 				for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -815,12 +878,21 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	);
 	const steer = useCallback(
 		async (text: string) => {
+			const requestId = crypto.randomUUID();
+			const userMessage = userMessageFromInput(text, attachments);
+			pendingUserMessages.current = [...pendingUserMessages.current, { requestId, message: userMessage }];
+			setMessages((current) => [...current, userMessage]);
 			try {
-				await callRpc("steer", {
-					message: text,
-					...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
-				});
+				await callRpc(
+					"steer",
+					{
+						message: text,
+						...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
+					},
+					requestId,
+				);
 			} catch (cause) {
+				pendingUserMessages.current = pendingUserMessages.current.filter((item) => item.requestId !== requestId);
 				setError(cause instanceof Error ? cause.message : "Unable to steer the active response.");
 			} finally {
 				for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -881,6 +953,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const clearVisibleMessages = useCallback(() => {
 		setMessages([]);
 		setTools([]);
+		pendingUserMessages.current = [];
 	}, []);
 	const retry = useCallback(async () => {
 		if (operation?.status === "failed" || operation?.status === "cancelled") {

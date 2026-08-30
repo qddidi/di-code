@@ -13,7 +13,6 @@
 		"permissions": { "filesystem": "none", "network": [], "process": [] },
 		"web": {
 			"protocolVersion": 1,
-			"bundle": { "source": "managed", "path": "web/index.js", "sha256": "b97abe5187e2f95e8e9d56b891b6259d7b3abbe8b282c761f96a71a0db3958fa", "csp": "default-src 'self'" },
 			"contributions": [{ "id": "fixture-status", "slot": "app.sidebar", "version": 1, "order": 5, "capability": "ui", "componentKey": "builtin.workspace-status" }]
 		}
 	}

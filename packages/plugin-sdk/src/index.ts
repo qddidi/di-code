@@ -16,7 +16,6 @@ export type {
 	RuntimeEvent,
 	RuntimeMode,
 	ServiceKey,
-	WebBundleDeclaration,
 	WebContribution,
 	WebManifest,
 	WebSlotContribution,

@@ -1,5 +1,5 @@
 import { Check, Copy, GitBranch, RotateCcw, Wand2 } from "lucide-react";
-import { ActivityTimeline } from "./ActivityTimeline.tsx";
+import { ActivityTimeline, LoadingDots } from "./ActivityTimeline.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import type { ConversationMessage } from "../types.ts";
 import { useI18n } from "../i18n.tsx";
@@ -19,8 +19,9 @@ export function Transcript({ messages, onRetry, canRetry, onBranch, webSlot, wai
 	const copyMessage = (text: string): void => { void navigator.clipboard?.writeText(text); };
 	return <section className="transcript" aria-label={t("Conversation transcript")}>
 		{messages.map((message, index) => <article className={`message message-${message.role}${message.status === "error" ? " message-error" : ""}`} key={`${message.role}-${index}`}>
-			<div className="message-label">{message.role === "user" ? t("You") : message.role === "assistant" ? "di-code" : t("Tool")}</div>
-			{message.role === "assistant" ? <ActivityTimeline activities={message.activities} streaming={message.status === "streaming"} /> : null}
+			{message.role !== "assistant" ? <div className="message-label">{message.role === "user" ? t("You") : t("Tool")}</div> : null}
+			{message.role === "assistant" && (message.activities?.length || (message.status === "streaming" && !message.text)) ? <ActivityTimeline activities={message.activities} streaming={message.status === "streaming"} /> : null}
+			{message.role === "assistant" && message.status === "streaming" && !message.text.trim() && message.activities?.length ? <LoadingDots label={t("Waiting for response")} /> : null}
 			{message.skillName ? <div className="message-skill"><Wand2 size={14} />{t("Used skill")} <code>/{`skill:${message.skillName}`}</code></div> : null}
 			{message.text ? <div className="message-body">{message.role === "assistant" ? <MarkdownContent>{message.text}</MarkdownContent> : message.text}</div> : null}
 			{message.images?.length ? <div className="message-images">{message.images.map((image, imageIndex) => <img key={`${image.src.slice(-32)}-${imageIndex}`} src={image.src} alt={image.alt} />)}</div> : null}
@@ -29,6 +30,6 @@ export function Transcript({ messages, onRetry, canRetry, onBranch, webSlot, wai
 			{message.role === "assistant" && canRetry && index === messages.length - 1 ? <button className="message-retry" type="button" onClick={onRetry}><RotateCcw size={14} />{t("Retry")}</button> : null}
 			{index === messages.length - 1 ? webSlot : null}
 		</article>)}
-		{waitingForResponse ? <article className="message message-assistant message-pending"><div className="message-label">di-code</div><span className="streaming-status" role="status" aria-label={t("Waiting for response")}><span className="streaming-dots"><i /><i /><i /></span></span></article> : null}
+		{waitingForResponse ? <article className="message message-assistant message-pending"><LoadingDots label={t("Waiting for response")} /></article> : null}
 	</section>;
 }

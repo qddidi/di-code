@@ -9,6 +9,7 @@ describe("runtime contract guards", () => {
 
 	it("recognizes runtime modes", () => {
 		expect(isRuntimeMode("print")).toBe(true);
+		expect(isRuntimeMode("webui")).toBe(true);
 		expect(isRuntimeMode("server")).toBe(false);
 	});
 

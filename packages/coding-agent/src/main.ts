@@ -119,7 +119,7 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 			allowedRoot,
 		},
 	);
-	const context = createRootContext({ id: "minimal-profile", mode, trustedProject: projectTrusted });
+	const context = createRootContext({ id: "minimal-profile", mode, trustedProject: true });
 	const unsubscribe = context.events.subscribe((event) => options.onRuntimeEvent?.(event));
 	const loader = createCompositionLoader({
 		context,

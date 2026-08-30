@@ -38,16 +38,8 @@ export interface WebContribution {
 	readonly data?: Readonly<Record<string, string | number | boolean | null>>;
 }
 
-export interface WebBundleDeclaration {
-	readonly source: "builtin" | "managed";
-	readonly path?: string;
-	readonly sha256?: string;
-	readonly csp?: string;
-}
-
 export interface WebManifest {
 	readonly protocolVersion: typeof WEB_EXTENSION_PROTOCOL_VERSION;
-	readonly bundle?: WebBundleDeclaration;
 	readonly contributions: readonly WebContribution[];
 }
 
@@ -111,20 +103,6 @@ export function validateWebManifest(value: unknown): value is WebManifest {
 	const record = value as Record<string, unknown>;
 	if (record.protocolVersion !== WEB_EXTENSION_PROTOCOL_VERSION || !Array.isArray(record.contributions)) return false;
 	if (!record.contributions.every(validateWebContribution)) return false;
-	if (record.bundle !== undefined) {
-		if (typeof record.bundle !== "object" || record.bundle === null || Array.isArray(record.bundle)) return false;
-		const bundle = record.bundle as Record<string, unknown>;
-		if (bundle.source !== "builtin" && bundle.source !== "managed") return false;
-		if (
-			bundle.path !== undefined &&
-			(typeof bundle.path !== "string" || bundle.path.includes("..") || bundle.path.startsWith("/"))
-		)
-			return false;
-		if (bundle.sha256 !== undefined && (typeof bundle.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(bundle.sha256)))
-			return false;
-		if (bundle.csp !== undefined && (typeof bundle.csp !== "string" || !bundle.csp.includes("default-src")))
-			return false;
-	}
 	return true;
 }
 

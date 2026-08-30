@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -152,21 +151,6 @@ export async function readPackagePluginManifest(root: string): Promise<PluginMan
 	});
 }
 
-/** Verifies a managed Web bundle declaration before it can be installed. */
-export async function verifyWebBundle(root: string, manifest: PluginManifest): Promise<void> {
-	const bundle = manifest.web?.bundle;
-	if (!bundle || bundle.source !== "managed") return;
-	if (!bundle.path || !bundle.sha256 || !bundle.csp)
-		throw new Error("managed Web bundle requires path, sha256, and csp");
-	const target = resolve(root, bundle.path);
-	if (relative(resolve(root), target).startsWith("..") || isAbsolute(relative(resolve(root), target)))
-		throw new Error("Web bundle path must stay inside the plugin root");
-	const bytes = await readFile(target);
-	const digest = createHash("sha256").update(bytes).digest("hex");
-	if (digest !== bundle.sha256) throw new Error("Web bundle sha256 does not match manifest");
-	if (!bundle.csp.includes("default-src 'self'")) throw new Error("Web bundle CSP must include default-src 'self'");
-}
-
 function exportTarget(value: unknown): string | undefined {
 	if (typeof value === "string") return value;
 	if (!isRecord(value)) return undefined;
@@ -258,11 +242,12 @@ export interface CompositionEntry {
 	readonly id: string;
 	readonly name: string;
 	readonly config?: JsonValue;
+	/** Host-validated capabilities for this entry, overriding module metadata when present. */
+	readonly capabilities?: PluginCapabilities;
 	readonly dependsOn?: readonly string[];
 	readonly optionalDependsOn?: readonly string[];
 	readonly required?: boolean;
 	readonly disabled?: boolean;
-	readonly group?: string;
 	readonly projectLocal?: boolean;
 }
 
@@ -362,9 +347,13 @@ function validateEntry(entry: CompositionEntry): CompositionEntry {
 	)
 		throw new CompositionError("invalid", `Invalid plugin module for ${entry.id}`);
 	if (entry.config !== undefined) validateValue(entry.config, `${entry.id}.config`);
+	if (entry.capabilities !== undefined) parseCapabilities(entry.capabilities);
 	for (const dep of [...(entry.dependsOn ?? []), ...(entry.optionalDependsOn ?? [])]) assertId(dep, "dependency id");
-	if (entry.group !== undefined) assertId(entry.group, "group");
-	return Object.freeze({ ...entry, config: entry.config === undefined ? undefined : clone(entry.config) });
+	return Object.freeze({
+		...entry,
+		config: entry.config === undefined ? undefined : clone(entry.config),
+		capabilities: entry.capabilities === undefined ? undefined : parseCapabilities(entry.capabilities),
+	});
 }
 
 function normalizeDocument(document: CompositionDocument): CompositionDocument {
@@ -525,7 +514,7 @@ export interface LoaderOptions {
 
 export class CompositionLoader {
 	readonly tree: EntryTree;
-	private readonly fibers: Fiber[] = [];
+	private readonly fibers = new Map<string, Fiber>();
 	private readonly context: Context;
 	private readonly importer: (name: string) => Promise<PluginModule>;
 	private projectTrusted: boolean | undefined;
@@ -560,8 +549,11 @@ export class CompositionLoader {
 			this.tree.set(entry.id, { status: "loading" });
 			try {
 				const definition = getPluginDefinition(await this.importer(entry.name));
-				const fiber = await this.context.plugin(definition, entry.config);
-				this.fibers.push(fiber);
+				const fiber = await this.context.plugin(
+					entry.capabilities === undefined ? definition : { ...definition, capabilities: entry.capabilities },
+					entry.config,
+				);
+				this.fibers.set(entry.id, fiber);
 				active.add(entry.id);
 				this.tree.set(entry.id, { status: "active", fiber });
 			} catch (cause) {
@@ -605,8 +597,11 @@ export class CompositionLoader {
 			this.tree.set(entry.id, { status: "loading", error: undefined });
 			try {
 				const definition = getPluginDefinition(await this.importer(entry.name));
-				const fiber = await this.context.plugin(definition, entry.config);
-				this.fibers.push(fiber);
+				const fiber = await this.context.plugin(
+					entry.capabilities === undefined ? definition : { ...definition, capabilities: entry.capabilities },
+					entry.config,
+				);
+				this.fibers.set(entry.id, fiber);
 				active.add(entry.id);
 				this.tree.set(entry.id, { status: "active", fiber });
 			} catch (cause) {
@@ -618,9 +613,34 @@ export class CompositionLoader {
 		}
 		return this.tree.snapshot();
 	}
+	/** Unloads every active project-local entry after trust is revoked. */
+	async unloadProjectEntries(): Promise<PluginInventory> {
+		this.projectTrusted = false;
+		const errors: unknown[] = [];
+		const records = this.tree
+			.snapshot()
+			.entries.filter((record) => record.entry.projectLocal && record.status === "active")
+			.reverse();
+		for (const record of records) {
+			try {
+				await record.fiber?.dispose();
+			} catch (error) {
+				errors.push(error);
+			} finally {
+				this.fibers.delete(record.entry.id);
+				this.tree.set(record.entry.id, {
+					status: "skipped",
+					fiber: undefined,
+					error: new Error("Project is not trusted"),
+				});
+			}
+		}
+		if (errors.length > 0) throw new AggregateError(errors, "Failed to unload project plugins");
+		return this.tree.snapshot();
+	}
 	async dispose(): Promise<void> {
-		for (const fiber of [...this.fibers].reverse()) await fiber.dispose();
-		this.fibers.length = 0;
+		for (const fiber of [...this.fibers.values()].reverse()) await fiber.dispose();
+		this.fibers.clear();
 	}
 }
 
@@ -693,6 +713,14 @@ export function assertManagedPath(target: string, managedRoot: string): void {
 	const child = relative(resolve(managedRoot), resolve(target));
 	if (!child || child.startsWith("..") || isAbsolute(child))
 		throw new Error("plugin path is outside the managed install directory");
+}
+
+function packageNameFromNpmSpec(spec: string): string {
+	const scoped = /^(@[^@/\s]+\/[^@/\s]+)(?:@\S+)?$/u.exec(spec);
+	if (scoped) return scoped[1];
+	const unscoped = /^([^@/\s]+)(?:@\S+)?$/u.exec(spec);
+	if (unscoped) return unscoped[1];
+	throw new Error("npm plugin specifier must name one package");
 }
 
 export interface PluginInstallManagerOptions {
@@ -775,14 +803,9 @@ export class PluginInstallManager {
 		try {
 			if (source.startsWith("npm:")) {
 				const spec = source.slice(4);
+				const packageName = packageNameFromNpmSpec(spec);
 				await runExternal("npm", ["install", "--ignore-scripts", "--prefix", staging, spec], this.managedRoot);
-				const packageNamePart = spec.split("@")[0];
-				if (!packageNamePart) throw new Error("npm plugin specifier is missing a package name");
-				const packageName = spec.startsWith("@") ? spec.slice(1).split("@")[0]?.replace("/", "@@") : packageNamePart;
-				if (!packageName) throw new Error("npm plugin specifier is missing a package name");
-				const sourceRoot = packageName.includes("@@")
-					? join(staging, "node_modules", `@${packageName.replace("@@", "/")}`)
-					: join(staging, "node_modules", packageName);
+				const sourceRoot = join(staging, "node_modules", packageName);
 				return await this.withRegistryLock(async () => await this.installFromRoot(sourceRoot, source, staging));
 			}
 			await rm(staging, { recursive: true, force: true });
@@ -795,7 +818,6 @@ export class PluginInstallManager {
 	}
 	private async installFromRoot(sourceRoot: string, source: string, temporaryRoot?: string): Promise<ManagedPlugin> {
 		const manifest = await readPackagePluginManifest(sourceRoot);
-		await verifyWebBundle(sourceRoot, manifest);
 		await resolvePackagePluginExport(sourceRoot, manifest.entry);
 		const destination = resolve(this.managedRoot, manifest.id);
 		assertManagedPath(destination, this.managedRoot);
@@ -897,14 +919,23 @@ export class PluginInstallManager {
 		}
 	}
 	private async readRegistry(): Promise<PluginRegistry> {
+		let content: string;
 		try {
-			const parsed: unknown = JSON.parse(await readFile(this.registryPath, "utf8"));
-			if (isRecord(parsed) && parsed.version === 1 && isRecord(parsed.plugins))
-				return { version: 1, plugins: { ...parsed.plugins } as Record<string, ManagedPlugin> };
-		} catch {
-			// Missing or malformed registry starts empty.
+			content = await readFile(this.registryPath, "utf8");
+		} catch (cause) {
+			if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT")
+				return { version: 1, plugins: {} };
+			throw new Error(`Failed to read plugin registry: ${this.registryPath}`, { cause });
 		}
-		return { version: 1, plugins: {} };
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(content);
+		} catch (cause) {
+			throw new Error(`Plugin registry is not valid JSON: ${this.registryPath}`, { cause });
+		}
+		if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.plugins))
+			throw new Error(`Plugin registry has an unsupported format: ${this.registryPath}`);
+		return { version: 1, plugins: { ...parsed.plugins } as Record<string, ManagedPlugin> };
 	}
 	private async writeRegistry(registry: PluginRegistry): Promise<void> {
 		await mkdir(dirname(this.registryPath), { recursive: true });
@@ -925,7 +956,10 @@ async function exists(path: string): Promise<boolean> {
 
 async function runExternal(command: string, args: readonly string[], cwd: string): Promise<void> {
 	await new Promise<void>((resolveResult, reject) => {
-		const child = spawn(command, [...args], { cwd, stdio: "ignore" });
+		const npmCli = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+		const [executable, commandArgs] =
+			process.platform === "win32" && command === "npm" ? [process.execPath, [npmCli, ...args]] : [command, [...args]];
+		const child = spawn(executable, commandArgs, { cwd, stdio: "ignore" });
 		child.once("error", reject);
 		child.once("close", (code) =>
 			code === 0 ? resolveResult() : reject(new Error(`${command} plugin install failed`)),

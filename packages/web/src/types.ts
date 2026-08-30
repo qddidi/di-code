@@ -183,7 +183,7 @@ export interface PluginSummary {
 	readonly installedAt: string;
 	readonly capabilities: readonly string[];
 	readonly source?: "managed" | "project";
-	readonly status?: "active" | "failed" | "skipped" | "disabled";
+	readonly status?: "pending" | "active" | "failed" | "skipped" | "disabled";
 	readonly error?: string;
 }
 
@@ -208,11 +208,5 @@ export interface WebContribution {
 }
 export interface WebManifest {
 	readonly protocolVersion: 1;
-	readonly bundle?: {
-		readonly source: "builtin" | "managed";
-		readonly path?: string;
-		readonly sha256?: string;
-		readonly csp?: string;
-	};
 	readonly contributions: readonly WebContribution[];
 }
