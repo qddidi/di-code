@@ -443,7 +443,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 							version: "composition",
 							enabled: record.status === "active",
 							installedAt: "",
-							capabilities: [],
+							capabilities: record.fiber ? [...record.fiber.capabilities.declared].sort() : [],
 							source: "project" as const,
 							status: record.status === "pending" || record.status === "loading" ? ("skipped" as const) : record.status,
 							error: record.error?.message,
