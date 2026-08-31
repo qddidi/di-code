@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +10,7 @@ import {
 	PluginInstallManager,
 	type PluginModule,
 	readCompositionFile,
+	readPackagePluginManifest,
 	resolvePackagePluginExport,
 } from "@di-code/plugin-loader";
 
@@ -148,11 +150,41 @@ export async function resolveCompositionEntries(
 		const projectComposition = await readOptionalComposition(join(cwd, ".di-code", "composition.yml"));
 		if (projectComposition !== undefined)
 			layers.push({ name: "project", document: markProjectEntries(projectComposition) });
+		const discovered = await discoverProjectPlugins(cwd);
+		if (discovered.length > 0) layers.push({ name: "project", document: { entries: discovered } });
 	}
 	if (options.compositionPath !== undefined) {
 		layers.push({ name: "explicit", document: await readRequiredComposition(resolve(cwd, options.compositionPath)) });
 	}
 	return Object.freeze(withWorkspaceRoot(mergeCompositionLayers(layers), options.allowedRoot));
+}
+
+async function discoverProjectPlugins(cwd: string): Promise<CompositionEntry[]> {
+	const root = join(cwd, ".di-code", "plugins");
+	let names: string[];
+	try {
+		names = await readdir(root);
+	} catch (cause) {
+		if (isMissingFile(cause)) return [];
+		throw cause;
+	}
+	const entries: CompositionEntry[] = [];
+	for (const name of names.sort()) {
+		const path = join(root, name);
+		try {
+			const manifest = await readPackagePluginManifest(path);
+			const entry = await resolvePackagePluginExport(path, manifest.entry);
+			entries.push({
+				id: `project.${manifest.id}`,
+				name: pathToFileURL(entry).href,
+				projectLocal: true,
+				required: false,
+			});
+		} catch {
+			// Invalid project plugins are surfaced by plugin doctor; discovery remains best-effort.
+		}
+	}
+	return entries;
 }
 
 /**
@@ -172,6 +204,7 @@ export async function resolveManagedCompositionEntries(
 				name: pathToFileURL(await resolvePackagePluginExport(plugin.installedPath, plugin.manifest.entry)).href,
 				dependsOn: ["Bootstrap"],
 				required: false,
+				projectLocal: true,
 			})),
 	);
 }

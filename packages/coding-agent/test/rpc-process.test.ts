@@ -59,7 +59,7 @@ describe("di-code-rpc process", () => {
 		await once(child, "exit");
 	});
 
-	it("loads enabled managed entries but skips untrusted project composition", async () => {
+	it("does not import managed or project entries before project trust", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-rpc-profile-"));
 		const home = join(root, "home");
 		const source = join(root, "managed-source");
@@ -123,7 +123,7 @@ describe("di-code-rpc process", () => {
 			});
 
 			await expect(client.getState()).resolves.toMatchObject({ modelId: "faux-model" });
-			await expect(readFile(managedMarker, "utf8")).resolves.toBe("loaded");
+			await expect(readFile(managedMarker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 			await expect(readFile(projectMarker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
 			client.close();

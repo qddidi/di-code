@@ -11,7 +11,18 @@ export type CliCommand =
 	| { kind: "observe"; action: "trace" | "dump-composition" }
 	| {
 			kind: "plugin";
-			action: "install" | "list" | "get" | "enable" | "disable" | "update" | "remove";
+			action:
+				| "install"
+				| "list"
+				| "get"
+				| "enable"
+				| "disable"
+				| "update"
+				| "remove"
+				| "create"
+				| "doctor"
+				| "trust"
+				| "revoke";
 			argument?: string;
 	  }
 	| {
@@ -63,13 +74,22 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 			action !== "enable" &&
 			action !== "disable" &&
 			action !== "update" &&
-			action !== "remove"
+			action !== "remove" &&
+			action !== "create" &&
+			action !== "doctor" &&
+			action !== "trust" &&
+			action !== "revoke"
 		)
-			throw new CliUsageError("Plugin command must be install, list, get, enable, disable, update, or remove.");
+			throw new CliUsageError(
+				"Plugin command must be install, list, get, enable, disable, update, remove, create, doctor, trust, or revoke.",
+			);
 		const argument = args[2];
 		if (
 			args.length > 3 ||
-			(action !== "list" && (argument === undefined || argument.trim() === "")) ||
+			(action !== "list" &&
+				action !== "trust" &&
+				action !== "revoke" &&
+				(argument === undefined || argument.trim() === "")) ||
 			(action === "list" && argument !== undefined)
 		)
 			throw new CliUsageError("Plugin command has invalid arguments.");
@@ -349,7 +369,7 @@ ${t("options")}
   --no-project-plugins Skip .di-code/composition.yml for this run
   --trust-project    ${t("trustProject")}
   --untrust-project  ${t("untrustProject")}
-  plugin <action>    ${t("plugin")}
+  plugin <action>    ${t("plugin")} (install|list|get|enable|disable|update|remove|create|doctor|trust|revoke)
   --trace-plugins    Emit Loader phase, owner Fiber, capability, and failure diagnostics
   --dump-composition Emit the resolved composition without configuration values
   mcp add|list|get|remove ${t("mcp")}

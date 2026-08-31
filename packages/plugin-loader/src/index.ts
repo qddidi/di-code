@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "nod
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
 	type Context,
+	type ExtensionAPI,
 	type Fiber,
 	type PluginDefinition,
 	validateWebManifest,
@@ -14,6 +15,58 @@ import { parse as parseYaml } from "yaml";
 export type PluginModule<Config = unknown> = {
 	readonly [exportName: string]: unknown;
 } & Partial<PluginDefinition<Config>>;
+
+function createExtensionApi(context: Context, fiber?: Fiber): ExtensionAPI {
+	const disposers: (() => void | Promise<void>)[] = [];
+	const own = <T extends () => void | Promise<void>>(disposer: T): T => {
+		if (fiber) fiber.addDisposer(disposer);
+		disposers.push(disposer);
+		return disposer;
+	};
+	type ServiceLike = { readonly register?: (...args: unknown[]) => () => void | Promise<void> };
+	const service = (name: string): ServiceLike | undefined => context.findService?.(name) as ServiceLike | undefined;
+	return {
+		id: fiber?.pluginName ?? context.id,
+		signal: fiber?.signal ?? context.signal,
+		ctx: context,
+		registerCommand(name, definition) {
+			const registry = service("host-command-registry");
+			if (!registry?.register) throw new Error("Command registry is unavailable");
+			return own(
+				registry.register(name, async (input: unknown, signal?: AbortSignal) => {
+					const result = await definition.handler(input, signal);
+					if (typeof result === "number") return result;
+					if (typeof result === "string" && typeof (input as { stdout?: unknown })?.stdout === "function")
+						(input as { stdout: (text: string) => void }).stdout(`${result}\n`);
+					return 0;
+				}),
+			);
+		},
+		registerTool(definition) {
+			const registry = service("tool-registry");
+			if (!registry?.register) throw new Error("Tool registry is unavailable");
+			return own(
+				registry.register(definition, fiber ? { fiberId: fiber.id, pluginName: fiber.pluginName, fiber } : undefined),
+			);
+		},
+		registerProvider(_definition) {
+			const registry = service("provider-registry");
+			if (!registry?.register) throw new Error("Provider registry is unavailable");
+			registry.register(_definition);
+			return own(() => undefined);
+		},
+		registerWeb(_definition) {
+			return own(() => undefined);
+		},
+		on(type, handler) {
+			return own(
+				context.events.subscribe((event) => {
+					if (event.type === type) void Promise.resolve(handler(event));
+				}),
+			);
+		},
+	};
+}
 
 export const PLUGIN_API_VERSION = 1 as const;
 const PLUGIN_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -31,8 +84,10 @@ export interface PluginManifest {
 	readonly name: string;
 	readonly version: string;
 	readonly entry: string;
-	readonly permissions: PluginPermissions;
-	readonly capabilities: PluginCapabilities;
+	/** Declaration-only audit metadata. It never gates in-process Node.js access. */
+	readonly permissions?: PluginPermissions;
+	/** Declaration-only capability hints used for audit and discovery. */
+	readonly capabilities?: PluginCapabilities;
 	/** Optional declaration-only Web contributions. The browser never imports this package entry. */
 	readonly web?: WebManifest;
 }
@@ -112,7 +167,7 @@ function parsePackagePluginManifest(value: unknown): PluginManifest {
 		name: requiredString(value, "name"),
 		version: requiredString(value, "version"),
 		entry,
-		permissions: parsePermissions(value.permissions),
+		...(value.permissions === undefined ? {} : { permissions: parsePermissions(value.permissions) }),
 		capabilities: parseCapabilities(value.capabilities),
 		...(value.web === undefined
 			? {}
@@ -131,24 +186,28 @@ export async function readPackagePluginManifest(root: string): Promise<PluginMan
 	} catch {
 		throw new Error("plugin package.json is not valid JSON");
 	}
-	if (!isRecord(packageJson) || !isRecord(packageJson.diCode))
-		throw new Error("plugin package.json must include a diCode object");
-	const diCode = packageJson.diCode;
-	const entries = diCode.plugins;
-	if (!Array.isArray(entries) || entries.length !== 1 || typeof entries[0] !== "string")
-		throw new Error("plugin package diCode.plugins must contain exactly one entry");
-	const exportsValue = packageJson.exports;
-	if (!isRecord(exportsValue) || !Object.hasOwn(exportsValue, entries[0]))
-		throw new Error(`plugin package export ${entries[0]} is not declared`);
+	const diCode = isRecord(packageJson) && isRecord(packageJson.diCode) ? packageJson.diCode : undefined;
+	const exportsValue = isRecord(packageJson) ? packageJson.exports : undefined;
+	const configuredEntry =
+		diCode && Array.isArray(diCode.plugins) && diCode.plugins.length === 1 && typeof diCode.plugins[0] === "string"
+			? diCode.plugins[0]
+			: undefined;
+	const entry = configuredEntry ?? (isRecord(exportsValue) && Object.hasOwn(exportsValue, ".") ? "." : undefined);
+	if (!entry) throw new Error('plugin package must declare exports["."] or diCode.plugins');
+	if (!isRecord(exportsValue) || !Object.hasOwn(exportsValue, entry))
+		throw new Error(`plugin package export ${entry} is not declared`);
+	if (!isRecord(packageJson)) throw new Error("plugin package.json must be an object");
+	const packageName = typeof packageJson.name === "string" ? packageJson.name : "package-plugin";
+	const id = packageName.replace(/^@[^/]+\//u, "");
 	return parsePackagePluginManifest({
-		apiVersion: diCode.apiVersion,
-		id: typeof packageJson.name === "string" ? packageJson.name.replace(/^@[^/]+\//, "") : "package-plugin",
-		name: packageJson.name,
+		apiVersion: diCode?.apiVersion ?? PLUGIN_API_VERSION,
+		id,
+		name: packageName,
 		version: packageJson.version,
-		entry: entries[0],
-		permissions: diCode.permissions ?? { filesystem: "none", network: [], process: [] },
-		capabilities: diCode.capabilities,
-		web: diCode.web,
+		entry,
+		...(diCode?.permissions === undefined ? {} : { permissions: diCode.permissions }),
+		capabilities: diCode?.capabilities,
+		web: diCode?.web,
 	});
 }
 
@@ -179,7 +238,7 @@ function exportTarget(value: unknown): string | undefined {
 
 /** Resolves a declared package export and rejects targets outside the package root. */
 export async function resolvePackagePluginExport(root: string, exportName: string): Promise<string> {
-	if (!/^\.\/[A-Za-z0-9._/-]+$/u.test(exportName) || exportName.includes(".."))
+	if (!(exportName === "." || /^\.\/[A-Za-z0-9._/-]+$/u.test(exportName)) || exportName.includes(".."))
 		throw new Error("plugin package export name is unsafe");
 	const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as Record<string, unknown>;
 	const exportsValue = packageJson.exports;
@@ -219,6 +278,16 @@ export async function resolvePluginEntry(root: string, entry: string, checkPacka
 	return resolvedEntry;
 }
 
+/** Computes a deterministic SHA-256 digest for trust/audit records without importing plugin code. */
+export async function computePluginIntegrity(root: string, entry: string): Promise<string> {
+	const entryPath =
+		entry === "." ? await resolvePackagePluginExport(root, entry) : await resolvePluginEntry(root, entry);
+	const hash = createHash("sha256");
+	hash.update(await readFile(join(resolve(root), "package.json")));
+	hash.update(await readFile(entryPath));
+	return hash.digest("hex");
+}
+
 export function isPluginDefinition(value: unknown): value is PluginDefinition {
 	if (typeof value !== "object" || value === null) return false;
 	const candidate = value as { readonly name?: unknown; readonly apply?: unknown };
@@ -226,9 +295,16 @@ export function isPluginDefinition(value: unknown): value is PluginDefinition {
 }
 
 export function getPluginDefinition<Config = unknown>(module: PluginModule<Config>): PluginDefinition<Config> {
-	if ("default" in module) {
-		throw new TypeError("Plugin modules must use namespace exports and cannot define a default export");
+	if ("default" in module && typeof module.default === "function") {
+		const setup = module.default as (api: unknown) => void | Promise<void>;
+		return {
+			name: typeof module.name === "string" && module.name.length > 0 ? module.name : "plugin",
+			version: typeof module.version === "string" ? module.version : undefined,
+			apiVersion: typeof module.apiVersion === "number" ? module.apiVersion : PLUGIN_API_VERSION,
+			apply: async (context, _config, fiber) => setup(createExtensionApi(context, fiber)),
+		} as PluginDefinition<Config>;
 	}
+	if ("default" in module) throw new TypeError("Plugin default export must be a setup(api) function");
 	const candidate = unwrapPluginModule(module);
 	if (candidate.apiVersion !== undefined && candidate.apiVersion !== PLUGIN_API_VERSION)
 		throw new TypeError(`Plugin API version must be ${PLUGIN_API_VERSION}`);
@@ -526,6 +602,7 @@ export interface LoaderOptions {
 export class CompositionLoader {
 	readonly tree: EntryTree;
 	private readonly fibers: Fiber[] = [];
+	private readonly fiberEntries = new Map<Fiber, CompositionEntry>();
 	private readonly context: Context;
 	private readonly importer: (name: string) => Promise<PluginModule>;
 	private projectTrusted: boolean | undefined;
@@ -559,9 +636,11 @@ export class CompositionLoader {
 			}
 			this.tree.set(entry.id, { status: "loading" });
 			try {
-				const definition = getPluginDefinition(await this.importer(entry.name));
+				const loaded = getPluginDefinition(await this.importer(entry.name));
+				const definition = loaded.name === "plugin" ? { ...loaded, name: entry.id } : loaded;
 				const fiber = await this.context.plugin(definition, entry.config);
 				this.fibers.push(fiber);
+				this.fiberEntries.set(fiber, entry);
 				active.add(entry.id);
 				this.tree.set(entry.id, { status: "active", fiber });
 			} catch (cause) {
@@ -588,7 +667,11 @@ export class CompositionLoader {
 		);
 		for (const entry of entries) {
 			const record = this.tree.get(entry.id);
-			if (!entry.projectLocal || record?.status !== "skipped" || record.error?.message !== "Project is not trusted")
+			if (
+				!entry.projectLocal ||
+				record?.status !== "skipped" ||
+				(record.error?.message !== "Project is not trusted" && record.error?.message !== "Project trust revoked")
+			)
 				continue;
 			const required = entry.required !== false;
 			const failedDependency = [...(entry.dependsOn ?? [])].find((id) => !active.has(id));
@@ -604,9 +687,11 @@ export class CompositionLoader {
 			}
 			this.tree.set(entry.id, { status: "loading", error: undefined });
 			try {
-				const definition = getPluginDefinition(await this.importer(entry.name));
+				const loaded = getPluginDefinition(await this.importer(entry.name));
+				const definition = loaded.name === "plugin" ? { ...loaded, name: entry.id } : loaded;
 				const fiber = await this.context.plugin(definition, entry.config);
 				this.fibers.push(fiber);
+				this.fiberEntries.set(fiber, entry);
 				active.add(entry.id);
 				this.tree.set(entry.id, { status: "active", fiber });
 			} catch (cause) {
@@ -615,6 +700,19 @@ export class CompositionLoader {
 				if (required)
 					throw new CompositionError("required-failure", `Required entry ${entry.id} failed: ${error.message}`);
 			}
+		}
+		return this.tree.snapshot();
+	}
+	/** Revokes project trust by disposing active project-local fibers without touching built-ins. */
+	async unloadProjectEntries(): Promise<PluginInventory> {
+		this.projectTrusted = false;
+		for (const fiber of [...this.fibers].reverse()) {
+			const entry = this.fiberEntries.get(fiber);
+			if (!entry?.projectLocal) continue;
+			await fiber.dispose();
+			this.fibers.splice(this.fibers.indexOf(fiber), 1);
+			this.fiberEntries.delete(fiber);
+			this.tree.set(entry.id, { status: "skipped", error: new Error("Project trust revoked") });
 		}
 		return this.tree.snapshot();
 	}
@@ -630,7 +728,14 @@ export function createCompositionLoader(options: LoaderOptions): CompositionLoad
 
 export interface ProjectTrustRecord {
 	readonly version: 1;
-	readonly projects: Readonly<Record<string, boolean>>;
+	readonly projects: Readonly<Record<string, boolean | ProjectTrustMetadata>>;
+}
+
+export interface ProjectTrustMetadata {
+	readonly trusted: boolean;
+	readonly source?: string;
+	readonly version?: string;
+	readonly integrity?: string;
 }
 
 /** Versioned, user-owned project trust decisions. Trust controls import eligibility only. */
@@ -642,18 +747,31 @@ export class ProjectTrustStore {
 	async get(projectRoot: string): Promise<boolean | null> {
 		const registry = await this.read();
 		const key = await canonicalPath(projectRoot);
-		return registry.projects[key] === undefined ? null : registry.projects[key];
+		const value = registry.projects[key];
+		if (value === undefined) return null;
+		return typeof value === "boolean" ? value : value.trusted;
 	}
-	async set(projectRoot: string, trusted: boolean): Promise<void> {
+	/** Returns the persisted trust metadata, preserving compatibility with boolean records. */
+	async getRecord(projectRoot: string): Promise<ProjectTrustMetadata | null> {
 		const registry = await this.read();
 		const key = await canonicalPath(projectRoot);
-		await this.write({ version: 1, projects: { ...registry.projects, [key]: trusted } });
+		const value = registry.projects[key];
+		if (value === undefined) return null;
+		return typeof value === "boolean" ? { trusted: value } : { ...value };
+	}
+	async set(projectRoot: string, trusted: boolean, metadata?: Omit<ProjectTrustMetadata, "trusted">): Promise<void> {
+		const registry = await this.read();
+		const key = await canonicalPath(projectRoot);
+		await this.write({
+			version: 1,
+			projects: { ...registry.projects, [key]: metadata ? { trusted, ...metadata } : trusted },
+		});
 	}
 	private async read(): Promise<ProjectTrustRecord> {
 		try {
 			const parsed: unknown = JSON.parse(await readFile(this.filePath, "utf8"));
 			if (isRecord(parsed) && parsed.version === 1 && isRecord(parsed.projects))
-				return { version: 1, projects: { ...parsed.projects } as Record<string, boolean> };
+				return { version: 1, projects: { ...parsed.projects } as Record<string, boolean | ProjectTrustMetadata> };
 		} catch {
 			// Missing or malformed trust files are treated as no decision.
 		}
@@ -776,9 +894,7 @@ export class PluginInstallManager {
 			if (source.startsWith("npm:")) {
 				const spec = source.slice(4);
 				await runExternal("npm", ["install", "--ignore-scripts", "--prefix", staging, spec], this.managedRoot);
-				const packageNamePart = spec.split("@")[0];
-				if (!packageNamePart) throw new Error("npm plugin specifier is missing a package name");
-				const packageName = spec.startsWith("@") ? spec.slice(1).split("@")[0]?.replace("/", "@@") : packageNamePart;
+				const packageName = spec.startsWith("@") ? spec.slice(1).split("@")[0]?.replace("/", "@@") : spec.split("@")[0];
 				if (!packageName) throw new Error("npm plugin specifier is missing a package name");
 				const sourceRoot = packageName.includes("@@")
 					? join(staging, "node_modules", `@${packageName.replace("@@", "/")}`)

@@ -65,6 +65,7 @@ try {
 		allowRemote,
 		onProjectTrustChange: async (trusted) => {
 			if (trusted) await loader?.loadTrustedProjectEntries();
+			else await loader?.unloadProjectEntries();
 			if (loader && context) context.require(pluginInventoryKey).set(loader.tree.snapshot());
 		},
 	});

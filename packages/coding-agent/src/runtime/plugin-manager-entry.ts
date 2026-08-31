@@ -1,16 +1,35 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { hostCommandRegistryKey } from "@di-code/builtins";
-import { type ManagedPlugin, PluginInstallManager } from "@di-code/plugin-loader";
+import {
+	type ManagedPlugin,
+	PluginInstallManager,
+	ProjectTrustStore,
+	readPackagePluginManifest,
+	resolvePackagePluginExport,
+} from "@di-code/plugin-loader";
 import { createServiceKey, type PluginDefinition, redactSensitiveText } from "@di-code/plugin-runtime";
 
-export type PluginManagementAction = "install" | "list" | "get" | "enable" | "disable" | "update" | "remove";
+export type PluginManagementAction =
+	| "install"
+	| "list"
+	| "get"
+	| "enable"
+	| "disable"
+	| "update"
+	| "remove"
+	| "create"
+	| "doctor"
+	| "trust"
+	| "revoke";
 
 export interface PluginManagementCommand {
 	readonly action: PluginManagementAction;
 	readonly argument?: string;
 	readonly stdout: (text: string) => void;
 	readonly stderr: (text: string) => void;
+	readonly cwd?: string;
 }
 
 export interface PluginManagerService {
@@ -34,7 +53,7 @@ function publicPlugin(plugin: ManagedPlugin): Readonly<Record<string, unknown>> 
 		enabled: plugin.enabled,
 		version: plugin.manifest.version,
 		installedAt: plugin.installedAt,
-		capabilities: Object.keys(plugin.manifest.capabilities).sort(),
+		capabilities: Object.keys(plugin.manifest.capabilities ?? {}).sort(),
 	};
 }
 
@@ -79,6 +98,44 @@ export const pluginManager: PluginDefinition<PluginManagerEntryConfig> = {
 						case "install": {
 							const plugin = await manager.install(command.argument ?? "");
 							command.stdout(`Installed ${plugin.id}\n`);
+							return 0;
+						}
+						case "create": {
+							const name = command.argument ?? "my-plugin";
+							const root = resolve(command.cwd ?? process.cwd(), name);
+							const id =
+								basename(root)
+									.toLowerCase()
+									.replace(/[^a-z0-9-]+/g, "-")
+									.replace(/^-+|-+$/g, "") || "my-plugin";
+							await mkdir(join(root, "src"), { recursive: true });
+							await writeFile(
+								join(root, "package.json"),
+								`${JSON.stringify({ name: id, version: "0.1.0", type: "module", exports: { ".": "./dist/plugin.js" }, scripts: { build: "tsc" }, dependencies: { "@di-code/plugin-sdk": "^0.2.2" } }, null, 2)}\n`,
+							);
+							await writeFile(
+								join(root, "tsconfig.json"),
+								`${JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", outDir: "dist", rootDir: ".", strict: true }, include: ["plugin.ts"] }, null, 2)}\n`,
+							);
+							await writeFile(
+								join(root, "plugin.ts"),
+								`import type { ExtensionAPI } from "@di-code/plugin-sdk";\n\nexport default function setup(api: ExtensionAPI): void {\n  api.registerCommand("hello", { description: "Say hello", handler: async () => "Hello from ${id}" });\n}\n`,
+							);
+							command.stdout(`Created plugin ${id} at ${root}\n`);
+							return 0;
+						}
+						case "doctor": {
+							const root = resolve(command.cwd ?? process.cwd(), command.argument ?? ".");
+							const manifest = await readPackagePluginManifest(root);
+							await resolvePackagePluginExport(root, manifest.entry);
+							command.stdout(`Plugin ${manifest.id} is healthy (entry ${manifest.entry})\n`);
+							return 0;
+						}
+						case "trust":
+						case "revoke": {
+							const root = resolve(command.argument ?? command.cwd ?? process.cwd());
+							await new ProjectTrustStore(join(agentDir, "trust.json")).set(root, command.action === "trust");
+							command.stdout(`${command.action === "trust" ? "Trusted" : "Revoked trust for"} ${root}\n`);
 							return 0;
 						}
 						case "enable":

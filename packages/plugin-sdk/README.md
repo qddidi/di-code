@@ -1,6 +1,8 @@
 # @di-code/plugin-sdk
 
-`@di-code/plugin-sdk` 是第三方 `di-code` namespace plugin 的稳定公开入口。它只重导出 `@di-code/plugin-runtime` 与 `@di-code/plugin-loader` 的根 API；插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
+`@di-code/plugin-sdk` 是第三方 `di-code` 插件的稳定公开入口。它只重导出 `@di-code/plugin-runtime` 与 `@di-code/plugin-loader` 的根 API；插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
+
+最小插件可以只导出 `setup(api)`，通过 `api.registerCommand()`、`api.registerTool()`、`api.registerProvider()`、`api.registerWeb()` 和 `api.on()` 注册资源；每个方法返回幂等 disposer，并自动绑定当前 Fiber 与取消信号。
 
 ```powershell
 npm install @di-code/plugin-sdk
@@ -18,7 +20,7 @@ export const apply: PluginDefinition["apply"] = (context) => {
 };
 ```
 
-发布 package 必须以 ESM `exports` 声明该 entry，并在 `package.json.diCode.plugins` 中只列出它。Loader 拒绝 default export、缺失的 `name`/`apply`、不兼容 API version 和 package root 外的 export target。完整 manifest、Composition、trust、capability 和 lifecycle 规则见仓库 [`docs/插件使用指南.md`](../../docs/插件使用指南.md)。
+发布 package 推荐以 ESM `exports["."]` 声明入口；旧版 `package.json.diCode.plugins` 仅用于兼容。完整 manifest、Composition、trust、capability 和 lifecycle 规则见仓库 [`docs/插件使用指南.md`](../../docs/插件使用指南.md)。
 
 Web UI 扩展使用 `WebManifest`、`WebContribution` 和 `WebSlotId`。贡献通过宿主 `WebSlotRegistry` 按 owner 管理，`dispose` 幂等；`componentKey` 是宿主白名单键，不是 URL、HTML 或 JavaScript。插件只能提供声明式只读数据，所需 capability 和 Workspace trust 由宿主检查。
 

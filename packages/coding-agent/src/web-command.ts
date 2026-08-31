@@ -105,6 +105,7 @@ export async function runWebCommand(command: WebCommand): Promise<number> {
 			developmentOrigin: developmentOrigin(),
 			onProjectTrustChange: async (trusted) => {
 				if (trusted) await loader.loadTrustedProjectEntries();
+				else await loader.unloadProjectEntries();
 				context.require(pluginInventoryKey).set(loader.tree.snapshot());
 			},
 		});

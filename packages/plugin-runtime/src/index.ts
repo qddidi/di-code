@@ -399,12 +399,32 @@ export interface Context {
 	readonly services: ServiceRegistry;
 	readonly capabilities: CapabilityView;
 	readonly logger: PluginLogger;
+	/** Looks up a host service by its stable service-key description for ExtensionAPI adapters. */
+	readonly findService?: (description: string) => unknown;
 	get<T>(key: ServiceKey<T>): T | undefined;
 	require<T>(key: ServiceKey<T>): T;
 	set<T>(key: ServiceKey<T>, value: T): Disposer;
 	child(options?: ContextChildOptions): Context;
 	plugin<TConfig>(definition: PluginDefinition<TConfig>, config: TConfig): Promise<Fiber>;
 	dispose(): Promise<void>;
+}
+
+/** Stable facade passed to default-export plugins. Registration is host-owned and returns idempotent disposers. */
+export interface ExtensionAPI {
+	readonly id: string;
+	readonly signal: AbortSignal;
+	readonly ctx: Context;
+	readonly registerCommand: (
+		name: string,
+		definition: {
+			readonly description?: string;
+			readonly handler: (input?: unknown, signal?: AbortSignal) => unknown | Promise<unknown>;
+		},
+	) => Disposer;
+	readonly registerTool: (definition: unknown) => Disposer;
+	readonly registerProvider: (definition: unknown) => Disposer;
+	readonly registerWeb: (definition: unknown) => Disposer;
+	readonly on: (type: string, handler: (event: unknown) => unknown | Promise<unknown>) => Disposer;
 }
 
 export interface Fiber {
@@ -621,6 +641,14 @@ class RuntimeContext implements Context {
 		return undefined;
 	}
 
+	findService(description: string): unknown {
+		const local = this.services.snapshot().find((entry) => entry.name === description)?.value;
+		if (local !== undefined) return local;
+		return this.inheritServices && this.parent instanceof RuntimeContext
+			? this.parent.findService(description)
+			: undefined;
+	}
+
 	require<T>(key: ServiceKey<T>): T {
 		const value = this.get(key);
 		if (value === undefined) throw new Error(`Required service is not registered: ${keyName(key)}`);
@@ -712,6 +740,7 @@ class BoundContext implements Context {
 	readonly services: ServiceRegistry;
 	readonly capabilities: CapabilityView;
 	readonly logger: PluginLogger;
+	readonly findService: (description: string) => unknown;
 
 	private readonly base: RuntimeContext;
 	private readonly owner: RuntimeFiber;
@@ -727,6 +756,7 @@ class BoundContext implements Context {
 		this.services = base.services;
 		this.capabilities = owner.capabilities;
 		this.logger = owner.logger;
+		this.findService = (description) => this.base.findService(description);
 	}
 
 	get<T>(key: ServiceKey<T>): T | undefined {

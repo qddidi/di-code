@@ -4,6 +4,7 @@ export type {
 	ConfigSchema,
 	Context,
 	Disposer,
+	ExtensionAPI,
 	Fiber,
 	PluginApply,
 	PluginCapabilities,

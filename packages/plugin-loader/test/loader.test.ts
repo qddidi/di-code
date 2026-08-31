@@ -77,6 +77,18 @@ describe("namespace plugin loader contract", () => {
 	it("rejects default exports", () => {
 		expect(() => getPluginDefinition({ default: { name: "bad", apply: () => undefined } })).toThrow(/default export/);
 	});
+	it("adapts a default setup(api) export", async () => {
+		let received = false;
+		const definition = getPluginDefinition({
+			default: (api: { readonly signal: AbortSignal }) => {
+				received = api.signal instanceof AbortSignal;
+			},
+		});
+		const context = createRootContext();
+		await context.plugin(definition, undefined);
+		expect(received).toBe(true);
+		await context.dispose();
+	});
 
 	it("rejects incomplete definitions", () => {
 		expect(isPluginDefinition({ name: "missing-apply" })).toBe(false);
@@ -175,6 +187,8 @@ describe("namespace plugin loader contract", () => {
 			entries: [{ id: "project", name: fixture, projectLocal: true }],
 		});
 		expect((await loader.load()).get("project")?.status).toBe("skipped");
+		expect((await loader.loadTrustedProjectEntries()).get("project")?.status).toBe("active");
+		expect((await loader.unloadProjectEntries()).get("project")?.status).toBe("skipped");
 		expect((await loader.loadTrustedProjectEntries()).get("project")?.status).toBe("active");
 		await context.dispose();
 	});

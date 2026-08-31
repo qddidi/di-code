@@ -428,7 +428,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 					version: plugin.manifest.version,
 					enabled: plugin.enabled,
 					installedAt: plugin.installedAt,
-					capabilities: Object.keys(plugin.manifest.capabilities).sort(),
+					capabilities: Object.keys(plugin.manifest.capabilities ?? {}).sort(),
 					source: "managed" as const,
 					status: plugin.enabled ? ("active" as const) : ("disabled" as const),
 				}))
@@ -613,7 +613,7 @@ export function createProductHost(options: ProductHostOptions): ProductHost {
 				version: updated.manifest.version,
 				enabled: updated.enabled,
 				installedAt: updated.installedAt,
-				capabilities: Object.keys(updated.manifest.capabilities).sort(),
+				capabilities: Object.keys(updated.manifest.capabilities ?? {}).sort(),
 			};
 		},
 		configureMcpServer: async (input, signal) => {

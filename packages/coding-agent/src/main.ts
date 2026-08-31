@@ -138,7 +138,7 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 			input = { stdout: options.stdout };
 		} else if (command.kind === "plugin") {
 			name = "plugin";
-			input = { ...command, stdout: options.stdout, stderr: options.stderr };
+			input = { ...command, cwd: allowedRoot, stdout: options.stdout, stderr: options.stderr };
 		} else if (command.kind === "mcp") {
 			name = "mcp";
 			input = { ...command, cwd: allowedRoot, stdout: options.stdout, stderr: options.stderr };
