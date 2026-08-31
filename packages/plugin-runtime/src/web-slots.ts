@@ -41,6 +41,10 @@ export interface WebContribution {
 export interface WebManifest {
 	readonly protocolVersion: typeof WEB_EXTENSION_PROTOCOL_VERSION;
 	readonly contributions: readonly WebContribution[];
+	/** Optional browser bundle metadata validated by the plugin loader. */
+	readonly entry?: string;
+	readonly integrity?: `sha256-${string}`;
+	readonly slots?: readonly string[];
 }
 
 export type WebSlotContribution = WebContribution & {

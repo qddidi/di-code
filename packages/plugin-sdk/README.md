@@ -1,6 +1,22 @@
 # @di-code/plugin-sdk
 
-`@di-code/plugin-sdk` 是第三方 `di-code` namespace plugin 的稳定公开入口。它只重导出 `@di-code/plugin-runtime` 与 `@di-code/plugin-loader` 的根 API；插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
+## Stage 3 runtime and Web bridge
+
+`SessionRuntimeManager` keeps each live Session's abort root and resources independent from the selected view. `DurableTaskStore` appends versioned JSONL records; `replayTaskRecords()` rebuilds the last complete sequence and marks tasks without a unique terminal record as `needs_reconciliation` without replaying side effects.
+
+`WebBundleBridge` implements protocol-v1 hello/ready/action messaging with exact origin, source, instance and nonce checks, bounded structured-clone payloads, snapshots, sequence events and `snapshot_required`. Browser bundles receive only host projections and registered actions; they do not receive Node objects, credentials or internal transports.
+
+## Stage 2 runtime context
+
+`createExtensionContext()` creates the host-bound `ExtensionContext` used by ordinary plugins. The context is frozen for the call lifetime and carries the current `session` plus `files`, `subprocess`, `network`, `subagents`, `ui`, `settings`, `diagnostics`, `sessions`, `providers`, and `jobs` facades. An unavailable current session rejects with `SESSION_UNAVAILABLE`; unavailable optional hosts use their documented stable error code. Advanced facades accept explicit target IDs and remain responsible for host permission and resource checks.
+
+`InMemorySubagentService` is a deterministic host implementation for tests and small integrations. Tasks expose `result`, ordered `events`, FIFO `followup()`, and isolated `cancel()`. `reconcileTask()` only accepts `needs_reconciliation` tasks: `resume` requires confirmation that unknown external work has stopped and returns to `waiting`, while `complete` and `cancel` are idempotent terminal decisions. An optional `TaskStore` persists versioned task records and de-duplicates sequence numbers.
+
+`@di-code/plugin-sdk` 是第三方 di-code 扩展的唯一公开入口。新插件使用默认导出的 `setup(api)`，并通过 `api.on`、`registerCommand`、`registerTool`、`registerProvider` 和 `registerWeb` 注册能力；每个注册方法返回幂等 disposer，`api.ctx.signal` 会在卸载时自动 abort。插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
+
+插件也可直接注册 `registerSubagent()` 和 `registerTuiOverlay()`；宿主负责 child task、取消和 overlay 生命周期。`ctx.providers.request()`、`ctx.subprocess.run()` 与 `ctx.jobs.start()` 均由宿主管理，统一支持 `AbortSignal`、超时/输出限制和结构化失败。插件示例无需处理 owner token、wire protocol 或重复 `dispose()`。
+
+自由扩展路线的阶段 0 契约集中在 `freedom-stage0-contracts.ts`，并从本包根入口导出 `ExtensionAPI`、`ExtensionContext`、普通/高级服务、稳定错误码、任务状态、Session 记录和 Web bridge v1 类型。该文件只冻结公共形状，运行时接线由后续阶段完成；旧 namespace facade、owner/capability API 与 `componentKey` 贡献按 [`自由扩展阶段0-真实基线与契约记录.md`](../../docs-vibecoding/plugin-freedom/自由扩展阶段0-真实基线与契约记录.md) 的删除清单迁移。
 
 ```powershell
 npm install @di-code/plugin-sdk
@@ -18,11 +34,11 @@ export const apply: PluginDefinition["apply"] = (context) => {
 };
 ```
 
-发布 package 必须以 ESM `exports` 声明该 entry，并在 `package.json.diCode.plugins` 中只列出它。Loader 拒绝 default export、缺失的 `name`/`apply`、不兼容 API version 和 package root 外的 export target。完整 manifest、Composition、trust、capability 和 lifecycle 规则见仓库 [`docs/插件使用指南.md`](../../docs/插件使用指南.md)。
+发布 package 必须以 ESM `exports` 声明该 entry，并在 `package.json.diCode.plugins` 中只列出它。manifest 需要 `apiVersion`、精确 `version`、`packageIntegrity`（宿主计算的 `sha256-*`）和 permissions；Loader 在 import 前完成来源、完整性和 trust 预检，预检失败不会执行入口。完整 Composition、trust、来源 pin 和 lifecycle 规则见 [`docs/插件使用指南.md`](../../docs/插件使用指南.md)。
 
-Web UI 扩展使用 `WebManifest`、`WebContribution` 和 `WebSlotId`。贡献通过宿主 `WebSlotRegistry` 按 owner 管理，`dispose` 幂等；`componentKey` 是宿主白名单键，不是 URL、HTML 或 JavaScript。插件只能提供声明式只读数据；宿主会先检查项目 trust，再检查声明 capability。
+Web UI 扩展使用 `registerWeb()` 登记 bundle 入口、SRI 和允许的 slot；浏览器只通过当前版本 iframe bridge 获取 projection/action，不接触 Node 对象、Cookie 或凭据。
 
-Session 级 UI 使用 `createSessionExtensionRegistry()`。插件 scope 可通过 `registerBadge()` 和 `registerUi()` 动态添加徽章、控制、审阅面板或输入占位符；返回的 disposer 和 scope dispose 都会移除贡献。宿主通过 `SessionExtensionFacade` 向 TUI/WebUI/RPC 提供只读快照，RPC 以 `extension:ui` projection 推送；`componentKey` 仍必须由宿主白名单解析。
+TUI 扩展使用 `registerTuiOverlay()`；宿主保存 overlay、focus 和 resize 生命周期，插件只提供渲染函数。
 
 本包根入口导出 `SessionPluginFactory`、`SessionPluginScope` 和 `createSessionPluginFactory`。factory 为每个 session ID 创建独立 scope；scope 提供 opaque ID、`AbortSignal`、不可变 capabilities、`hooks`、typed `events`/`projections` registry、动态 prompt sections、`appendEvent()` 和可选 `UserInteraction`，不暴露 `Agent`、`AgentSession`、`SessionManager`、文件句柄或 transport。`appendEvent()` 由宿主绑定到当前 Session 的串行持久化队列；无持久化宿主时会明确失败。重复 session ID 会以 `PluginLifecycleError`（`DUPLICATE`）拒绝；初始化失败会回滚已注册的 disposer；scope 与 factory 的 `dispose()` 都幂等，并在释放时 abort signal。factory 卸载会清理所有已创建 scope，适用于 Composition/Fiber 卸载。宿主将 scope hooks、events 和 projections 接入单一 Session/Agent，并执行迁移、校验和回放。其余阶段 0契约类型与版本语义见 [`docs-vibecoding/plugin/阶段0-公开契约草案.md`](../../docs-vibecoding/plugin/阶段0-公开契约草案.md)。
 

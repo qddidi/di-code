@@ -1,5 +1,7 @@
 # @di-code/plugin-loader
 
+Web bundle declarations use `diCode.web` with a relative `entry`, independent `sha256-*` SRI `integrity`, and registered `slots`. The loader validates these fields before activation; browser code is loaded only through the host protocol-v1 sandbox bridge.
+
 `@di-code/plugin-loader` 校验第三方 namespace plugin、package manifest 和声明式 Composition，并提供 project trust 与受管插件安装。它依赖 `@di-code/plugin-runtime`，但不实现 Agent loop 或产品 CLI。
 
 安装：

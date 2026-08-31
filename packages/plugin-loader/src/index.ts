@@ -6,9 +6,45 @@ import {
 	type Fiber,
 	type PluginDefinition,
 	validateWebManifest,
+	WEB_SLOT_IDS,
 	type WebManifest,
 } from "@di-code/plugin-runtime";
 import { parse as parseYaml } from "yaml";
+import {
+	computePackageIntegrity,
+	createExtensionAPI,
+	type ExtensionApiContext,
+	type ExtensionApiInstance,
+	isSetupModule,
+	validateNpmTarballIntegrity,
+} from "./extension-api.ts";
+
+export type {
+	ExtensionApi,
+	ExtensionApiContext,
+	ExtensionApiInstance,
+	ExtensionCommand,
+	ExtensionDisposer,
+	ExtensionProvider,
+	ExtensionSubagent,
+	ExtensionTool,
+	ExtensionTrustRecord,
+	ExtensionTuiOverlay,
+	ExtensionWeb,
+} from "./extension-api.ts";
+export {
+	computePackageIntegrity,
+	computeWebBundleIntegrity,
+	createExtensionAPI,
+	importSetupModule,
+	isSetupModule,
+	normalizePluginSource,
+	PluginTrustStore,
+	packageRootFromEntry,
+	readPackageJson,
+	validateNpmTarballIntegrity,
+	validatePackageIntegrity,
+} from "./extension-api.ts";
 
 export type PluginModule<Config = unknown> = {
 	readonly [exportName: string]: unknown;
@@ -32,8 +68,16 @@ export interface PluginManifest {
 	readonly entry: string;
 	readonly permissions: PluginPermissions;
 	readonly capabilities: PluginCapabilities;
+	readonly packageIntegrity?: `sha256-${string}`;
 	/** Optional declaration-only Web contributions. The browser never imports this package entry. */
-	readonly web?: WebManifest;
+	readonly web?: WebManifest & Partial<WebBundleManifest>;
+}
+
+/** Browser bundle declaration. The bundle is served by the host and never imported by Node. */
+export interface WebBundleManifest extends WebManifest {
+	readonly entry: string;
+	readonly integrity: `sha256-${string}`;
+	readonly slots: readonly string[];
 }
 
 export type PluginCapability = "filesystem" | "network" | "process" | "ui" | "credentials";
@@ -95,6 +139,28 @@ function parseCapabilities(value: unknown): PluginCapabilities {
 	return Object.freeze({ ...value }) as PluginCapabilities;
 }
 
+function parseWebBundle(value: unknown): WebBundleManifest | undefined {
+	if (!isRecord(value) || typeof value.entry !== "string" || value.entry.trim() === "") return undefined;
+	if (isAbsolute(value.entry) || value.entry.split(/[\\/]/u).includes(".."))
+		throw new Error("plugin manifest web.entry must be relative to the plugin root");
+	if (typeof value.integrity !== "string" || !/^sha256-[A-Za-z0-9+/]+={0,2}$/u.test(value.integrity))
+		throw new Error("plugin manifest web.integrity must be a sha256 SRI value");
+	if (
+		!Array.isArray(value.slots) ||
+		!value.slots.every(
+			(slot) => typeof slot === "string" && WEB_SLOT_IDS.includes(slot as (typeof WEB_SLOT_IDS)[number]),
+		)
+	)
+		throw new Error("plugin manifest web.slots must be a non-empty string array");
+	return {
+		protocolVersion: 1,
+		contributions: [],
+		entry: value.entry,
+		integrity: value.integrity as `sha256-${string}`,
+		slots: value.slots,
+	};
+}
+
 /** Validates package metadata before its namespace entry is imported. */
 function parsePackagePluginManifest(value: unknown): PluginManifest {
 	if (!isRecord(value)) throw new Error("plugin manifest must be an object");
@@ -105,6 +171,7 @@ function parsePackagePluginManifest(value: unknown): PluginManifest {
 	const entry = requiredString(value, "entry");
 	if (isAbsolute(entry) || entry.split(/[\\/]/u).includes(".."))
 		throw new Error("plugin manifest entry must be relative to the plugin root");
+	const parsedWeb = value.web === undefined ? undefined : parseWebBundle(value.web);
 	return {
 		apiVersion: PLUGIN_API_VERSION,
 		id,
@@ -113,13 +180,18 @@ function parsePackagePluginManifest(value: unknown): PluginManifest {
 		entry,
 		permissions: parsePermissions(value.permissions),
 		capabilities: parseCapabilities(value.capabilities),
-		...(value.web === undefined
-			? {}
-			: validateWebManifest(value.web)
-				? { web: value.web }
-				: (() => {
-						throw new Error("plugin manifest web declaration is invalid");
-					})()),
+		...(typeof value.packageIntegrity === "string"
+			? { packageIntegrity: value.packageIntegrity as `sha256-${string}` }
+			: {}),
+		...(parsedWeb
+			? { web: parsedWeb }
+			: value.web === undefined
+				? {}
+				: validateWebManifest(value.web)
+					? { web: value.web }
+					: (() => {
+							throw new Error("plugin manifest web declaration is invalid");
+						})()),
 	};
 }
 
@@ -147,8 +219,56 @@ export async function readPackagePluginManifest(root: string): Promise<PluginMan
 		entry: entries[0],
 		permissions: diCode.permissions ?? { filesystem: "none", network: [], process: [] },
 		capabilities: diCode.capabilities,
+		packageIntegrity:
+			typeof diCode.packageIntegrity === "string" ? diCode.packageIntegrity : packageJson.packageIntegrity,
 		web: diCode.web,
 	});
+}
+
+export interface PluginPreflightResult {
+	readonly manifest: PluginManifest;
+	readonly root: string;
+	readonly entry: string;
+	readonly source: string;
+	readonly resolvedVersion: string;
+	readonly packageIntegrity: `sha256-${string}`;
+}
+
+/** Performs all local package checks before an entry is imported. */
+export async function preflightPluginPackage(
+	root: string,
+	options: {
+		readonly source?: string;
+		readonly trustStore?: import("./extension-api.ts").PluginTrustStore;
+		readonly requireTrust?: boolean;
+	} = {},
+): Promise<PluginPreflightResult> {
+	const resolvedRoot = await realpath(root);
+	const manifest = await readPackagePluginManifest(resolvedRoot);
+	if (!manifest.packageIntegrity || !/^sha256-[A-Za-z0-9+/]+={0,2}$/u.test(manifest.packageIntegrity))
+		throw new Error("Plugin manifest must include a valid packageIntegrity");
+	const actual = await (await import("./extension-api.ts")).computePackageIntegrity(resolvedRoot);
+	if (actual !== manifest.packageIntegrity)
+		throw new Error(`Plugin package integrity mismatch: expected ${manifest.packageIntegrity}, got ${actual}`);
+	const entry = await resolvePackagePluginExport(resolvedRoot, manifest.entry);
+	const source = options.source
+		? (await import("./extension-api.ts")).normalizePluginSource(options.source)
+		: (await import("./extension-api.ts")).normalizePluginSource(resolvedRoot);
+	const result: PluginPreflightResult = {
+		manifest,
+		root: resolvedRoot,
+		entry,
+		source,
+		resolvedVersion: manifest.version,
+		packageIntegrity: actual,
+	};
+	if (
+		options.requireTrust !== false &&
+		options.trustStore &&
+		!(await options.trustStore.find(manifest.id, source, manifest.version, actual))
+	)
+		throw new Error(`Plugin trust confirmation required for ${manifest.id}`);
+	return result;
 }
 
 function exportTarget(value: unknown): string | undefined {
@@ -510,6 +630,9 @@ export interface LoaderOptions {
 	readonly entries?: readonly CompositionEntry[];
 	readonly importModule?: (name: string) => Promise<PluginModule>;
 	readonly projectTrusted?: boolean;
+	/** Optional host preflight. It runs before import and may reject trust/integrity/source checks. */
+	readonly preflight?: (entry: CompositionEntry) => Promise<void>;
+	readonly extensionContext?: Partial<ExtensionApiContext>;
 }
 
 export class CompositionLoader {
@@ -517,11 +640,16 @@ export class CompositionLoader {
 	private readonly fibers = new Map<string, Fiber>();
 	private readonly context: Context;
 	private readonly importer: (name: string) => Promise<PluginModule>;
+	private readonly preflight?: (entry: CompositionEntry) => Promise<void>;
+	private readonly extensionContext?: Partial<ExtensionApiContext>;
+	readonly extensionApis = new Map<string, ExtensionApiInstance>();
 	private projectTrusted: boolean | undefined;
 	constructor(options: LoaderOptions) {
 		this.context = options.context;
 		this.importer = options.importModule ?? ((name) => import(name));
 		this.projectTrusted = options.projectTrusted;
+		this.preflight = options.preflight;
+		this.extensionContext = options.extensionContext;
 		const entries = options.entries ?? mergeCompositionLayers(options.layers ?? []);
 		this.tree = new EntryTree(entries);
 	}
@@ -548,14 +676,27 @@ export class CompositionLoader {
 			}
 			this.tree.set(entry.id, { status: "loading" });
 			try {
-				const definition = getPluginDefinition(await this.importer(entry.name));
-				const fiber = await this.context.plugin(
-					entry.capabilities === undefined ? definition : { ...definition, capabilities: entry.capabilities },
-					entry.config,
-				);
-				this.fibers.set(entry.id, fiber);
+				if (this.preflight) await this.preflight(entry);
+				const module = await this.importer(entry.name);
+				if (isSetupModule(module)) {
+					const api = createExtensionAPI(entry.id, { signal: this.context.signal, context: this.extensionContext });
+					try {
+						await module.default(api);
+					} catch (error) {
+						await api.dispose();
+						throw error;
+					}
+					this.extensionApis.set(entry.id, api);
+				} else {
+					const definition = getPluginDefinition(module);
+					const fiber = await this.context.plugin(
+						entry.capabilities === undefined ? definition : { ...definition, capabilities: entry.capabilities },
+						entry.config,
+					);
+					this.fibers.set(entry.id, fiber);
+				}
 				active.add(entry.id);
-				this.tree.set(entry.id, { status: "active", fiber });
+				this.tree.set(entry.id, { status: "active", fiber: this.fibers.get(entry.id) });
 			} catch (cause) {
 				const error = cause instanceof Error ? cause : new Error(String(cause));
 				this.tree.set(entry.id, { status: required ? "failed" : "skipped", error });
@@ -596,14 +737,22 @@ export class CompositionLoader {
 			}
 			this.tree.set(entry.id, { status: "loading", error: undefined });
 			try {
-				const definition = getPluginDefinition(await this.importer(entry.name));
-				const fiber = await this.context.plugin(
-					entry.capabilities === undefined ? definition : { ...definition, capabilities: entry.capabilities },
-					entry.config,
-				);
-				this.fibers.set(entry.id, fiber);
+				if (this.preflight) await this.preflight(entry);
+				const module = await this.importer(entry.name);
+				if (isSetupModule(module)) {
+					const api = createExtensionAPI(entry.id, { signal: this.context.signal, context: this.extensionContext });
+					await module.default(api);
+					this.extensionApis.set(entry.id, api);
+				} else {
+					const definition = getPluginDefinition(module);
+					const fiber = await this.context.plugin(
+						entry.capabilities === undefined ? definition : { ...definition, capabilities: entry.capabilities },
+						entry.config,
+					);
+					this.fibers.set(entry.id, fiber);
+				}
 				active.add(entry.id);
-				this.tree.set(entry.id, { status: "active", fiber });
+				this.tree.set(entry.id, { status: "active", fiber: this.fibers.get(entry.id) });
 			} catch (cause) {
 				const error = cause instanceof Error ? cause : new Error(String(cause));
 				this.tree.set(entry.id, { status: required ? "failed" : "skipped", error });
@@ -639,6 +788,8 @@ export class CompositionLoader {
 		return this.tree.snapshot();
 	}
 	async dispose(): Promise<void> {
+		for (const api of [...this.extensionApis.values()].reverse()) await api.dispose();
+		this.extensionApis.clear();
 		for (const fiber of [...this.fibers.values()].reverse()) await fiber.dispose();
 		this.fibers.clear();
 	}
@@ -702,6 +853,7 @@ export interface ManagedPlugin {
 	readonly enabled: boolean;
 	readonly installedAt: string;
 	readonly manifest: PluginManifest;
+	readonly packageIntegrity?: `sha256-${string}`;
 }
 
 export interface PluginRegistry {
@@ -804,12 +956,16 @@ export class PluginInstallManager {
 			if (source.startsWith("npm:")) {
 				const spec = source.slice(4);
 				const packageName = packageNameFromNpmSpec(spec);
+				if (!spec.includes("file:")) await verifyNpmRegistryTarball(spec);
 				await runExternal("npm", ["install", "--ignore-scripts", "--prefix", staging, spec], this.managedRoot);
 				const sourceRoot = join(staging, "node_modules", packageName);
 				return await this.withRegistryLock(async () => await this.installFromRoot(sourceRoot, source, staging));
 			}
 			await rm(staging, { recursive: true, force: true });
-			await runExternal("git", ["clone", "--depth", "1", source.slice(4), staging], this.managedRoot);
+			await runExternal("git", ["clone", source.slice(4), staging], this.managedRoot);
+			const commit = await runExternalCapture("git", ["-C", staging, "rev-parse", "HEAD"], this.managedRoot);
+			if (!/^[0-9a-f]{40}$/u.test(commit.trim()))
+				throw new Error("Git plugin source did not resolve to a complete commit SHA");
 			return await this.withRegistryLock(async () => await this.installFromRoot(staging, source, staging));
 		} catch (error) {
 			await rm(staging, { recursive: true, force: true });
@@ -826,7 +982,8 @@ export class PluginInstallManager {
 		assertManagedPath(stagedPlugin, staging);
 		if (!temporaryRoot) await mkdir(staging, { recursive: true });
 		await rm(stagedPlugin, { recursive: true, force: true });
-		await cp(sourceRoot, stagedPlugin, { recursive: true });
+		await cp(sourceRoot, stagedPlugin, { recursive: true, dereference: true });
+		const packageIntegrity = await computePackageIntegrity(stagedPlugin);
 		const backup = resolve(this.managedRoot, `.backup-${manifest.id}-${process.pid}-${Date.now()}`);
 		let movedOld = false;
 		try {
@@ -842,6 +999,7 @@ export class PluginInstallManager {
 				enabled: true,
 				installedAt: this.now().toISOString(),
 				manifest,
+				packageIntegrity,
 			};
 			const registry = await this.readRegistry();
 			await this.writeRegistry({ version: 1, plugins: { ...registry.plugins, [plugin.id]: plugin } });
@@ -945,6 +1103,28 @@ export class PluginInstallManager {
 	}
 }
 
+async function verifyNpmRegistryTarball(spec: string): Promise<void> {
+	const metadataText = await runExternalCapture("npm", ["view", spec, "dist", "--json"], process.cwd());
+	let metadata: unknown;
+	try {
+		metadata = JSON.parse(metadataText);
+	} catch {
+		throw new Error("npm registry metadata is not valid JSON");
+	}
+	if (
+		typeof metadata !== "object" ||
+		metadata === null ||
+		!("tarball" in metadata) ||
+		!("integrity" in metadata) ||
+		typeof metadata.tarball !== "string" ||
+		typeof metadata.integrity !== "string"
+	)
+		throw new Error("npm registry metadata is missing dist.tarball or dist.integrity");
+	const response = await fetch(metadata.tarball);
+	if (!response.ok) throw new Error(`npm registry tarball request failed: ${response.status}`);
+	validateNpmTarballIntegrity(new Uint8Array(await response.arrayBuffer()), metadata.integrity);
+}
+
 async function exists(path: string): Promise<boolean> {
 	try {
 		await lstat(path);
@@ -963,6 +1143,21 @@ async function runExternal(command: string, args: readonly string[], cwd: string
 		child.once("error", reject);
 		child.once("close", (code) =>
 			code === 0 ? resolveResult() : reject(new Error(`${command} plugin install failed`)),
+		);
+	});
+}
+
+async function runExternalCapture(command: string, args: readonly string[], cwd: string): Promise<string> {
+	return await new Promise<string>((resolveResult, reject) => {
+		const child = spawn(command, [...args], { cwd, stdio: ["ignore", "pipe", "ignore"] });
+		let output = "";
+		child.stdout?.setEncoding("utf8");
+		child.stdout?.on("data", (chunk: string) => {
+			output += chunk;
+		});
+		child.once("error", reject);
+		child.once("close", (code) =>
+			code === 0 ? resolveResult(output) : reject(new Error(`${command} command failed`)),
 		);
 	});
 }

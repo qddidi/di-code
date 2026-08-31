@@ -1,0 +1,12 @@
+{
+	"name": "@acme/di-code-example-plugin",
+	"version": "1.0.0",
+	"type": "module",
+	"exports": { ".": "./index.js" },
+	"diCode": {
+		"apiVersion": 1,
+		"plugins": ["."],
+		"packageIntegrity": "sha256-REPLACE_AFTER_PACKAGING",
+		"permissions": { "filesystem": "none", "network": [], "process": [] }
+	}
+}

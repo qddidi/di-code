@@ -150,6 +150,28 @@ describe("namespace plugin loader contract", () => {
 		expect(loader.tree.get("project")?.fiber).toBeUndefined();
 		await context.dispose();
 	});
+	it("does not import an untrusted project-local module", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-untrusted-import-"));
+		try {
+			const marker = join(root, "imported.marker");
+			const entry = join(root, "entry.mjs");
+			await writeFile(
+				entry,
+				`import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "imported"); export const name = "untrusted"; export const apply = () => {};`,
+			);
+			const context = createRootContext();
+			const loader = createCompositionLoader({
+				context,
+				projectTrusted: false,
+				entries: [{ id: "untrusted", name: entry, projectLocal: true }],
+			});
+			expect((await loader.load()).get("untrusted")?.status).toBe("skipped");
+			await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+			await context.dispose();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	it("reports real import failures with a skipped optional entry", async () => {
 		const context = createRootContext();
 		const broken = new URL("./fixtures/import-failure.ts", import.meta.url).href;
