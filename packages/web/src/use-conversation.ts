@@ -775,6 +775,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			setError(cause instanceof Error ? cause.message : "Unable to load conversation."),
 		);
 		const connect = async (): Promise<void> => {
+			let reconnectDelay = 800;
 			while (!stopped && !connectionController.signal.aborted) {
 				try {
 					const response = await fetch(eventsPath(), {
@@ -783,6 +784,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 						signal: connectionController.signal,
 					});
 					if (!response.ok || !response.body) throw new Error(`Event stream unavailable (${response.status}).`);
+					reconnectDelay = 800;
 					rememberClient(response);
 					setConnected(true);
 					setError(undefined);
@@ -814,7 +816,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					setError(cause instanceof Error ? cause.message : "Event stream disconnected.");
 				}
 				if (!stopped && !connectionController.signal.aborted)
-					await new Promise((resolve) => window.setTimeout(resolve, 800));
+					await new Promise((resolve) => window.setTimeout(resolve, reconnectDelay));
+				reconnectDelay = Math.min(5_000, reconnectDelay * 2);
 			}
 		};
 		void connect();

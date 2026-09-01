@@ -61,23 +61,45 @@ export async function callRpc<T>(
 	params: Record<string, unknown> = {},
 	requestId = crypto.randomUUID(),
 ): Promise<T> {
-	const response = await fetch(apiPath("/api/rpc"), {
-		method: "POST",
-		credentials: "same-origin",
-		headers: clientHeaders({ "content-type": "application/json" }),
-		body: JSON.stringify({ version: 1, kind: "request", id: requestId, method, params }),
-	});
-	rememberClient(response);
-	let envelope: RpcEnvelope<T> | undefined;
-	try {
-		envelope = (await response.json()) as RpcEnvelope<T>;
-	} catch {
-		if (!response.ok) throw new Error(`RPC request failed (${response.status}).`);
-		throw new Error("RPC request returned invalid JSON.");
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		const response = await fetch(apiPath("/api/rpc"), {
+			method: "POST",
+			credentials: "same-origin",
+			headers: clientHeaders({ "content-type": "application/json" }),
+			body: JSON.stringify({ version: 1, kind: "request", id: requestId, method, params }),
+		});
+		rememberClient(response);
+		let envelope: RpcEnvelope<T> | undefined;
+		try {
+			envelope = (await response.json()) as RpcEnvelope<T>;
+		} catch {
+			if (!response.ok) {
+				if (response.status === 429 && attempt < 3) {
+					await retryDelay(response, attempt);
+					continue;
+				}
+				throw new Error(`RPC request failed (${response.status}).`);
+			}
+			throw new Error("RPC request returned invalid JSON.");
+		}
+		if (!response.ok) {
+			if (response.status === 429 && attempt < 3) {
+				await retryDelay(response, attempt);
+				continue;
+			}
+			throw new Error(envelope.error?.message ?? `RPC request failed (${response.status}).`);
+		}
+		if (!envelope.ok || envelope.result === undefined)
+			throw new Error(envelope.error?.message ?? "RPC request failed.");
+		return envelope.result;
 	}
-	if (!response.ok) throw new Error(envelope.error?.message ?? `RPC request failed (${response.status}).`);
-	if (!envelope.ok || envelope.result === undefined) throw new Error(envelope.error?.message ?? "RPC request failed.");
-	return envelope.result;
+	throw new Error("RPC request was rate limited. Please try again.");
+}
+
+async function retryDelay(response: Response, attempt: number): Promise<void> {
+	const retryAfter = Number.parseInt(response.headers.get("retry-after") ?? "", 10);
+	const delay = Number.isFinite(retryAfter) ? Math.min(5_000, Math.max(100, retryAfter * 1_000)) : 250 * 2 ** attempt;
+	await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
 }
 
 export async function uploadAttachment(input: {

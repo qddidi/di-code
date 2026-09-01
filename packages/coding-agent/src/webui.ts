@@ -232,7 +232,13 @@ export class WebUiServer {
 			}
 			const client = this.authenticate(req, res, url.pathname.startsWith("/api/"));
 			if (!client) return;
-			if (!this.rateAllowed(client)) return json(res, 429, { error: "Rate limit exceeded." });
+			if (!this.rateAllowed(client)) {
+				const config = this.options.rateLimit ?? { windowMs: 10_000, maxRequests: 60 };
+				const oldest = client.requestTimes[0] ?? Date.now();
+				const retryAfter = Math.max(1, Math.ceil((oldest + config.windowMs - Date.now()) / 1_000));
+				res.setHeader("retry-after", String(retryAfter));
+				return json(res, 429, { error: "Rate limit exceeded.", retryAfter });
+			}
 			if (req.method === "GET" && url.pathname === "/api/boot") return await this.boot(res, client, url);
 			if (req.method === "POST" && url.pathname === "/api/workspaces") return await this.addWorkspaceRoute(req, res);
 			if (req.method === "POST" && url.pathname === "/api/workspaces/rename")
