@@ -213,8 +213,7 @@ export function createSessionPluginFactory<Config = unknown>(
 		if (disposed) throw new PluginLifecycleError("DISPOSED", "Session plugin factory has been disposed.");
 		if (typeof sessionId !== "string" || sessionId.length === 0)
 			throw new TypeError("Session plugin sessionId must be a non-empty string.");
-		if (scopes.has(sessionId))
-			throw new PluginLifecycleError("DUPLICATE", `Session plugin scope already exists: ${sessionId}`);
+		if (scopes.has(sessionId)) throw new PluginLifecycleError("DUPLICATE", "Session plugin scope already exists.");
 		const controller = new AbortController();
 		const promptSections = createPromptSectionRegistry();
 		const hooks = createAgentHookRegistry();
@@ -224,6 +223,7 @@ export function createSessionPluginFactory<Config = unknown>(
 		const disposers: Array<() => void | Promise<void>> = [];
 		let scopeDisposed = false;
 		let disposePromise: Promise<void> | undefined;
+		let pending: Promise<SessionPluginScope> | undefined;
 		const scope: SessionPluginScope = {
 			sessionId,
 			signal: controller.signal,
@@ -248,6 +248,7 @@ export function createSessionPluginFactory<Config = unknown>(
 				disposePromise = (async () => {
 					if (scopeDisposed) return;
 					scopeDisposed = true;
+					if (pending !== undefined && scopes.get(sessionId) === pending) scopes.delete(sessionId);
 					controller.abort(new Error(`Session plugin scope ${sessionId} disposed`));
 					(promptSections as PromptSectionRegistry & { readonly clear: () => void }).clear();
 					hooks.clear();
@@ -268,7 +269,7 @@ export function createSessionPluginFactory<Config = unknown>(
 				return disposePromise;
 			},
 		};
-		const pending = (async () => {
+		pending = (async () => {
 			try {
 				const returned = await initializer(scope, config);
 				if (returned) scope.onDispose(returned);

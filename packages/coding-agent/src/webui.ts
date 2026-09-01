@@ -6,6 +6,7 @@ import { basename, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { commandRegistryKey, type ToolApprovalCapability } from "@di-code/builtins";
 import type { Context } from "@di-code/plugin-runtime";
+import { redactSensitiveText } from "@di-code/plugin-runtime";
 import { createUserInteraction, type UserInteractionInput, type UserInteractionResult } from "@di-code/plugin-sdk";
 import { createProjectTrustStore } from "./project-trust-entry.ts";
 import { RpcDispatcher } from "./rpc/dispatcher.ts";
@@ -248,8 +249,9 @@ export class WebUiServer {
 			if (req.method === "POST" && url.pathname === "/attachments")
 				return await this.attachments(req, res, client, url);
 			json(res, 404, { error: "Not found." });
-		} catch {
-			json(res, 400, { error: "Request rejected." });
+		} catch (cause) {
+			const message = cause instanceof Error ? redactSensitiveText(cause.message).slice(0, 500) : "Request rejected.";
+			json(res, 400, { error: message || "Request rejected." });
 		}
 	}
 

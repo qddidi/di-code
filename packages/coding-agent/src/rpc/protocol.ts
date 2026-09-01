@@ -393,27 +393,6 @@ function attachmentDataParam(params: Record<string, unknown>, id: string): void 
 		throw new RpcProtocolError("INVALID_PARAMS", "Attachment data exceeds the permitted size.", id);
 }
 
-const SESSION_SCOPED_METHODS: ReadonlySet<RpcMethod> = new Set([
-	"prompt",
-	"steer",
-	"retry",
-	"compact",
-	"cancel",
-	"get_operation",
-	"get_transcript",
-	"get_tree",
-	"navigate_tree",
-	"set_model",
-	"set_runtime",
-	"set_thinking_level",
-	"set_compaction_enabled",
-	"get_usage",
-	"approve_tool",
-	"respond_interaction",
-	"create_attachment",
-	"run_command",
-]);
-
 /** Parses every public v1 method before any dispatcher or transport observes it. */
 export function parseRpcRequest(line: string): RpcRequest {
 	const record = parseJsonObject(line);
@@ -427,13 +406,14 @@ export function parseRpcRequest(line: string): RpcRequest {
 	if (typeof record.method !== "string" || !RPC_METHODS.includes(record.method as RpcMethod))
 		throw new RpcProtocolError("METHOD_NOT_FOUND", "Unknown RPC method.", id);
 	const method = record.method as RpcMethod;
-	if (SESSION_SCOPED_METHODS.has(method)) stringParam(params, "sessionId", id);
+	// sessionId is optional for legacy v1 clients. SessionHost dispatchers bind
+	// such requests to their active actor while validating explicit ownership.
 	switch (method) {
 		case "prompt":
 		case "steer":
 			stringParam(params, "message", id);
 			attachmentIdsParam(params, id);
-			if (method === "steer") stringParam(params, "runId", id);
+			if (method === "steer" && params.sessionId !== undefined) stringParam(params, "runId", id);
 			break;
 		case "cancel":
 		case "get_operation":
@@ -462,7 +442,8 @@ export function parseRpcRequest(line: string): RpcRequest {
 										: "serverId",
 				id,
 			);
-			if (method === "cancel" || method === "get_operation") stringParam(params, "runId", id);
+			if ((method === "cancel" || method === "get_operation") && params.sessionId !== undefined)
+				stringParam(params, "runId", id);
 			if (method === "rename_session") stringParam(params, "label", id);
 			if (method === "delete_session") stringParam(params, "confirmation", id);
 			break;
@@ -471,7 +452,6 @@ export function parseRpcRequest(line: string): RpcRequest {
 			if (params.entryId !== undefined) stringParam(params, "entryId", id, true);
 			break;
 		case "set_runtime":
-			stringParam(params, "sessionId", id);
 			stringParam(params, "providerId", id);
 			stringParam(params, "modelId", id);
 			break;
@@ -523,7 +503,6 @@ export function parseRpcRequest(line: string): RpcRequest {
 				throw new RpcProtocolError("INVALID_PARAMS", "set_thinking_level.level must be a valid thinking level.", id);
 			break;
 		case "retry":
-			stringParam(params, "sessionId", id);
 			stringParam(params, "targetRequestId", id);
 			break;
 		case "login":
@@ -623,14 +602,14 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
 		if (!event) throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
 		if (LEGACY_EVENT_TYPES.has(type as AgentSessionEvent["type"])) {
-			if (typeof record.sessionId !== "string" || record.sessionId.length === 0)
-				throw new RpcProtocolError("INVALID_REQUEST", "Run events require sessionId.");
-			if (typeof record.runId !== "string" || record.runId.length === 0)
-				throw new RpcProtocolError("INVALID_REQUEST", "Run events require runId.");
-		}
-		if (type === "operation_update") {
-			if (typeof record.sessionId !== "string" || typeof record.runId !== "string")
-				throw new RpcProtocolError("INVALID_REQUEST", "operation_update requires sessionId and runId.");
+			// Legacy clients did not negotiate sequence/run ownership and receive the
+			// original event envelope. Once sequence is present, ownership is required.
+			if (record.sequence !== undefined) {
+				if (typeof record.sessionId !== "string" || record.sessionId.length === 0)
+					throw new RpcProtocolError("INVALID_REQUEST", "Run events require sessionId.");
+				if (typeof record.runId !== "string" || record.runId.length === 0)
+					throw new RpcProtocolError("INVALID_REQUEST", "Run events require runId.");
+			}
 		}
 		if (record.sequence !== undefined && (!Number.isSafeInteger(record.sequence) || (record.sequence as number) < 0))
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event sequence is invalid.");

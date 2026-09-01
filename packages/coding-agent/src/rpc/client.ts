@@ -73,6 +73,7 @@ export class RpcClient {
 	private readonly pending = new Map<string, PendingRequest>();
 	private readonly listeners = new Set<(event: RpcEventRecord) => void>();
 	private readonly removeExitListener?: () => void;
+	private sessionId: string | undefined;
 	private closed = false;
 
 	constructor(transport: RpcTransport) {
@@ -95,10 +96,13 @@ export class RpcClient {
 	async getState(): Promise<RpcSessionState> {
 		const result = await this.send("get_state", {});
 		if (result.method !== "get_state") throw new Error("RPC get_state returned an incompatible result.");
-		return result.state as RpcSessionState;
+		const state = result.state as RpcSessionState;
+		this.sessionId = state.sessionId === "uninitialized" ? undefined : state.sessionId;
+		return state;
 	}
 
 	async prompt(message: string, options: RpcPromptOptions = {}): Promise<AssistantMessage> {
+		const sessionId = options.sessionId ?? this.sessionId ?? (await this.getState()).sessionId;
 		const requestId = randomUUID();
 		const onAbort = () => {
 			void this.cancel(requestId).catch(() => undefined);
@@ -108,7 +112,7 @@ export class RpcClient {
 			const response = this.send(
 				"prompt",
 				{
-					sessionId: options.sessionId,
+					sessionId,
 					message,
 					...(options.attachmentIds === undefined ? {} : { attachmentIds: [...options.attachmentIds] }),
 				},
@@ -133,7 +137,10 @@ export class RpcClient {
 	}
 
 	async cancel(requestId: string): Promise<boolean> {
-		const result = await this.send("cancel", { requestId });
+		const result = await this.send("cancel", {
+			requestId,
+			...(this.sessionId ? { sessionId: this.sessionId, runId: requestId } : {}),
+		});
 		if (result.method !== "cancel") throw new Error("RPC cancel returned an incompatible result.");
 		return result.cancelled as boolean;
 	}

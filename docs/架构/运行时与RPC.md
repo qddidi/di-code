@@ -28,7 +28,7 @@ RPC 每条记录保留 `version: 1`。请求：
 { "version": 1, "kind": "request", "id": "p1", "method": "prompt", "params": { "sessionId": "s1", "message": "检查测试" } }
 ```
 
-响应通过 `id` 关联；流事件是 `kind: "event"`，运行事件必须携带 `sessionId` 与 `runId`，通过 `requestId` 关联 operation，并可带单调 `sequence`。所有 session-scoped 请求都必须显式携带 `sessionId`，`steer`、`cancel`、`get_operation`、审批和 interaction 还必须携带目标 `runId`；不存在 active session 或默认会话兼容语义。
+响应通过 `id` 关联；流事件是 `kind: "event"`，运行事件必须携带 `sessionId` 与 `runId`，通过 `requestId` 关联 operation，并可带单调 `sequence`。新的多会话客户端应为所有 session-scoped 请求显式携带 `sessionId`，`steer`、`cancel`、`get_operation`、审批和 interaction 还应携带目标 `runId`；为兼容旧版直连 `RpcSession` 客户端，省略的归属字段仅在该 transport 的唯一 active session 上补齐，WebUI/SessionHost 仍拒绝显式错误的 session 归属。
 
 `run_command` 只能执行当前 composition 已注册且由 `list_commands` 返回的命令；不能通过 RPC 运行任意 shell。请求 schema、ID、错误 code 和结果都严格验证，未知或非法记录不会静默接受。
 

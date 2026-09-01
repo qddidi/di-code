@@ -70,12 +70,12 @@ describe("RPC protocol v1", () => {
 		}
 	});
 
-	it("requires explicit session and run ownership for session-scoped RPC", () => {
-		expect(() =>
+	it("keeps legacy session clients compatible while validating explicit run ownership", () => {
+		expect(
 			parseRpcRequest(
 				JSON.stringify({ version: 1, kind: "request", id: "p", method: "prompt", params: { message: "hello" } }),
 			),
-		).toThrow(/sessionId/);
+		).toMatchObject({ method: "prompt" });
 		expect(() =>
 			parseRpcRequest(
 				JSON.stringify({

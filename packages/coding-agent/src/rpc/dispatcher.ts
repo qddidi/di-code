@@ -316,6 +316,11 @@ export class RpcDispatcher {
 		if (this.disposed) return this.failure(request.id, "DISPOSED", "RPC dispatcher has been disposed.");
 		if (this.methods && !this.methods.has(request.method))
 			return this.failure(request.id, "METHOD_NOT_FOUND", "RPC method is not registered for this server.");
+		if (sessionHost(this.session) && this.requiresSessionOwnership(request.method)) {
+			const active = this.session.state().activeSession?.id;
+			if (request.params.sessionId !== undefined && request.params.sessionId !== active)
+				return this.failure(request.id, "INVALID_PARAMS", "The requested session is not active.");
+		}
 		const existing = this.operations.get(request.id);
 		if (existing?.promise) return await existing.promise;
 		if (
@@ -342,6 +347,29 @@ export class RpcDispatcher {
 			return await operation.promise;
 		}
 		return await this.execute(request);
+	}
+
+	private requiresSessionOwnership(method: RpcMethod): boolean {
+		return [
+			"prompt",
+			"steer",
+			"retry",
+			"compact",
+			"cancel",
+			"get_operation",
+			"get_transcript",
+			"get_tree",
+			"navigate_tree",
+			"set_model",
+			"set_runtime",
+			"set_thinking_level",
+			"set_compaction_enabled",
+			"get_usage",
+			"approve_tool",
+			"respond_interaction",
+			"create_attachment",
+			"run_command",
+		].includes(method);
 	}
 
 	async dispose(): Promise<void> {
