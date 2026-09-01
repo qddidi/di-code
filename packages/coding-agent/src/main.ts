@@ -37,6 +37,10 @@ function isRun(command: CliCommand): command is Extract<CliCommand, { kind: "run
 	return command.kind === "run";
 }
 
+function usesProjectResources(command: CliCommand): command is Extract<CliCommand, { kind: "run" | "observe" }> {
+	return command.kind === "run" || command.kind === "observe";
+}
+
 function isMinimalCommand(
 	command: CliCommand,
 ): command is Extract<CliCommand, { kind: "run" | "plugin" | "observe" | "mcp" }> {
@@ -94,8 +98,10 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 	const allowedRoot = resolve(options.allowedRoot ?? process.cwd());
 	const agentDir = resolve(options.agentDir ?? join(homedir(), ".di-code"));
 	const trustStore = createProjectTrustStore(join(agentDir, "trust.json"));
-	if (isRun(command) && command.projectTrust !== undefined) await trustStore.set(allowedRoot, command.projectTrust);
-	let projectTrusted = isRun(command) && !command.noProjectPlugins && (await trustStore.get(allowedRoot)) === true;
+	if (usesProjectResources(command) && command.projectTrust !== undefined)
+		await trustStore.set(allowedRoot, command.projectTrust);
+	let projectTrusted =
+		usesProjectResources(command) && !command.noProjectPlugins && (await trustStore.get(allowedRoot)) === true;
 	if (
 		isRun(command) &&
 		command.mode === "interactive" &&
@@ -113,7 +119,7 @@ export async function runMinimalProfile(args: readonly string[], options: Minima
 		{
 			cwd: allowedRoot,
 			agentDir,
-			...(isRun(command) && command.compositionPath ? { compositionPath: command.compositionPath } : {}),
+			...(usesProjectResources(command) && command.compositionPath ? { compositionPath: command.compositionPath } : {}),
 			includeProjectComposition: projectTrusted,
 			observability,
 			allowedRoot,

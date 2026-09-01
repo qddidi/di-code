@@ -156,6 +156,14 @@ export class RpcSupervisor {
 		return this.requireRunningClient().prompt(message, options);
 	}
 
+	promptInSession(
+		sessionId: string,
+		message: string,
+		options: Omit<RpcPromptOptions, "sessionId"> = {},
+	): ReturnType<RpcClient["promptInSession"]> {
+		return this.requireRunningClient().promptInSession(sessionId, message, options);
+	}
+
 	cancel(requestId: string): Promise<boolean> {
 		return this.requireRunningClient().cancel(requestId);
 	}

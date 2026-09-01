@@ -68,13 +68,20 @@ export async function callRpc<T>(
 		body: JSON.stringify({ version: 1, kind: "request", id: requestId, method, params }),
 	});
 	rememberClient(response);
-	if (!response.ok) throw new Error(`RPC request failed (${response.status}).`);
-	const envelope = (await response.json()) as RpcEnvelope<T>;
+	let envelope: RpcEnvelope<T> | undefined;
+	try {
+		envelope = (await response.json()) as RpcEnvelope<T>;
+	} catch {
+		if (!response.ok) throw new Error(`RPC request failed (${response.status}).`);
+		throw new Error("RPC request returned invalid JSON.");
+	}
+	if (!response.ok) throw new Error(envelope.error?.message ?? `RPC request failed (${response.status}).`);
 	if (!envelope.ok || envelope.result === undefined) throw new Error(envelope.error?.message ?? "RPC request failed.");
 	return envelope.result;
 }
 
 export async function uploadAttachment(input: {
+	readonly sessionId: string;
 	readonly name: string;
 	readonly contentType: AttachmentInfo["contentType"];
 	readonly data: string;
@@ -215,6 +222,8 @@ export async function loadWebContributions(): Promise<WebManifest> {
 }
 
 export async function respondInteraction(
+	sessionId: string,
+	runId: string,
 	requestId: string,
 	result: {
 		readonly status: "answered" | "cancelled" | "timeout";
@@ -223,7 +232,7 @@ export async function respondInteraction(
 		readonly feedback?: string;
 	},
 ): Promise<void> {
-	await callRpc("respond_interaction", { requestId, ...result });
+	await callRpc("respond_interaction", { sessionId, runId, requestId, ...result });
 }
 export async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginSummary> {
 	const result = await callRpc<{ readonly plugin: PluginSummary }>("set_plugin_enabled", { pluginId, enabled });

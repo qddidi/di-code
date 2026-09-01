@@ -84,6 +84,24 @@ function withWorkspaceRoot(
 	);
 }
 
+/**
+ * The print and JSON Agent loop snapshots its tools during setup. Project entries must therefore run first,
+ * while remaining optional so an isolated project plugin failure cannot prevent the built-in loop from starting.
+ */
+function orderProjectEntriesBeforeAgentLoop(entries: readonly CompositionEntry[]): readonly CompositionEntry[] {
+	const projectIds = entries
+		.filter((entry) => entry.projectLocal && entry.id !== "agent-loop")
+		.map((entry) => entry.id);
+	if (projectIds.length === 0) return entries;
+	return entries.map((entry) => {
+		if (entry.id !== "agent-loop") return entry;
+		return {
+			...entry,
+			optionalDependsOn: [...new Set([...(entry.optionalDependsOn ?? []), ...projectIds])],
+		};
+	});
+}
+
 function markProjectEntries(document: CompositionDocument): CompositionDocument {
 	const mark = (entry: CompositionEntry): CompositionEntry => ({ ...entry, projectLocal: true });
 	return {
@@ -156,7 +174,9 @@ export async function resolveCompositionEntries(
 	if (options.compositionPath !== undefined) {
 		layers.push({ name: "explicit", document: await readRequiredComposition(resolve(cwd, options.compositionPath)) });
 	}
-	return Object.freeze(withWorkspaceRoot(mergeCompositionLayers(layers), options.allowedRoot));
+	return Object.freeze(
+		withWorkspaceRoot(orderProjectEntriesBeforeAgentLoop(mergeCompositionLayers(layers)), options.allowedRoot),
+	);
 }
 
 async function discoverProjectPlugins(cwd: string): Promise<CompositionEntry[]> {

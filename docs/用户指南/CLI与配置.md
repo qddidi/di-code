@@ -19,12 +19,12 @@ di-code [options] <prompt>
 | `--skill <path>` | 显式加载 Skill 文件或目录，可重复 |
 | `--no-skills` | 禁用 Skill 发现 |
 | `--no-context-files` | 不加载 `AGENTS.md` |
-| `--trust-project` / `--untrust-project` | 设置当前项目的信任状态 |
+| `--trust-project` / `--untrust-project` | 设置当前项目的信任状态；可与插件观察命令组合 |
 | `--profile <mode>` | 选择对应 Composition |
 | `--composition <path>` | 在用户/项目层之后应用 JSON/YAML Composition |
 | `--no-project-plugins` | 本次跳过项目 Composition |
 
-另有 `plugin ...`、`mcp add|list|get|remove`、`web [--port] [--workspace]`、`--trace-plugins` 和 `--dump-composition`。完整帮助来自 CLI registry，可执行 `di-code --help` 查看当前构建的命令。
+另有 `plugin ...`、`mcp add|list|get|remove`、`web [--port] [--workspace]`、`--trace-plugins` 和 `--dump-composition`。观察命令会使用当前项目已持久化的信任状态；也可传入 `--trust-project`、`--untrust-project`、`--no-project-plugins` 或 `--composition <path>`，例如 `di-code --trust-project --trace-plugins`。完整帮助来自 CLI registry，可执行 `di-code --help` 查看当前构建的命令。
 
 ## Provider 环境变量
 

@@ -81,6 +81,7 @@ export interface RpcAttachmentStore {
 
 interface StoredOperation {
 	readonly requestId: string;
+	readonly runId?: string;
 	readonly kind: RpcMethod;
 	readonly controller: AbortController;
 	readonly sessionId?: string;
@@ -319,7 +320,12 @@ export class RpcDispatcher {
 		if (existing?.promise) return await existing.promise;
 		if (
 			request.method === "prompt" &&
-			[...this.operations.values()].some((operation) => operation.kind === "prompt" && operation.status === "running")
+			[...this.operations.values()].some(
+				(operation) =>
+					operation.kind === "prompt" &&
+					operation.status === "running" &&
+					operation.sessionId === request.params.sessionId,
+			)
 		)
 			return this.failure(request.id, "BUSY", "The RPC session is already processing a prompt.");
 		if (this.isOperation(request.method)) {
@@ -327,7 +333,8 @@ export class RpcDispatcher {
 				requestId: request.id,
 				kind: request.method,
 				controller: new AbortController(),
-				sessionId: this.activeSessionId(),
+				sessionId: request.params.sessionId as string | undefined,
+				runId: (request.params.runId as string | undefined) ?? randomUUID(),
 				status: "queued",
 			};
 			this.operations.set(request.id, operation);
@@ -1196,6 +1203,7 @@ export class RpcDispatcher {
 	private operationState(operation: StoredOperation): OperationState {
 		return {
 			requestId: operation.requestId,
+			...(operation.runId ? { runId: operation.runId } : {}),
 			kind: operation.kind,
 			status: operation.status,
 			...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
@@ -1222,6 +1230,7 @@ export class RpcDispatcher {
 			kind: "event",
 			requestId: operation.requestId,
 			sessionId: operation.sessionId,
+			runId: operation.runId,
 			sequence: ++this.sequence,
 			event: { type: "operation_update", operation: this.operationState(operation) },
 		});
@@ -1256,7 +1265,11 @@ export class RpcDispatcher {
 			requestId: operation?.requestId ?? "session",
 			event,
 			...(this.negotiatedEvents.has("sequence")
-				? { sessionId: this.activeSessionId(), sequence: ++this.sequence }
+				? {
+						sessionId: operation?.sessionId,
+						runId: operation?.runId,
+						sequence: ++this.sequence,
+					}
 				: {}),
 		};
 		if (this.negotiatedEvents.has("sequence")) {

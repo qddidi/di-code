@@ -87,4 +87,53 @@ describe("minimal profile subprocess", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it("includes trusted project entries in composition diagnostics", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-observe-trust-"));
+		const entry = join(root, ".di-code", "project-marker.mjs");
+		try {
+			await mkdir(join(root, ".di-code"), { recursive: true });
+			await writeFile(
+				entry,
+				'export const apiVersion = 1; export const name = "project-marker"; export const apply = () => undefined;',
+			);
+			await writeFile(
+				join(root, ".di-code", "composition.yml"),
+				`entries:\n  - id: project-marker\n    name: ${JSON.stringify(new URL(`file:///${entry.replaceAll("\\", "/")}`).href)}\n`,
+			);
+			const result = await new Promise<{
+				readonly code: number | null;
+				readonly stdout: string;
+				readonly stderr: string;
+			}>((resolveResult, reject) => {
+				const child = spawn(
+					process.execPath,
+					["--experimental-strip-types", entryPath, "--trust-project", "--dump-composition"],
+					{
+						cwd: root,
+						env: { ...process.env, DI_CODE_PROVIDER: "faux", DI_CODE_MODEL: "faux-model" },
+						stdio: ["ignore", "pipe", "pipe"],
+					},
+				);
+				let stdout = "";
+				let stderr = "";
+				child.stdout.on("data", (chunk: Buffer) => {
+					stdout += chunk.toString();
+				});
+				child.stderr.on("data", (chunk: Buffer) => {
+					stderr += chunk.toString();
+				});
+				child.once("error", reject);
+				child.once("close", (code) => resolveResult({ code, stdout, stderr }));
+			});
+			expect(result.code).toBe(0);
+			expect(result.stderr).toBe("");
+			const record = JSON.parse(result.stdout) as {
+				readonly resolvedTree: readonly { readonly id: string; readonly phase: string }[];
+			};
+			expect(record.resolvedTree).toContainEqual(expect.objectContaining({ id: "project-marker", phase: "active" }));
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

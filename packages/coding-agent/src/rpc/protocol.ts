@@ -78,6 +78,14 @@ export interface RpcRequest {
 	readonly params: Record<string, unknown>;
 }
 
+/** Immutable execution ownership carried across RPC, Agent, tools and UI boundaries. */
+export interface RpcRunContext {
+	readonly sessionId: string;
+	readonly runId: string;
+	readonly requestId: string;
+	readonly toolCallId?: string;
+}
+
 export interface RpcSessionState {
 	readonly sessionId: string;
 	readonly modelId: string;
@@ -180,6 +188,7 @@ export interface RpcMcpServerInfo {
 export type OperationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "crashed";
 export interface OperationState {
 	readonly requestId: string;
+	readonly runId?: string;
 	readonly kind: RpcMethod;
 	readonly status: OperationStatus;
 	readonly sessionId?: string;
@@ -304,6 +313,7 @@ export interface RpcEventRecord {
 		  }
 		| RpcProjectionEvent;
 	readonly sessionId?: string;
+	readonly runId?: string;
 	readonly sequence?: number;
 }
 export type RpcResponse = RpcSuccessResponse | RpcErrorResponse;
@@ -383,6 +393,27 @@ function attachmentDataParam(params: Record<string, unknown>, id: string): void 
 		throw new RpcProtocolError("INVALID_PARAMS", "Attachment data exceeds the permitted size.", id);
 }
 
+const SESSION_SCOPED_METHODS: ReadonlySet<RpcMethod> = new Set([
+	"prompt",
+	"steer",
+	"retry",
+	"compact",
+	"cancel",
+	"get_operation",
+	"get_transcript",
+	"get_tree",
+	"navigate_tree",
+	"set_model",
+	"set_runtime",
+	"set_thinking_level",
+	"set_compaction_enabled",
+	"get_usage",
+	"approve_tool",
+	"respond_interaction",
+	"create_attachment",
+	"run_command",
+]);
+
 /** Parses every public v1 method before any dispatcher or transport observes it. */
 export function parseRpcRequest(line: string): RpcRequest {
 	const record = parseJsonObject(line);
@@ -396,11 +427,13 @@ export function parseRpcRequest(line: string): RpcRequest {
 	if (typeof record.method !== "string" || !RPC_METHODS.includes(record.method as RpcMethod))
 		throw new RpcProtocolError("METHOD_NOT_FOUND", "Unknown RPC method.", id);
 	const method = record.method as RpcMethod;
+	if (SESSION_SCOPED_METHODS.has(method)) stringParam(params, "sessionId", id);
 	switch (method) {
 		case "prompt":
 		case "steer":
 			stringParam(params, "message", id);
 			attachmentIdsParam(params, id);
+			if (method === "steer") stringParam(params, "runId", id);
 			break;
 		case "cancel":
 		case "get_operation":
@@ -429,14 +462,16 @@ export function parseRpcRequest(line: string): RpcRequest {
 										: "serverId",
 				id,
 			);
+			if (method === "cancel" || method === "get_operation") stringParam(params, "runId", id);
 			if (method === "rename_session") stringParam(params, "label", id);
 			if (method === "delete_session") stringParam(params, "confirmation", id);
 			break;
 		case "branch_session":
-			if (params.sessionId !== undefined) stringParam(params, "sessionId", id, true);
+			stringParam(params, "sessionId", id);
 			if (params.entryId !== undefined) stringParam(params, "entryId", id, true);
 			break;
 		case "set_runtime":
+			stringParam(params, "sessionId", id);
 			stringParam(params, "providerId", id);
 			stringParam(params, "modelId", id);
 			break;
@@ -488,6 +523,7 @@ export function parseRpcRequest(line: string): RpcRequest {
 				throw new RpcProtocolError("INVALID_PARAMS", "set_thinking_level.level must be a valid thinking level.", id);
 			break;
 		case "retry":
+			stringParam(params, "sessionId", id);
 			stringParam(params, "targetRequestId", id);
 			break;
 		case "login":
@@ -554,10 +590,13 @@ export function parseRpcRequest(line: string): RpcRequest {
 				);
 			break;
 		case "approve_tool":
+			stringParam(params, "runId", id);
+			stringParam(params, "requestId", id);
 			stringParam(params, "approvalId", id);
 			booleanParam(params, "approved", id);
 			break;
 		case "respond_interaction":
+			stringParam(params, "runId", id);
 			stringParam(params, "requestId", id);
 			if (typeof params.status !== "string" || !["answered", "cancelled", "timeout"].includes(params.status))
 				throw new RpcProtocolError("INVALID_PARAMS", "respond_interaction.status is invalid.", id);
@@ -583,6 +622,16 @@ export function parseRpcServerMessage(line: string): RpcServerMessage {
 		)
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
 		if (!event) throw new RpcProtocolError("INVALID_REQUEST", "RPC event must contain a typed event object.");
+		if (LEGACY_EVENT_TYPES.has(type as AgentSessionEvent["type"])) {
+			if (typeof record.sessionId !== "string" || record.sessionId.length === 0)
+				throw new RpcProtocolError("INVALID_REQUEST", "Run events require sessionId.");
+			if (typeof record.runId !== "string" || record.runId.length === 0)
+				throw new RpcProtocolError("INVALID_REQUEST", "Run events require runId.");
+		}
+		if (type === "operation_update") {
+			if (typeof record.sessionId !== "string" || typeof record.runId !== "string")
+				throw new RpcProtocolError("INVALID_REQUEST", "operation_update requires sessionId and runId.");
+		}
 		if (record.sequence !== undefined && (!Number.isSafeInteger(record.sequence) || (record.sequence as number) < 0))
 			throw new RpcProtocolError("INVALID_REQUEST", "RPC event sequence is invalid.");
 		assertEvent(event, type);

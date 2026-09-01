@@ -70,6 +70,25 @@ describe("RPC protocol v1", () => {
 		}
 	});
 
+	it("requires explicit session and run ownership for session-scoped RPC", () => {
+		expect(() =>
+			parseRpcRequest(
+				JSON.stringify({ version: 1, kind: "request", id: "p", method: "prompt", params: { message: "hello" } }),
+			),
+		).toThrow(/sessionId/);
+		expect(() =>
+			parseRpcRequest(
+				JSON.stringify({
+					version: 1,
+					kind: "request",
+					id: "c",
+					method: "cancel",
+					params: { sessionId: "s", requestId: "r" },
+				}),
+			),
+		).toThrow(/runId/);
+	});
+
 	it("validates response and event envelopes at the client boundary", () => {
 		const response = parseRpcServerMessage(
 			JSON.stringify({

@@ -590,16 +590,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		try {
 			const session = await createAgent(manager);
 			const info = infoFor(manager);
-			const previous = activeId;
-			if (previous !== undefined) {
-				const old = sessions.get(previous);
-				if (old) {
-					old.unsubscribe();
-					await old.session.dispose();
-					await old.unlock();
-				}
-				sessions.delete(previous);
-			}
+			// Keep previously loaded runtimes alive while the view switches sessions.
+			// Their in-flight Agent operations must continue independently.
 			const unsubscribe = session.subscribeSession(emit);
 			sessions.set(id, { manager, session, unsubscribe, unlock, info });
 			failedPrompts.set(id, retryState(manager));
@@ -678,7 +670,6 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		},
 		createSession: async () => {
 			ensureOpen();
-			assertIdle("create a Session");
 			const manager = await store.create({
 				filePath: join(
 					bootstrap.sessionDirectory,
@@ -693,10 +684,17 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		},
 		openSession: async (id) => {
 			ensureOpen();
-			assertIdle("open a Session");
 			if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(id))
 				throw new SessionHostError("INVALID_INPUT", "Session ID is invalid.");
 			if (activeId === id) return current().info;
+			// A background run keeps its Session loaded and its JSONL lock held while the
+			// view switches away. Reuse that runtime instead of opening the file again.
+			const loaded = sessions.get(asId(id));
+			if (loaded) {
+				activeId = asId(id);
+				emit({ type: "session_changed", session: loaded.info });
+				return loaded.info;
+			}
 			const path = await findSessionPath(id);
 			try {
 				if ((await lstat(path)).isSymbolicLink()) throw new Error("symlink");
@@ -757,6 +755,15 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			assertIdle("delete a Session");
 			if (confirmation !== id) throw new SessionHostError("INVALID_INPUT", "Session deletion requires confirmation.");
 			if (activeId === id) await api.closeSession();
+			else {
+				const loaded = sessions.get(asId(id));
+				if (loaded) {
+					loaded.unsubscribe();
+					await loaded.session.dispose();
+					await loaded.unlock();
+					sessions.delete(asId(id));
+				}
+			}
 			const path = await findSessionPath(id);
 			const unlock = await lockSession(path);
 			try {
@@ -812,7 +819,6 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			const parsed = typeof input === "string" ? { text: input } : input;
 			if (!parsed.text?.trim())
 				return Promise.reject(new SessionHostError("INVALID_INPUT", "Prompt text must not be empty."));
-			assertIdle("start a prompt");
 			return withOperation("prompt", parsed.requestId, signal, async (operationSignal) => {
 				const value = current();
 				try {
@@ -834,7 +840,6 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		},
 		promptWithImages: (text, images, signal) => {
 			if (!text?.trim()) return Promise.reject(new SessionHostError("INVALID_INPUT", "Prompt text must not be empty."));
-			assertIdle("start a prompt");
 			return withOperation("prompt", undefined, signal, async (operationSignal) => {
 				const value = current();
 				try {
@@ -922,7 +927,14 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 		setRuntimeValue: (provider, model) => {
 			ensureOpen();
 			assertIdle("change runtime");
-			return current().session.setRuntime(provider, model);
+			// Runtime selection is persisted as the workspace/default preference, so all
+			// loaded Sessions must observe the same idle change. Updating bootstrap also
+			// ensures Sessions opened later do not fall back to the startup runtime.
+			const active = current();
+			const selected = active.session.setRuntime(provider, model);
+			for (const value of sessions.values()) if (value !== active) value.session.setRuntime(provider, model);
+			bootstrap = { ...bootstrap, provider, model };
+			return selected;
 		},
 		setThinkingLevel: (level) => {
 			ensureOpen();
@@ -952,6 +964,8 @@ export async function createSessionHost(context: Context, options: SessionHostBo
 			return withOperation("session", undefined, signal, async () => {
 				const next = await createBootstrap(context, {
 					...options,
+					provider: bootstrap.provider,
+					model: bootstrap.model,
 					projectTrusted: projectTrusted ?? resourceProjectTrusted,
 				});
 				if (next.workspace !== bootstrap.workspace) {

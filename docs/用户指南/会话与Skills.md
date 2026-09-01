@@ -2,14 +2,14 @@
 
 ## 交互命令总表
 
-在 `interactive` 模式中输入 `/` 可打开补全菜单。命令由当前 Composition 的 `CommandRegistry` 提供，下面是内建命令；已加载的 Skill 会额外提供 `/skill:<name>`，插件也可以贡献命令。
+在 `interactive` 模式中输入 `/` 可打开补全菜单。命令由当前 Composition 的 `CommandRegistry` 提供，下面是内建命令；已加载的 Skill 会额外提供 `/skill:<name>`。第三方插件的默认 `ExtensionAPI.registerCommand()` 注册到宿主命令 registry，但是否有入口调用取决于 Composition；它不会自动出现在这个 slash command 菜单或 RPC `run_command` 中。交互命令需要产品级 Composition 显式接入 `CommandRegistry`。
 
 | 命令 | 作用 | 重要行为 |
 | --- | --- | --- |
 | `/help` | 显示命令清单 | 清单包含当前 registry 命令和已加载 Skill |
 | `/clear` | 清除屏幕可见消息 | 只清理当前 TUI 投影，不删除 Session JSONL |
-| `/model` | 选择模型 | 只能选择当前 runtime 提供的模型，选择结果保存为用户偏好 |
-| `/session` | 选择或切换 Session | 切换期间不能提交 prompt；切换成功后刷新 transcript 和 usage |
+| `/model` | 选择模型 | 只能选择当前 runtime 提供的模型，选择结果保存为 workspace/用户默认偏好，并同步当前 Host 已加载的 Session |
+| `/session` | 选择或切换 Session | 切换只改变当前视图；后台 Session 可继续运行，切换成功后刷新目标 transcript 和 usage |
 | `/tree` | 浏览当前 Session 历史树 | 可继续、编辑历史用户消息，或为选定分支生成摘要 |
 | `/theme` | 选择 `dark`/`light` 主题 | 主题属于 TUI 偏好，不改变模型或 Session |
 | `/settings` | 打开设置 | 可切换上下文压缩和内置终端语言，语言保存到用户 settings |
@@ -21,7 +21,7 @@
 | `/steer <内容>` | 引导正在运行的 Agent | 内容不能为空，只能在 prompt 运行期间使用；可用 `Alt+S` 快捷键发送 |
 | `/skill:<name> [请求]` | 调用已加载 Skill | Skill 文本作为不可信上下文附加，参数作为额外请求发送 |
 
-命令名不区分大小写；未知命令会显示错误。补全菜单打开时，`Enter` 会直接运行当前选中的命令，`Tab` 只补全输入框。插件命令的参数由插件自行解析，命令冲突由 registry 拒绝。
+命令名不区分大小写；未知命令会显示错误。补全菜单打开时，`Enter` 会直接运行当前选中的命令，`Tab` 只补全输入框。产品级 `CommandRegistry` 的参数由命令实现自行解析，命令冲突由 registry 拒绝；`ExtensionAPI.registerCommand()` 的参数则由宿主命令调用方提供。
 
 ## JSONL 会话
 
@@ -29,7 +29,7 @@ interactive 默认把会话保存到 `~/.di-code/sessions/<工作区哈希>/`。
 
 常用命令：`/session` 选择会话，`/tree` 浏览历史，`/compact` 手动压缩，`/retry` 重试失败 prompt，`/usage` 查看 token 与上下文占用。选择历史用户消息会把文本恢复到编辑器并从其父节点创建新分支；选择 assistant、tool result 或 summary 则从该节点继续。导航不会回滚已经发生的文件、命令或网络副作用。
 
-`/session` 的列表包含当前 Session 和由产品 Host 提供的其他 Session。打开新 Session 时会重建当前工作区的 transcript、usage、文件预览和队列；旧 Session 的订阅会被取消。Session 正在打开、prompt 正在运行或 Session 已被其他 owner 占用时，操作会返回稳定错误而不会并发写入。
+`/session` 的列表包含当前 Session 和由产品 Host 提供的其他 Session。每个 RPC 操作都必须显式携带 `sessionId`；运行控制还携带 `runId`，不存在默认或 active Session。打开新 Session 时只加载目标 runtime，其他 Session 的 prompt、工具和订阅保持不变。同一 Session 的第二个 primary prompt 返回 `BUSY`，不同 Session 可以并行；Session 已被其他 owner 占用时仍返回稳定错误。模型/Provider 选择属于 workspace 默认运行时：切换时会同步当前 Host 已加载的 Session，之后打开的 Session 也使用该选择，不会因为切换 Session 回退到启动时的 Faux runtime。
 
 `/tree` 的选择器按历史节点展示当前路径（`›` 表示当前选择）。继续节点会改变模型上下文；编辑历史用户消息会恢复文本到编辑器并创建新的 sibling 分支；摘要操作先导航到节点，再生成 summary 分支。图片不会随树导航恢复，需重新附加。
 

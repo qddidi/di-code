@@ -81,6 +81,78 @@ async function setup(
 }
 
 describe("SessionHost", () => {
+	it("allows creating a new session while another session is streaming", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-concurrent-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-concurrent-agent-"));
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [{ type: "success", content: [{ type: "text", text: "x".repeat(2000) }] }],
+		});
+		const runtime = await setup(root, agentDir, faux);
+		try {
+			const first = await runtime.host.createSession();
+			const pending = runtime.host.prompt({ text: "stream", requestId: "streaming" });
+			const second = await runtime.host.createSession();
+			expect(second.id).not.toBe(first.id);
+			expect(runtime.host.state().activeSession?.id).toBe(second.id);
+			expect(runtime.host.cancel("streaming")).toBe(true);
+			await pending;
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+	it("reuses a loaded Session when switching back during a background run", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-switch-root-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-switch-agent-"));
+		const faux = createFauxProvider({
+			chunkSize: 1,
+			responses: [{ type: "success", content: [{ type: "text", text: "x".repeat(2000) }] }],
+		});
+		const runtime = await setup(root, agentDir, faux);
+		try {
+			const first = await runtime.host.createSession();
+			const pending = runtime.host.prompt({ text: "stream", requestId: "switching" });
+			const second = await runtime.host.createSession();
+			expect(runtime.host.state().activeSession?.id).toBe(second.id);
+			await expect(runtime.host.openSession(first.id)).resolves.toMatchObject({ id: first.id });
+			expect(runtime.host.state().activeSession?.id).toBe(first.id);
+			expect(runtime.host.cancel("switching")).toBe(true);
+			await expect(pending).resolves.toMatchObject({ stopReason: "aborted" });
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+	it("keeps the selected runtime across loaded and subsequently opened Sessions", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-host-runtime-root-"));
+		const agentDir = await mkdtemp(join(tmpdir(), "di-code-host-runtime-agent-"));
+		const faux = createFauxProvider({ responses: [] });
+		const alternateModel = { ...faux.model, id: "alternate-model", provider: "alternate" };
+		const alternateProvider = { ...faux.provider, id: "alternate", models: [alternateModel] };
+		const runtime = await setup(root, agentDir, faux);
+		try {
+			const first = await runtime.host.createSession();
+			await runtime.host.createSession();
+			await runtime.host.setRuntimeValue(alternateProvider, alternateModel);
+			await runtime.host.openSession(first.id);
+			expect(runtime.host.ui()).toMatchObject({ providerId: "alternate", modelId: "alternate-model" });
+			await runtime.host.createSession();
+			expect(runtime.host.ui()).toMatchObject({ providerId: "alternate", modelId: "alternate-model" });
+		} finally {
+			await runtime.host.dispose();
+			await runtime.removeFactory();
+			await runtime.context.dispose();
+			await rm(root, { recursive: true, force: true });
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
 	it("persists Session policy mode and restores it from the event log", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-policy-root-"));
 		const agentDir = await mkdtemp(join(tmpdir(), "di-code-policy-agent-"));

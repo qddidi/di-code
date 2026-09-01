@@ -158,7 +158,7 @@ export const pluginManager: PluginDefinition<PluginManagerEntryConfig> = {
 							try {
 								await writeFile(
 									join(staging, "package.json"),
-									`${JSON.stringify({ name: id, version: "0.1.0", type: "module", exports: { ".": "./dist/plugin.js" }, scripts: { build: "tsc" }, dependencies: { "@di-code/plugin-sdk": "^0.2.2" }, devDependencies: { typescript: "^5.9.3" } }, null, 2)}\n`,
+									`${JSON.stringify({ name: id, version: "0.1.0", type: "module", exports: { ".": "./dist/plugin.js" }, scripts: { build: "tsc" }, dependencies: { "@di-code/plugin-sdk": "^0.2.4" }, devDependencies: { typescript: "^5.9.3" } }, null, 2)}\n`,
 								);
 								await writeFile(
 									join(staging, "tsconfig.json"),

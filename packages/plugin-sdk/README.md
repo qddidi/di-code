@@ -1,8 +1,8 @@
 # @di-code/plugin-sdk
 
-`@di-code/plugin-sdk` 是第三方 `di-code` 插件的稳定公开入口。它只重导出 `@di-code/plugin-runtime` 与 `@di-code/plugin-loader` 的根 API；插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
+`@di-code/plugin-sdk` 是第三方 `di-code` 插件的稳定公开入口。它重导出 `@di-code/plugin-runtime`/`@di-code/plugin-loader` 的根 API，并提供 Session、Agent hook、事件、projection、交互和策略契约；插件不得导入任何包的 `src`、`dist` 或未声明 subpath。
 
-最小插件可以只导出 `setup(api)`，通过 `api.registerCommand()`、`api.registerTool()`、`api.registerProvider()`、`api.registerWeb()` 和 `api.on()` 注册资源；每个方法返回幂等 disposer，并自动绑定当前 Fiber 与取消信号。
+最小插件可以只导出 `setup(api)`。`api.registerCommand()` 注册宿主 `HostCommandRegistry`（是否有入口调用取决于 Composition），`api.registerTool()` 注册 Agent 工具，`api.registerProvider()` 注册 Provider（需要宿主提供对应 registry），`api.on()` 监听运行时事件。宿主命令不会自动进入交互 slash 菜单或 RPC `run_command`。命令、工具和事件监听的 disposer 会绑定当前 Fiber 并在卸载时清理；当前 Provider registry 没有移除接口。`api.registerWeb()` 只保留兼容形状，不发布 Web contribution，WebUI 扩展必须使用 manifest 的 `diCode.web`。
 
 ```powershell
 npm install @di-code/plugin-sdk
@@ -22,9 +22,9 @@ export const apply: PluginDefinition["apply"] = (context) => {
 
 发布 package 推荐以 ESM `exports["."]` 声明入口；旧版 `package.json.diCode.plugins` 仅用于兼容。完整 manifest、Composition、trust、capability 和 lifecycle 规则见仓库 [`docs/插件使用指南.md`](../../docs/插件使用指南.md)。
 
-Web UI 扩展使用 `WebManifest`、`WebContribution` 和 `WebSlotId`。贡献通过宿主 `WebSlotRegistry` 按 owner 管理，`dispose` 幂等；`componentKey` 是宿主白名单键，不是 URL、HTML 或 JavaScript。插件只能提供声明式只读数据，所需 capability 和 Workspace trust 由宿主检查。
+Web UI 扩展使用 `WebManifest`、`WebContribution` 和 `WebSlotId`。贡献通过宿主 `WebSlotRegistry` 按 owner 管理，`dispose` 幂等；`componentKey` 是宿主白名单键，不是 URL、HTML 或 JavaScript。插件只能提供声明式只读数据；Workspace trust 控制是否聚合贡献，组件白名单和运行时 capability 由宿主检查。
 
-Session 级 UI 使用 `createSessionExtensionRegistry()`。插件 scope 可通过 `registerBadge()` 和 `registerUi()` 动态添加徽章、控制、审阅面板或输入占位符；返回的 disposer、scope dispose 和 HMR 卸载都会移除贡献。宿主通过 `SessionExtensionFacade` 向 TUI/WebUI/RPC 提供只读快照，RPC 以 `extension:ui` projection 推送；`componentKey` 仍必须由宿主白名单解析。
+Session 级 UI 使用 `createSessionExtensionRegistry()`。插件 scope 可通过 `registerBadge()` 和 `registerUi()` 动态添加徽章、控制、审阅面板或输入占位符；返回的 disposer、scope dispose 和 HMR 卸载都会移除贡献。宿主通过 `SessionExtensionFacade` 向 SessionHost/RPC 提供只读快照，RPC 以 `extension:ui` projection 推送；`componentKey` 仍必须由宿主白名单解析。当前 WebUI 的静态 slot 贡献使用 manifest 的 `diCode.web`，不会直接执行插件 UI 代码。
 
 本包根入口导出 `SessionPluginFactory`、`SessionPluginScope` 和 `createSessionPluginFactory`。factory 为每个 session ID 创建独立 scope；scope 提供 opaque ID、`AbortSignal`、不可变 capabilities、`hooks`、typed `events`/`projections` registry、动态 prompt sections、`appendEvent()` 和可选 `UserInteraction`，不暴露 `Agent`、`AgentSession`、`SessionManager`、文件句柄或 transport。`appendEvent()` 由宿主绑定到当前 Session 的串行持久化队列；无持久化宿主时会明确失败。重复 session ID 会以 `PluginLifecycleError`（`DUPLICATE`）拒绝；初始化失败会回滚已注册的 disposer；scope 与 factory 的 `dispose()` 都幂等，并在释放时 abort signal。factory 卸载会清理所有已创建 scope，适用于 Composition/Fiber 卸载和 HMR 重载。宿主将 scope hooks、events 和 projections 接入单一 Session/Agent，并执行迁移、校验和回放。其余阶段 0契约类型与版本语义见 [`docs-vibecoding/plugin/阶段0-公开契约草案.md`](../../docs-vibecoding/plugin/阶段0-公开契约草案.md)。
 

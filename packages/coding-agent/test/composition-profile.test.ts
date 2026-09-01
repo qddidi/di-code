@@ -196,6 +196,7 @@ describe("default compositions", () => {
 			expect(resolved.find((entry) => entry.id === "tool-read")?.disabled).toBe(false);
 			expect(resolved.find((entry) => entry.id === "tool-write")?.disabled).toBe(true);
 			expect(resolved.find((entry) => entry.id === "project-entry")?.projectLocal).toBe(true);
+			expect(resolved.find((entry) => entry.id === "agent-loop")?.optionalDependsOn).toContain("project-entry");
 			expect(resolved.find((entry) => entry.id === "workspace")?.config).toMatchObject({ allowedRoot: root });
 
 			const withoutProject = await resolveCompositionEntries("print", {
@@ -252,6 +253,14 @@ describe("plugin-manager composition command", () => {
 			).toBe(0);
 			const pluginRoot = join(root, ".di-code", "plugins", "hello-plugin");
 			expect(await readFile(join(pluginRoot, "dist", "plugin.js"), "utf8")).toContain("export default");
+			expect(JSON.parse(await readFile(join(pluginRoot, "package.json"), "utf8"))).toMatchObject({
+				dependencies: { "@di-code/plugin-sdk": "^0.2.4" },
+				devDependencies: { typescript: "^5.9.3" },
+			});
+			expect(JSON.parse(await readFile(join(pluginRoot, "tsconfig.json"), "utf8"))).toMatchObject({
+				compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", outDir: "dist" },
+				include: ["plugin.ts"],
+			});
 			expect(npmCalls.map((call) => call.args)).toEqual([
 				["install", "--ignore-scripts"],
 				["run", "build"],

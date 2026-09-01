@@ -16,19 +16,19 @@ CLI/RPC/Web 都调用同一个 `AgentSession`/`@di-code/agent` loop。一次 pro
 
 Agent loop 的生命周期 hook 使用 `apiVersion: 1`，按注册顺序串行运行 `request_prepare`、`pre_step`、`request_accept`、`tool_execute_before`、`step_complete`、`turn_complete`、`failed` 和 `cancelled`。观察型 hook 只能读取事件；修改型 hook 只允许在 `pre_step` 返回新的只读 request assembly/decision，不能通过共享对象修改请求。每个 hook 接收 `AbortSignal`，可声明超时和 `ignore`/`fail` 错误策略；监听器 disposer 幂等，失败会保持 Agent 的终态收敛。
 
-## SessionHost
+## WorkspaceCoordinator 与 SessionRuntime
 
-`SessionHost` 按 principal 和真实 workspace 隔离 actor，集中拥有 Session、MCP、工具快照、事件订阅和 requestId 操作表。Session factory 在创建时固定 immutable tool snapshot；之后禁用的工具不会被会话补回。`dispose()` 幂等，先取消活跃操作，再释放 listener、锁、MCP 和子 Context。
+`WorkspaceCoordinator` 按 principal 和真实 workspace 管理多个 `SessionRuntime`。每个 runtime 独占自己的 `AgentSession`、JSONL 锁、事件订阅和 MCP 连接；MCP client 未证明可并发共享，因此固定采用 runtime 独占连接。运行通过不可变 `RunContext`（`sessionId`、`runId`、`requestId`）归属。同一 session 同时只允许一个 primary run，第二个 prompt 返回 `BUSY`；不同 session 可并行。协调器 `dispose()` 幂等并释放所有 runtime 资源。
 
 ## RPC JSONL
 
 RPC 每条记录保留 `version: 1`。请求：
 
 ```json
-{ "version": 1, "kind": "request", "id": "p1", "method": "prompt", "params": { "message": "检查测试" } }
+{ "version": 1, "kind": "request", "id": "p1", "method": "prompt", "params": { "sessionId": "s1", "message": "检查测试" } }
 ```
 
-响应通过 `id` 关联；流事件是 `kind: "event"`，通过 `requestId` 关联 operation，并可带单调 `sequence`。客户端先 `get_capabilities` 协商事件；旧客户端继续收到兼容的 Agent event。可用方法包括 prompt/steer/retry/cancel、Session/tree/transcript、compact/usage、资源快照、product/trust、`list_commands`/`run_command` 和 `resume_events`。
+响应通过 `id` 关联；流事件是 `kind: "event"`，运行事件必须携带 `sessionId` 与 `runId`，通过 `requestId` 关联 operation，并可带单调 `sequence`。所有 session-scoped 请求都必须显式携带 `sessionId`，`steer`、`cancel`、`get_operation`、审批和 interaction 还必须携带目标 `runId`；不存在 active session 或默认会话兼容语义。
 
 `run_command` 只能执行当前 composition 已注册且由 `list_commands` 返回的命令；不能通过 RPC 运行任意 shell。请求 schema、ID、错误 code 和结果都严格验证，未知或非法记录不会静默接受。
 

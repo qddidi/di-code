@@ -35,4 +35,4 @@ Composition 支持 JSON/YAML、受限 `$VAR`/`${VAR}` 配置插值、determinist
 
 `ProjectTrustStore` 使用 version `1` JSON 保存 project trust，并可记录来源、版本和完整性元数据；untrusted project-local entry 被 skipped。`PluginInstallManager` 支持 local、`npm:` 与 `git:` source，使用 staging、managed-root 路径检查、原子 registry replacement 和失败 rollback；`npm:` 固定使用 `--ignore-scripts`。mutating registry 操作使用跨进程目录锁，等待超时会失败，超过陈旧期限的遗留锁会回收。in-process plugin 不是 sandbox，manifest permission/capability 只用于审计和发现。
 
-插件可在 `diCode.web` 声明 version `1` 的数据贡献。贡献只包含稳定 `slot`、`order`、`capability` 和宿主拥有的 `componentKey`，浏览器不会导入插件包或获得 command registry。受管 bundle 必须声明包内相对 `path`、SHA-256 和包含 `default-src 'self'` 的 CSP；安装时由 Loader 校验 hash。未信任 Workspace 的项目插件 Web 声明不会进入 Web manifest，旧客户端可忽略未知 slot。
+插件可在 `diCode.web` 声明 version `1` 的数据贡献。贡献只包含稳定 `slot`、`order`、`capability` 和宿主拥有的 `componentKey`，浏览器不会导入插件包或获得 command registry。当前 ProductHost 只把内置贡献和已启用的受管插件贡献聚合到 Web manifest；未信任 Workspace 或项目 `.di-code/plugins` 的 Web 声明不会进入 Web manifest，旧客户端可忽略未知 slot。受管 bundle 必须声明包内相对 `path`、SHA-256 和包含 `default-src 'self'` 的 CSP；安装时由 Loader 校验 hash。

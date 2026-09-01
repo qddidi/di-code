@@ -89,6 +89,8 @@ export interface AttachmentInfo {
 
 export interface OperationState {
 	readonly requestId: string;
+	readonly runId?: string;
+	readonly sessionId?: string;
 	readonly kind: string;
 	readonly status: "queued" | "running" | "completed" | "failed" | "cancelled" | "crashed";
 	readonly error?: { readonly code: string; readonly message: string };

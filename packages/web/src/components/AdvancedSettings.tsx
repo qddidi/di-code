@@ -11,6 +11,7 @@ interface AdvancedSettingsProps {
 	readonly settings: SettingsSnapshot;
 	readonly onError: (message: string | undefined) => void;
 	readonly onSettingsChange: () => Promise<void>;
+	readonly sessionId?: string;
 }
 
 interface Preset { readonly id: string; readonly name: string; readonly providerId?: string; readonly modelId?: string; readonly thinkingLevel?: string; readonly permissionMode?: SettingsSnapshot["permissionMode"]; }
@@ -58,12 +59,12 @@ function PluginsPanel({ onError }: Pick<AdvancedSettingsProps, "onError">): Reac
 	return <section className="settings-section"><h3>{t("Plugins")}</h3><p className="settings-section-note">{t("Plugins run in-process. Permissions describe impact and audit scope; they are not an operating-system sandbox.")}</p><div className="advanced-list">{plugins.length === 0 ? <p className="readonly-note">{t("No plugins discovered.")}</p> : plugins.map((plugin) => { const status = plugin.status ?? (plugin.enabled ? "active" : "disabled"); const canToggle = plugin.source !== "project"; return <article className="advanced-row" key={plugin.id}><div><strong>{plugin.id}</strong><span>v{plugin.version} · {plugin.source ?? "managed"} · {plugin.capabilities.join(", ") || t("no declared capabilities")}</span>{plugin.error ? <span className="plugin-error">{plugin.error}</span> : null}</div><div className={`plugin-status plugin-status-${status}`}>{status}</div>{canToggle ? <label className="switch"><input type="checkbox" checked={plugin.enabled} onChange={(event) => { void setPluginEnabled(plugin.id, event.target.checked).then(refresh).then(() => window.dispatchEvent(new Event("di-code-web-contributions-changed"))).catch((cause) => onError(cause instanceof Error ? cause.message : t("Plugin update failed."))); }} /><span>{t("Enabled")}</span></label> : null}</article>; })}</div></section>;
 }
 
-function PresetsPanel({ settings, onError, onSettingsChange }: Pick<AdvancedSettingsProps, "settings" | "onError" | "onSettingsChange">): React.JSX.Element {
+function PresetsPanel({ settings, onError, onSettingsChange, sessionId }: Pick<AdvancedSettingsProps, "settings" | "onError" | "onSettingsChange" | "sessionId">): React.JSX.Element {
 	const { t } = useI18n();
 	const [presets, setPresets] = useState<readonly Preset[]>(() => { try { return JSON.parse(localStorage.getItem("di-code-presets") ?? "[]") as Preset[]; } catch { return []; } });
 	const [name, setName] = useState("");
 	const save = (): void => { if (!name.trim()) return; const next = [...presets, { id: crypto.randomUUID(), name: name.trim(), providerId: settings.defaults.providerId, modelId: settings.defaults.modelId, thinkingLevel: settings.runtime.thinkingLevel, permissionMode: settings.permissionMode }]; setPresets(next); localStorage.setItem("di-code-presets", JSON.stringify(next)); setName(""); };
-	const apply = async (preset: Preset): Promise<void> => { try { if (preset.providerId) await callRpc("set_default_provider", { providerId: preset.providerId }); if (preset.modelId) await callRpc("set_default_model", { modelId: preset.modelId }); if (preset.permissionMode) await callRpc("set_permission_mode", { permissionMode: preset.permissionMode }); if (preset.thinkingLevel) await callRpc("set_thinking_level", { level: preset.thinkingLevel }); await onSettingsChange(); } catch (cause) { onError(cause instanceof Error ? cause.message : "Preset apply failed."); } };
+	const apply = async (preset: Preset): Promise<void> => { try { if (preset.providerId) await callRpc("set_default_provider", { providerId: preset.providerId }); if (preset.modelId) await callRpc("set_default_model", { modelId: preset.modelId }); if (preset.permissionMode) await callRpc("set_permission_mode", { permissionMode: preset.permissionMode }); if (preset.thinkingLevel) await callRpc("set_thinking_level", { sessionId, level: preset.thinkingLevel }); await onSettingsChange(); } catch (cause) { onError(cause instanceof Error ? cause.message : "Preset apply failed."); } };
 	return <section className="settings-section"><h3>{t("Agent presets")}</h3><p className="settings-section-note">{t("Presets store non-secret defaults in this browser. Applying one uses explicit settings RPCs; API keys never enter the preset.")}</p><div className="advanced-list">{presets.map((preset) => <article className="advanced-row" key={preset.id}><div><strong>{preset.name}</strong><span>{preset.providerId ?? t("default")} / {preset.modelId ?? t("default")}</span></div><div className="advanced-actions"><button type="button" onClick={() => void apply(preset)}>{t("Apply")}</button><button type="button" onClick={() => { const next = presets.filter((item) => item.id !== preset.id); setPresets(next); localStorage.setItem("di-code-presets", JSON.stringify(next)); }}>{t("Delete")}</button></div></article>)}</div><div className="inline-form"><input aria-label={t("Preset name")} placeholder={t("Preset name")} value={name} onChange={(event) => setName(event.target.value)} /><button type="button" disabled={!name.trim()} onClick={save}>{t("Save current")}</button></div></section>;
 }
 
@@ -80,12 +81,12 @@ function ShortcutsPanel(): React.JSX.Element {
 	return <section className="settings-section"><h3>{t("Shortcuts")}</h3><p className="settings-section-note">{t("Keyboard actions are presentation-only and never bypass RPC authorization or approvals.")}</p><div className="shortcut-list"><span><kbd>Enter</kbd> {t("Send")}</span><span><kbd>Shift+Enter</kbd> {t("New line")}</span><span><kbd>Esc</kbd> {t("Cancel active response")}</span><span><kbd>Ctrl/⌘ K</kbd> {t("New session")}</span><span><kbd>Ctrl/⌘ ,</kbd> {t("Settings")}</span></div></section>;
 }
 
-export function AdvancedSettings({ tab, settings, onError, onSettingsChange }: AdvancedSettingsProps): React.JSX.Element {
+export function AdvancedSettings({ tab, settings, onError, onSettingsChange, sessionId }: AdvancedSettingsProps): React.JSX.Element {
 	switch (tab) {
 		case "skills": return <SkillsPanel onError={onError} />;
 		case "mcp": return <McpPanel onError={onError} onSettingsChange={onSettingsChange} />;
 		case "plugins": return <PluginsPanel onError={onError} />;
-		case "presets": return <PresetsPanel settings={settings} onError={onError} onSettingsChange={onSettingsChange} />;
+		case "presets": return <PresetsPanel settings={settings} onError={onError} onSettingsChange={onSettingsChange} sessionId={sessionId} />;
 		case "trust": return <TrustPanel settings={settings} onError={onError} onSettingsChange={onSettingsChange} />;
 		case "shortcuts": return <ShortcutsPanel />;
 	}

@@ -31,6 +31,8 @@ di-code web --port 4312 --workspace D:\projects\another-workspace
 
 打开页面后，在 **Settings** 中选择 Provider、模型并完成 API key 配置。没有可用 Provider 时，WebUI 会先使用离线 Faux runtime，配置完成后再发起真实请求。浏览器只接收脱敏配置和不透明 ID，不会获得 API key。
 
+WebUI 的 Provider/模型选择是当前 workspace 的默认运行时；切换时会同步同一 Host 中已加载的 Session，之后打开的 Session 也会沿用该选择。
+
 从仓库源码启动：
 
 ```powershell

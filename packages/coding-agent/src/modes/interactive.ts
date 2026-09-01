@@ -733,10 +733,8 @@ export class InteractiveMode {
 	}
 
 	private async switchSession(choice: InteractiveSessionChoice): Promise<void> {
-		if (this.promptInFlight || this.sessionSwitching) {
-			this.projection.setError(
-				this.locale === "zh-CN" ? "提示词运行时不能切换会话。" : "Cannot switch sessions while a prompt is running.",
-			);
+		if (this.sessionSwitching) {
+			this.projection.setError(this.locale === "zh-CN" ? "会话正在切换。" : "A session switch is already in progress.");
 			this.refresh();
 			return;
 		}

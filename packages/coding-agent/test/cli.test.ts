@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseCliArgs, runCli } from "../src/cli.ts";
 
 describe("parseCliArgs", () => {
-	it("parses plugin management and opt-in composition observability commands", () => {
+	it("parses plugin management and project-aware composition observability commands", () => {
 		expect(parseCliArgs(["plugin", "get", "example"])).toEqual({
 			kind: "plugin",
 			action: "get",
@@ -10,6 +10,20 @@ describe("parseCliArgs", () => {
 		});
 		expect(parseCliArgs(["--trace-plugins"])).toEqual({ kind: "observe", action: "trace" });
 		expect(parseCliArgs(["--dump-composition"])).toEqual({ kind: "observe", action: "dump-composition" });
+		expect(parseCliArgs(["--trust-project", "--composition", "coverage.yml", "--trace-plugins"])).toEqual({
+			kind: "observe",
+			action: "trace",
+			projectTrust: true,
+			compositionPath: "coverage.yml",
+		});
+		expect(parseCliArgs(["--dump-composition", "--no-project-plugins"])).toEqual({
+			kind: "observe",
+			action: "dump-composition",
+			noProjectPlugins: true,
+		});
+		expect(() => parseCliArgs(["--trace-plugins", "--dump-composition"])).toThrow(
+			"Use only one plugin observability command at a time.",
+		);
 	});
 	it("parses help and version as static commands", () => {
 		expect(parseCliArgs(["--help"])).toEqual({ kind: "help" });

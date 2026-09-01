@@ -34,3 +34,16 @@ export {
 	pluginTrace,
 	pluginTraceKey,
 } from "./runtime/plugin-observability-entry.ts";
+export {
+	createWorkspaceCoordinator,
+	type Run,
+	type RunContext,
+	type RunHandle,
+	type RunId,
+	type RunKind,
+	type RunStatus,
+	type SessionRuntime,
+	WorkspaceCoordinator,
+	type WorkspaceCoordinatorOptions,
+	type WorkspaceResources,
+} from "./runtime/workspace-coordinator.ts";

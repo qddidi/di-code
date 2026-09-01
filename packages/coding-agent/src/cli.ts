@@ -8,7 +8,16 @@ export type CliCommand =
 	| { kind: "help" }
 	| { kind: "version" }
 	| { kind: "web"; port: number; workspaces?: readonly string[] }
-	| { kind: "observe"; action: "trace" | "dump-composition" }
+	| {
+			kind: "observe";
+			action: "trace" | "dump-composition";
+			/** Applies an explicit Composition document after trusted project configuration. */
+			compositionPath?: string;
+			/** Excludes project-local Composition and discovered plugins for this observation. */
+			noProjectPlugins?: true;
+			/** Persists the current workspace trust decision before observing its resources. */
+			projectTrust?: boolean;
+	  }
 	| {
 			kind: "plugin";
 			action:
@@ -63,8 +72,8 @@ export class CliUsageError extends Error {
 
 export function parseCliArgs(args: readonly string[]): CliCommand {
 	if (args[0] === "web") return parseWebArgs(args.slice(1));
-	if (args.length === 1 && args[0] === "--trace-plugins") return { kind: "observe", action: "trace" };
-	if (args.length === 1 && args[0] === "--dump-composition") return { kind: "observe", action: "dump-composition" };
+	const observe = parseObserveArgs(args);
+	if (observe) return observe;
 	if (args[0] === "plugin") {
 		const action = args[1];
 		if (
@@ -263,6 +272,53 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
 		...(imagePaths.length > 0 ? { imagePaths } : {}),
 		...(projectTrust === undefined ? {} : { projectTrust }),
 	};
+}
+
+function parseObserveArgs(args: readonly string[]): Extract<CliCommand, { kind: "observe" }> | undefined {
+	if (!args.some((argument) => argument === "--trace-plugins" || argument === "--dump-composition")) return undefined;
+	let action: "trace" | "dump-composition" | undefined;
+	let compositionPath: string | undefined;
+	let noProjectPlugins = false;
+	let projectTrust: boolean | undefined;
+	for (let index = 0; index < args.length; index++) {
+		const argument = args[index];
+		if (argument === "--trace-plugins" || argument === "--dump-composition") {
+			const nextAction = argument === "--trace-plugins" ? "trace" : "dump-composition";
+			if (action !== undefined) throw new CliUsageError("Use only one plugin observability command at a time.");
+			action = nextAction;
+			continue;
+		}
+		if (argument === "--trust-project" || argument === "--untrust-project") {
+			const nextTrust = argument === "--trust-project";
+			if (projectTrust !== undefined && projectTrust !== nextTrust)
+				throw new CliUsageError("Cannot combine --trust-project with --untrust-project.");
+			projectTrust = nextTrust;
+			continue;
+		}
+		if (argument === "--no-project-plugins") {
+			noProjectPlugins = true;
+			continue;
+		}
+		if (argument === "--composition") {
+			const value = args[index + 1];
+			if (value === undefined || value.trim().length === 0)
+				throw new CliUsageError("Option --composition requires a non-empty path.");
+			if (compositionPath !== undefined) throw new CliUsageError("Option --composition may only be used once.");
+			compositionPath = value;
+			index++;
+			continue;
+		}
+		throw new CliUsageError(`Unknown observability option "${argument}".`);
+	}
+	return action === undefined
+		? undefined
+		: {
+				kind: "observe",
+				action,
+				...(compositionPath ? { compositionPath } : {}),
+				...(noProjectPlugins ? { noProjectPlugins: true as const } : {}),
+				...(projectTrust === undefined ? {} : { projectTrust }),
+			};
 }
 
 function parseMcpArgs(args: readonly string[]): Extract<CliCommand, { kind: "mcp" }> {

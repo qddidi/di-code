@@ -30,6 +30,10 @@ export interface RpcTransport {
 }
 
 export interface RpcPromptOptions {
+	/** Explicit session ownership; required by the v1 session-scoped protocol. */
+	readonly sessionId?: string;
+	/** Required for steer/cancel/approval operations. */
+	readonly runId?: string;
 	readonly signal?: AbortSignal;
 	/** Attachments are uploaded explicitly and consumed by this request; requests are never replayed automatically. */
 	readonly attachmentIds?: readonly string[];
@@ -103,7 +107,11 @@ export class RpcClient {
 		try {
 			const response = this.send(
 				"prompt",
-				{ message, ...(options.attachmentIds === undefined ? {} : { attachmentIds: [...options.attachmentIds] }) },
+				{
+					sessionId: options.sessionId,
+					message,
+					...(options.attachmentIds === undefined ? {} : { attachmentIds: [...options.attachmentIds] }),
+				},
 				requestId,
 			);
 			if (options.signal?.aborted) onAbort();
@@ -115,8 +123,23 @@ export class RpcClient {
 		}
 	}
 
+	/** Starts a prompt with an explicit session target and returns the final assistant message. */
+	promptInSession(
+		sessionId: string,
+		message: string,
+		options: Omit<RpcPromptOptions, "sessionId"> = {},
+	): Promise<AssistantMessage> {
+		return this.prompt(message, { ...options, sessionId });
+	}
+
 	async cancel(requestId: string): Promise<boolean> {
 		const result = await this.send("cancel", { requestId });
+		if (result.method !== "cancel") throw new Error("RPC cancel returned an incompatible result.");
+		return result.cancelled as boolean;
+	}
+
+	async cancelInSession(sessionId: string, runId: string): Promise<boolean> {
+		const result = await this.send("cancel", { sessionId, runId, requestId: runId });
 		if (result.method !== "cancel") throw new Error("RPC cancel returned an incompatible result.");
 		return result.cancelled as boolean;
 	}

@@ -2,7 +2,7 @@
 
 `di-code` 是一个以终端为主的 TypeScript AI Coding Agent。它提供持续对话、文件和命令工具、会话恢复、插件、MCP、JSON 输出、RPC，以及本地 WebUI。
 
-支持内建 `openai`、`anthropic`、`deepseek`、`kimi`、`zhipu` 和离线 `faux` Provider，也可以在 settings 中配置自定义 Provider。模型请求、工具循环和会话在 CLI、TUI、WebUI 与 RPC 入口之间共享。
+支持内建 `openai`、`anthropic`、`deepseek`、`kimi`、`zhipu` 和离线 `faux` Provider，也可以在 settings 中配置自定义 Provider。模型请求、工具循环和会话在 CLI、TUI、WebUI 与 RPC 入口之间共享。运行时按 workspace 管理多个独立会话；每个会话使用显式 `sessionId`，运行控制使用 `runId`。不同会话可以并行执行，同一会话的第二个 primary prompt 会返回 `BUSY`。
 
 ## 快速开始
 
