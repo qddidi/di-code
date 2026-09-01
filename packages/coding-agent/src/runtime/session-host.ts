@@ -1107,6 +1107,7 @@ export interface HostManagerOptions extends SessionHostBootstrapOptions {
 
 export class HostManager {
 	private readonly actors = new Map<string, SessionActor>();
+	private readonly pendingDisposals = new Set<Promise<void>>();
 	private disposed = false;
 	private readonly context: Context;
 	constructor(context: Context) {
@@ -1114,6 +1115,7 @@ export class HostManager {
 	}
 	async get(options: HostManagerOptions): Promise<SessionActor> {
 		if (this.disposed) throw new SessionHostError("DISPOSED", "HostManager has been disposed.");
+		if (this.pendingDisposals.size > 0) await Promise.allSettled([...this.pendingDisposals]);
 		const workspace = await validateWorkspace(options.cwd);
 		const key = `${options.principal}\n${workspace}`;
 		const existing = this.actors.get(key);
@@ -1128,5 +1130,23 @@ export class HostManager {
 		this.disposed = true;
 		await Promise.all([...this.actors.values()].map((actor) => actor.dispose()));
 		this.actors.clear();
+	}
+	/** Releases all workspace actors owned by a disconnected WebUI client. */
+	async disposePrincipal(principal: string): Promise<void> {
+		const disposal = (async () => {
+			const owned = [...this.actors.entries()].filter(([, actor]) => actor.principal === principal);
+			await Promise.allSettled(
+				owned.map(async ([key, actor]) => {
+					this.actors.delete(key);
+					await actor.dispose();
+				}),
+			);
+		})();
+		this.pendingDisposals.add(disposal);
+		try {
+			await disposal;
+		} finally {
+			this.pendingDisposals.delete(disposal);
+		}
 	}
 }

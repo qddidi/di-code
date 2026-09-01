@@ -921,6 +921,7 @@ export class WebUiServer {
 		this.closeConnections(client);
 		for (const dispatcher of client.dispatchers.values()) void dispatcher.dispose();
 		for (const product of client.productHosts.values()) void product.dispose();
+		void this.hostManager.disposePrincipal(client.principal);
 		client.dispatchers.clear();
 		client.productHosts.clear();
 		this.clientsByResumeToken.delete(client.resumeToken);

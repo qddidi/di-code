@@ -127,6 +127,47 @@ function headers(token: string, clientId?: string): Headers {
 }
 
 describe("WebUiServer", () => {
+	it("releases session locks when a WebUI client is revoked", async () => {
+		const { baseUrl, server, token } = await createServer();
+		const firstHeaders = headers(token, "client-lock-owner");
+		const created = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: firstHeaders,
+			body: JSON.stringify({ version: 1, kind: "request", id: "new-lock-session", method: "new_session", params: {} }),
+		});
+		expect(created.status).toBe(200);
+		const sessionId = ((await created.json()) as { result: { session: { id: string } } }).result.session.id;
+		const prompted = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: firstHeaders,
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "persist-lock-session",
+				method: "prompt",
+				params: { message: "persist" },
+			}),
+		});
+		expect(prompted.status).toBe(200);
+
+		server.rotateToken();
+		const secondHeaders = headers(server.token, "client-lock-replacement");
+		const opened = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: secondHeaders,
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "open-lock-session",
+				method: "open_session",
+				params: { sessionId },
+			}),
+		});
+		const openedPayload = await opened.text();
+		expect(opened.status).toBe(200);
+		expect(JSON.parse(openedPayload)).toMatchObject({ ok: true, result: { method: "open_session" } });
+	});
+
 	it("projects built-in and custom commands through the HTTP RPC transport", async () => {
 		const { baseUrl, context, token } = await createServer();
 		let customArgs: string | undefined;
