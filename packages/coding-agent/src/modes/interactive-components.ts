@@ -292,10 +292,16 @@ export class InteractiveFooter implements Component {
 		const right = plan ? `${paint(plan.active ? colors.accent : colors.dim, planLabel)}  ${model}` : model;
 		const status = width >= 60 ? alignEnds(`${left}  ${context}`, right, width) : `${left}  ${right}`;
 		const pasteImageShortcut = state.pasteImageShortcut ?? (process.platform === "win32" ? "Alt+V" : "Ctrl+V");
+		const locale = state.locale ?? DEFAULT_LOCALE;
+		const hintCandidates = [
+			`Enter ${translate(locale, "send")}   ${pasteImageShortcut} ${translate(locale, "pasteImage")}   Alt+P Plan   Shift+Tab ${translate(locale, "thinkingShortcut")}   Esc ${translate(locale, "cancel")}   Ctrl+O ${translate(locale, "model")}`,
+			`Enter ${translate(locale, "send")}   Alt+P Plan   Shift+Tab ${translate(locale, "thinkingShortcut")}   Esc ${translate(locale, "cancel")}`,
+			`Enter ${translate(locale, "send")}  ${pasteImageShortcut} ${translate(locale, "imageShortcut")}`,
+		];
 		const hints =
-			width >= 60
-				? `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}   ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "pasteImage")}   Alt+P Plan   Shift+Tab ${translate(state.locale ?? DEFAULT_LOCALE, "thinkingShortcut")}   Esc ${translate(state.locale ?? DEFAULT_LOCALE, "cancel")}   Ctrl+O ${translate(state.locale ?? DEFAULT_LOCALE, "model")}`
-				: `Enter ${translate(state.locale ?? DEFAULT_LOCALE, "send")}  ${pasteImageShortcut} ${translate(state.locale ?? DEFAULT_LOCALE, "imageShortcut")}`;
+			hintCandidates.find((candidate) => visibleWidth(candidate) <= width) ??
+			hintCandidates[hintCandidates.length - 1] ??
+			"";
 		return [...renderLine(status, width), ...renderLine(paint(colors.dim, hints), width)];
 	}
 }
@@ -313,16 +319,27 @@ export interface AutocompleteMenuState {
 
 export class AutocompleteMenu implements Component {
 	private readonly readState: () => AutocompleteMenuState;
+	private readonly maxVisible: number | (() => number);
 
-	constructor(readState: () => AutocompleteMenuState) {
+	constructor(readState: () => AutocompleteMenuState, maxVisible: number | (() => number) = 6) {
 		this.readState = readState;
+		this.maxVisible = maxVisible;
 	}
 
 	invalidate(): void {}
 
 	render(width: number): string[] {
 		const state = this.readState();
-		const maxVisible = 6;
+		const maxVisible = Math.min(
+			6,
+			Math.floor(typeof this.maxVisible === "function" ? this.maxVisible() : this.maxVisible),
+		);
+		const selected = state.items[state.index];
+		if (maxVisible <= 0) {
+			if (!selected) return [];
+			const description = selected.description ? ` - ${selected.description.replace(/[\r\n]+/g, " ").trim()}` : "";
+			return [truncateToWidth(`› ${selected.label}${description}`, width, "", true)];
+		}
 		const start = Math.min(
 			Math.max(0, state.index - Math.floor(maxVisible / 2)),
 			Math.max(0, state.items.length - maxVisible),

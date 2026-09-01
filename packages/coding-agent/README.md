@@ -82,6 +82,12 @@ npm run dev -- --interactive
 
 交互模式中可使用 `/plan` 进入 Plan Mode，`/plan <message>` 会先启用模式并提交该需求，`/plan off` 退出。命令会显示在 `/` 补全和 `/help` 列表中，不会把命令本身作为用户消息发送。
 
+## 多 Session 与并发运行时
+
+需要在一个工作区管理多个会话时，使用根入口导出的 `WorkspaceCoordinator`。它按 `principal + workspace` 隔离 `SessionRuntime`；每个 runtime 独占 Agent、JSONL 锁、事件订阅和 MCP 连接。通过 `createSession()`/`openSession()` 加载会话，再用 `startPrompt(sessionId, ...)`、`startRetry()` 或 `startCompact()` 启动运行；返回的 `RunHandle` 同时提供 `context`（`sessionId`、`runId`、`requestId`）、运行状态和结果 Promise。
+
+同一 Session 只能有一个未结束的 primary run，重复 prompt 会抛出 `SessionHostError`（`BUSY`）；不同 Session 可以并行。`steer()`、`cancel()` 和 `getOperation()` 必须使用目标 `RunContext`/`runId`，不要用另一个 Session 的标识。协调器 `dispose()` 会取消未结束运行并释放所有 runtime；调用方仍应在宿主关闭时等待它完成。
+
 ### 首次 Provider 向导
 
 在真实 TTY 中启动，且没有 `DI_CODE_PROVIDER`、默认 Provider 或唯一已配置 Provider 时，会自动打开向导。向导依次让你：

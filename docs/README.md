@@ -19,7 +19,7 @@
 ## 终端与扩展
 
 - [TUI 使用指南](tui/使用指南.md)：`@di-code/tui` 组件、终端生命周期、键位和自定义 Host。
-- [插件使用指南](插件使用指南.md)：namespace plugin、manifest、Composition、权限和生命周期。
+- [插件使用指南](插件使用指南.md)：namespace plugin、manifest、Composition、权限、生命周期和 Plan Mode 集成。
 
 ## 开发与架构
 

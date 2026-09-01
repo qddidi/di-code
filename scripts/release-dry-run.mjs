@@ -154,7 +154,7 @@ await supervisor.stop();
 			"utf8",
 		);
 		await run(process.execPath, [orchestratorSmoke], { cwd: installDirectory });
-		await webSmoke(binPath, installDirectory, smokeEnvironment);
+		await webSmoke(process.execPath, [join(codingAgentPackage, "dist", "entry.js")], installDirectory, smokeEnvironment);
 
 		process.stdout.write(
 			`release dry-run passed: ${releaseWorkspaces.length} packages, version ${installedMetadata.version}, outside install, RPC, and web smoke passed\n`,
@@ -164,13 +164,11 @@ await supervisor.stop();
 	}
 }
 
-async function webSmoke(binPath, cwd, env) {
-	const windows = process.platform === "win32";
-	const child = spawn(binPath, ["web", "--port", "0"], {
+async function webSmoke(command, args, cwd, env) {
+	const child = spawn(command, [...args, "web", "--port", "0"], {
 		cwd,
 		env,
 		stdio: ["ignore", "pipe", "pipe"],
-		...(windows ? { shell: true } : {}),
 	});
 	let output = "";
 	let error = "";
@@ -222,7 +220,7 @@ async function webSmoke(binPath, cwd, env) {
 			throw new Error("Web smoke did not expose RPC capabilities.");
 	} finally {
 		if (child.exitCode === null && child.signalCode === null) {
-			if (windows) {
+			if (process.platform === "win32") {
 				const killer = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `taskkill /pid ${child.pid} /t /f`], {
 					stdio: "ignore",
 				});

@@ -668,10 +668,13 @@ export class InteractiveMode {
 			this.refresh();
 			return;
 		}
-		const menu = new AutocompleteMenu(() => ({
-			items: this.editor.getAutocompleteItems(),
-			index: this.editor.getAutocompleteIndex(),
-		}));
+		const menu = new AutocompleteMenu(
+			() => ({
+				items: this.editor.getAutocompleteItems(),
+				index: this.editor.getAutocompleteIndex(),
+			}),
+			() => this.autocompleteMaxVisible(),
+		);
 		const editorBounds = this.root.getEditorBounds(this.tui.columns);
 		this.autocompleteOverlay = this.tui.showOverlay(menu, {
 			width: "55%",
@@ -683,10 +686,26 @@ export class InteractiveMode {
 				preferred: "below",
 			},
 			margin: 1,
-			preserveLastLine: true,
+			preserveLastLine: false,
 			nonCapturing: true,
 		});
 		this.refresh();
+	}
+
+	private autocompleteMaxVisible(): number {
+		const editorBounds = this.root.getEditorBounds(this.tui.columns);
+		const baseLines = this.root.render(this.tui.columns);
+		const viewportTop = Math.max(0, baseLines.length - this.tui.rows);
+		const anchorRow = editorBounds.end - 1 - viewportTop;
+		const margin = 1;
+		const viewportBottom = this.tui.rows - margin;
+		const belowStart = Math.max(margin, anchorRow + 1);
+		const belowSpace = anchorRow < viewportBottom ? Math.max(0, viewportBottom - belowStart) : 0;
+		const aboveEnd = Math.min(viewportBottom, editorBounds.start - viewportTop);
+		const aboveSpace = Math.max(0, aboveEnd - margin);
+		const availableSpace = Math.max(belowSpace, aboveSpace);
+		if (availableSpace <= 1) return 0;
+		return Math.max(1, Math.min(6, availableSpace - 3));
 	}
 
 	private closeAutocompleteOverlay(): void {

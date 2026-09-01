@@ -85,7 +85,7 @@ di-code --interactive
 npm run dev -- --interactive
 ```
 
-交互模式支持持续对话、工具状态、取消、重试、模型和设置选择。首次配置可通过 `/login` 重新打开 Provider 向导。
+交互模式支持持续对话、工具状态、取消、重试、模型和设置选择；输入 `/plan` 可启用 Plan Mode，`/plan off` 退出。首次配置可通过 `/login` 重新打开 Provider 向导。
 
 如果要在其他 Node.js 程序中嵌入 ANSI 组件，安装 `@di-code/tui`：
 
