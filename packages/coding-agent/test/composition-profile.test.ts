@@ -220,6 +220,62 @@ describe("default compositions", () => {
 });
 
 describe("plugin-manager composition command", () => {
+	it("creates a built project plugin and explains how to trust its automatic registration", async () => {
+		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-create-"));
+		const output: string[] = [];
+		const errors: string[] = [];
+		const npmCalls: Array<{ readonly args: readonly string[]; readonly cwd: string }> = [];
+		const context = createRootContext({ id: "plugin-create" });
+		try {
+			await context.plugin(bootstrap, undefined);
+			await context.plugin(commandCore, undefined);
+			await context.plugin(pluginManager, {
+				agentDir: join(root, "agent"),
+				runNpm: async (args, cwd) => {
+					npmCalls.push({ args, cwd });
+					if (cwd.includes(".broken.creating-")) throw new Error("simulated npm failure");
+					if (args[0] === "run") {
+						await mkdir(join(cwd, "dist"), { recursive: true });
+						await writeFile(join(cwd, "dist", "plugin.js"), "export default () => {};\n");
+					}
+				},
+			});
+			const registry = context.require(hostCommandRegistryKey);
+			expect(
+				await registry.execute("plugin", {
+					action: "create",
+					argument: "Hello Plugin",
+					cwd: root,
+					stdout: (text: string) => output.push(text),
+					stderr: (text: string) => errors.push(text),
+				}),
+			).toBe(0);
+			const pluginRoot = join(root, ".di-code", "plugins", "hello-plugin");
+			expect(await readFile(join(pluginRoot, "dist", "plugin.js"), "utf8")).toContain("export default");
+			expect(npmCalls.map((call) => call.args)).toEqual([
+				["install", "--ignore-scripts"],
+				["run", "build"],
+			]);
+			expect(output.join("")).toContain(`Created and built project plugin hello-plugin at ${pluginRoot}`);
+			expect(output.join("")).toContain("di-code plugin trust .");
+			expect(errors).toEqual([]);
+			expect(
+				await registry.execute("plugin", {
+					action: "create",
+					argument: "broken",
+					cwd: root,
+					stdout: (text: string) => output.push(text),
+					stderr: (text: string) => errors.push(text),
+				}),
+			).toBe(1);
+			await expect(readFile(join(root, ".di-code", "plugins", "broken", "package.json"), "utf8")).rejects.toThrow();
+			expect(errors.join("")).toContain("simulated npm failure");
+		} finally {
+			await context.dispose();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("runs install, list, get, enable, disable, update, and remove through HostCommandRegistry", async () => {
 		const root = await mkdtemp(join(tmpdir(), "di-code-plugin-command-"));
 		const source = join(root, "source");

@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/plugin-runtime",
-	"version": "0.2.2",
+	"version": "0.2.4",
 	"description": "Provider-neutral runtime contracts for di-code plugins",
 	"private": false,
 	"type": "module",

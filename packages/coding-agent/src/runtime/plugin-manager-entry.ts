@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { hostCommandRegistryKey } from "@di-code/builtins";
 import {
 	type ManagedPlugin,
@@ -39,12 +40,54 @@ export interface PluginManagerService {
 
 export interface PluginManagerEntryConfig {
 	readonly agentDir?: string;
+	/** Internal command seam used by the plugin scaffold test. */
+	readonly runNpm?: (args: readonly string[], cwd: string) => Promise<void>;
 }
 
 export const pluginManagerKey = createServiceKey<PluginManagerService>("plugin-manager");
 
 function safeMessage(cause: unknown): string {
 	return redactSensitiveText(cause instanceof Error ? cause.message : String(cause));
+}
+
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await lstat(path);
+		return true;
+	} catch (cause) {
+		if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT") return false;
+		throw cause;
+	}
+}
+
+/** Runs the controlled npm commands used to materialize a newly scaffolded local plugin. */
+async function runNpm(args: readonly string[], cwd: string): Promise<void> {
+	await new Promise<void>((resolveResult, reject) => {
+		const npmCommand = "npm";
+		const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : npmCommand;
+		// Scaffold arguments are fixed internally, so cmd.exe never receives user-controlled command text.
+		const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", `${npmCommand} ${args.join(" ")}`] : args;
+		const child = spawn(command, commandArgs, { cwd, stdio: "ignore", windowsHide: true });
+		const timeout = setTimeout(() => child.kill(), 5 * 60 * 1000);
+		child.once("error", (cause) => {
+			clearTimeout(timeout);
+			reject(cause);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timeout);
+			if (code === 0) resolveResult();
+			else reject(new Error(`${npmCommand} ${args.join(" ")} failed while creating the plugin`));
+		});
+	});
+}
+
+function pluginId(name: string): string {
+	return (
+		name
+			.toLowerCase()
+			.replace(/[^a-z0-9-]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "my-plugin"
+	);
 }
 
 function publicPlugin(plugin: ManagedPlugin): Readonly<Record<string, unknown>> {
@@ -78,6 +121,7 @@ export const pluginManager: PluginDefinition<PluginManagerEntryConfig> = {
 	apply(context, config, fiber) {
 		const agentDir = resolve(config?.agentDir ?? join(homedir(), ".di-code"));
 		const manager = new PluginInstallManager({ managedRoot: join(agentDir, "plugins", "installed") });
+		const scaffoldNpm = config?.runNpm ?? runNpm;
 		const service: PluginManagerService = {
 			list: () => manager.list(),
 			execute: async (command) => {
@@ -102,26 +146,39 @@ export const pluginManager: PluginDefinition<PluginManagerEntryConfig> = {
 						}
 						case "create": {
 							const name = command.argument ?? "my-plugin";
-							const root = resolve(command.cwd ?? process.cwd(), name);
-							const id =
-								basename(root)
-									.toLowerCase()
-									.replace(/[^a-z0-9-]+/g, "-")
-									.replace(/^-+|-+$/g, "") || "my-plugin";
-							await mkdir(join(root, "src"), { recursive: true });
-							await writeFile(
-								join(root, "package.json"),
-								`${JSON.stringify({ name: id, version: "0.1.0", type: "module", exports: { ".": "./dist/plugin.js" }, scripts: { build: "tsc" }, dependencies: { "@di-code/plugin-sdk": "^0.2.2" } }, null, 2)}\n`,
-							);
-							await writeFile(
-								join(root, "tsconfig.json"),
-								`${JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", outDir: "dist", rootDir: ".", strict: true }, include: ["plugin.ts"] }, null, 2)}\n`,
-							);
-							await writeFile(
-								join(root, "plugin.ts"),
-								`import type { ExtensionAPI } from "@di-code/plugin-sdk";\n\nexport default function setup(api: ExtensionAPI): void {\n  api.registerCommand("hello", { description: "Say hello", handler: async () => "Hello from ${id}" });\n}\n`,
-							);
-							command.stdout(`Created plugin ${id} at ${root}\n`);
+							if (name.includes("/") || name.includes("\\") || name.includes(sep))
+								throw new Error("Plugin create expects a plugin name, not a path.");
+							const workspace = resolve(command.cwd ?? process.cwd());
+							const id = pluginId(basename(name));
+							const pluginsRoot = join(workspace, ".di-code", "plugins");
+							const root = join(pluginsRoot, id);
+							if (await pathExists(root)) throw new Error(`Plugin directory already exists: ${root}`);
+							const staging = join(pluginsRoot, `.${id}.creating-${process.pid}-${Date.now()}`);
+							await mkdir(staging, { recursive: true });
+							try {
+								await writeFile(
+									join(staging, "package.json"),
+									`${JSON.stringify({ name: id, version: "0.1.0", type: "module", exports: { ".": "./dist/plugin.js" }, scripts: { build: "tsc" }, dependencies: { "@di-code/plugin-sdk": "^0.2.2" }, devDependencies: { typescript: "^5.9.3" } }, null, 2)}\n`,
+								);
+								await writeFile(
+									join(staging, "tsconfig.json"),
+									`${JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", outDir: "dist", rootDir: ".", strict: true }, include: ["plugin.ts"] }, null, 2)}\n`,
+								);
+								await writeFile(
+									join(staging, "plugin.ts"),
+									`import type { ExtensionAPI } from "@di-code/plugin-sdk";\n\nexport default function setup(api: ExtensionAPI): void {\n  api.registerCommand("hello", { description: "Say hello", handler: async () => "Hello from ${id}" });\n}\n`,
+								);
+								await scaffoldNpm(["install", "--ignore-scripts"], staging);
+								await scaffoldNpm(["run", "build"], staging);
+								await rename(staging, root);
+							} catch (cause) {
+								await rm(staging, { recursive: true, force: true });
+								throw cause;
+							}
+							const trusted = await new ProjectTrustStore(join(agentDir, "trust.json")).get(workspace);
+							command.stdout(`Created and built project plugin ${id} at ${root}\n`);
+							if (trusted) command.stdout("The trusted project will load it the next time di-code starts.\n");
+							else command.stdout("Trust this project before loading it: di-code plugin trust .\n");
 							return 0;
 						}
 						case "doctor": {
