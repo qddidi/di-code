@@ -29,7 +29,7 @@ function App(): React.JSX.Element {
 	const { setLocale } = useI18n();
 	const { data, error: bootError, loading, workspaceSessions } = useBoot();
 	const [workspaceId, setWorkspaceId] = useState<string>();
-	selectWorkspace(workspaceId);
+	useEffect(() => selectWorkspace(workspaceId), [workspaceId]);
 	const conversation = useConversation(data !== undefined, workspaceId);
 	const [pendingSession, setPendingSession] = useState<{ readonly workspaceId: string; readonly sessionId: string }>();
 	const [pendingNewWorkspace, setPendingNewWorkspace] = useState<string>();
@@ -54,29 +54,32 @@ function App(): React.JSX.Element {
 	const webActions = useMemo(() => ({ openSettings: () => setSettingsOpen(true), focusSession: (id: string) => { void conversation.openSession(id); } }), [conversation.openSession]);
 	const webHost = useMemo(() => createWebSlotHost(webManifest, webActions), [webManifest, webActions]);
 	const refreshSettings = useCallback(async (): Promise<SettingsSnapshot> => {
-		const value = await loadSettings();
+		const value = await loadSettings(workspaceId);
 		setSettings(value);
 		setLocale(value.locale === "zh-CN" ? "zh-CN" : "en");
 		setOnboarding(value.providers.every((provider) => !provider.configured));
 		return value;
-	}, []);
+	}, [workspaceId, setLocale]);
 	const updateSettings = useCallback(async (method: string, params: Record<string, unknown>): Promise<void> => {
 		const sessionScoped = method === "set_model" || method === "set_runtime" || method === "set_thinking_level" || method === "set_compaction_enabled";
 		if (sessionScoped && !conversation.activeSessionId) throw new Error("Select a session before changing its runtime.");
-		await callRpc(method, sessionScoped ? { sessionId: conversation.activeSessionId, ...params } : params);
+		await callRpc(method, sessionScoped ? { sessionId: conversation.activeSessionId, ...params } : params, crypto.randomUUID(), workspaceId);
 		await refreshSettings();
-	}, [refreshSettings, conversation.activeSessionId]);
+	}, [refreshSettings, conversation.activeSessionId, workspaceId]);
 	useEffect(() => () => { webAbort.abort(); webHost.dispose(); }, [webAbort, webHost]);
 	useEffect(() => {
 		if (!data) return;
-		const refreshWebContributions = (): void => { void loadWebContributions().then(setWebManifest).catch(() => undefined); };
+		setWorkspaceId((current) => current ?? data.workspaceId);
+	}, [data]);
+	useEffect(() => {
+		if (!data || !workspaceId) return;
+		const refreshWebContributions = (): void => { void loadWebContributions(workspaceId).then(setWebManifest).catch(() => undefined); };
 		refreshWebContributions();
 		window.addEventListener("di-code-web-contributions-changed", refreshWebContributions);
 		return () => window.removeEventListener("di-code-web-contributions-changed", refreshWebContributions);
-	}, [data]);
+	}, [data, workspaceId]);
 	useEffect(() => {
-		if (!data) return;
-		setWorkspaceId((current) => current ?? data.workspaceId);
+		if (!data || !workspaceId) return;
 		let active = true;
 		const load = async (attempt: number): Promise<void> => {
 			try {
@@ -89,7 +92,7 @@ function App(): React.JSX.Element {
 		return () => {
 			active = false;
 		};
-	}, [data, refreshSettings]);
+	}, [data, refreshSettings, workspaceId]);
 	useEffect(() => {
 		if (!pendingSession || pendingSession.workspaceId !== workspaceId) return;
 		setPendingSession(undefined);

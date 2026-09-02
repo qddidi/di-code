@@ -5,8 +5,15 @@ export interface BootData {
 		readonly events: readonly string[];
 		readonly eventBufferSize?: number;
 	};
-	readonly state: { readonly modelId: string; readonly messageCount: number };
+	readonly state: {
+		readonly sessionId: string;
+		readonly modelId: string;
+		readonly isStreaming: boolean;
+		readonly messageCount: number;
+		readonly sequence?: number;
+	};
 	readonly runtime: { readonly providerId: string; readonly modelId: string };
+	readonly sessions: readonly SessionSummary[];
 	readonly workspaceId: string;
 	readonly workspaces: readonly WorkspaceSummary[];
 }
@@ -109,6 +116,23 @@ export interface UsageSnapshot {
 export interface SessionsResult {
 	readonly method: "list_sessions";
 	readonly sessions: readonly SessionSummary[];
+}
+
+export interface SessionSnapshot {
+	readonly state: BootData["state"];
+	readonly sessions: readonly SessionSummary[];
+	readonly transcript: readonly unknown[];
+	readonly entryIds: readonly unknown[];
+	readonly nextPageToken?: string;
+	readonly tree: readonly SessionTreeNode[];
+	readonly usage: UsageSnapshot;
+	readonly contextFiles: readonly ContextFile[];
+	readonly commands: readonly CommandSummary[];
+}
+
+export interface ProjectResourceSummary {
+	readonly projectTrusted: boolean;
+	readonly hasProjectResources: boolean;
 }
 
 export interface SettingsSnapshot {

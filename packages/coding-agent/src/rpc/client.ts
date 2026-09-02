@@ -183,6 +183,10 @@ export class RpcClient {
 		return result.operation as OperationState;
 	}
 
+	async getSessionSnapshot(): Promise<RpcSuccessResult> {
+		return this.send("get_session_snapshot", {});
+	}
+
 	async listSessions(): Promise<readonly RpcSessionInfo[]> {
 		const result = await this.send("list_sessions", {});
 		return result.sessions as readonly RpcSessionInfo[];

@@ -17,6 +17,7 @@ export const RPC_METHODS = [
 	"prompt",
 	"cancel",
 	"get_state",
+	"get_session_snapshot",
 	"get_capabilities",
 	"resume_events",
 	"list_sessions",
@@ -44,6 +45,7 @@ export const RPC_METHODS = [
 	"get_resources",
 	"get_product_state",
 	"list_providers",
+	"get_project_resource_summary",
 	"get_settings",
 	"set_default_provider",
 	"set_default_model",
@@ -649,7 +651,22 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 				throw new RpcProtocolError("INVALID_REQUEST", "RPC cancel result is invalid.");
 			return;
 		case "get_state":
+		case "get_session_snapshot":
 			assertState(result.state);
+			if (result.method === "get_session_snapshot") {
+				if (!Array.isArray(result.sessions) || !Array.isArray(result.transcript) || !Array.isArray(result.entryIds))
+					throw new RpcProtocolError("INVALID_REQUEST", "RPC session snapshot is invalid.");
+				for (const session of result.sessions) assertSessionInfo(session);
+				if (result.nextPageToken !== undefined && typeof result.nextPageToken !== "string")
+					throw new RpcProtocolError("INVALID_REQUEST", "RPC session snapshot page token is invalid.");
+				if (
+					!Array.isArray(result.tree) ||
+					!objectRecord(result.usage) ||
+					!Array.isArray(result.contextFiles) ||
+					!Array.isArray(result.commands)
+				)
+					throw new RpcProtocolError("INVALID_REQUEST", "RPC session snapshot data is invalid.");
+			}
 			return;
 		case "get_capabilities":
 			assertCapabilities(result);
@@ -670,6 +687,10 @@ function assertSuccessResult(result: Record<string, unknown>): void {
 		case "get_project_trust":
 			if (typeof result.trusted !== "boolean")
 				throw new RpcProtocolError("INVALID_REQUEST", "RPC get_project_trust result is invalid.");
+			return;
+		case "get_project_resource_summary":
+			if (typeof result.projectTrusted !== "boolean" || typeof result.hasProjectResources !== "boolean")
+				throw new RpcProtocolError("INVALID_REQUEST", "RPC project resource summary is invalid.");
 			return;
 		case "list_sessions":
 			if (!Array.isArray(result.sessions))

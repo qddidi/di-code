@@ -3,7 +3,9 @@ import type {
 	BootData,
 	McpServerSummary,
 	PluginSummary,
+	ProjectResourceSummary,
 	RpcEnvelope,
+	SessionSnapshot,
 	SessionSummary,
 	SessionsResult,
 	SettingsSnapshot,
@@ -14,6 +16,30 @@ import type {
 
 const CLIENT_ID_KEY = "di-code-web-client-id";
 let workspaceId: string | undefined;
+const inFlightReads = new Map<string, Promise<unknown>>();
+const READ_ONLY_RPC_METHODS = new Set([
+	"get_state",
+	"get_session_snapshot",
+	"get_capabilities",
+	"list_sessions",
+	"get_transcript",
+	"get_tree",
+	"get_models",
+	"get_runtime",
+	"get_usage",
+	"list_skills",
+	"get_resources",
+	"get_product_state",
+	"get_project_trust",
+	"get_project_resource_summary",
+	"list_providers",
+	"get_settings",
+	"list_plugins",
+	"list_web_contributions",
+	"list_commands",
+	"list_context_files",
+	"list_mcp_servers",
+]);
 
 /** Selects the opaque workspace handle used for all subsequent WebUI requests. */
 export function selectWorkspace(id: string | undefined): void {
@@ -59,10 +85,38 @@ export async function loadBootData(): Promise<BootData> {
 export async function callRpc<T>(
 	method: string,
 	params: Record<string, unknown> = {},
-	requestId = crypto.randomUUID(),
+	requestId: string = crypto.randomUUID(),
+	selectedWorkspaceId = workspaceId,
+): Promise<T> {
+	const readKey = READ_ONLY_RPC_METHODS.has(method)
+		? `${selectedWorkspaceId ?? ""}:${method}:${JSON.stringify(params)}`
+		: undefined;
+	if (readKey) {
+		const existing = inFlightReads.get(readKey);
+		if (existing) return (await existing) as T;
+		const pending = callRpcAttempt<T>(method, params, requestId, selectedWorkspaceId);
+		inFlightReads.set(readKey, pending);
+		void pending.then(
+			() => {
+				if (inFlightReads.get(readKey) === pending) inFlightReads.delete(readKey);
+			},
+			() => {
+				if (inFlightReads.get(readKey) === pending) inFlightReads.delete(readKey);
+			},
+		);
+		return await pending;
+	}
+	return await callRpcAttempt<T>(method, params, requestId, selectedWorkspaceId);
+}
+
+async function callRpcAttempt<T>(
+	method: string,
+	params: Record<string, unknown>,
+	requestId: string,
+	selectedWorkspaceId: string | undefined,
 ): Promise<T> {
 	for (let attempt = 0; attempt < 4; attempt += 1) {
-		const response = await fetch(apiPath("/api/rpc"), {
+		const response = await fetch(apiPath("/api/rpc", selectedWorkspaceId), {
 			method: "POST",
 			credentials: "same-origin",
 			headers: clientHeaders({ "content-type": "application/json" }),
@@ -87,7 +141,11 @@ export async function callRpc<T>(
 				await retryDelay(response, attempt);
 				continue;
 			}
-			throw new Error(envelope.error?.message ?? `RPC request failed (${response.status}).`);
+			const bodyError =
+				typeof (envelope as { readonly error?: unknown }).error === "string"
+					? (envelope as unknown as { readonly error: string }).error
+					: undefined;
+			throw new Error(envelope.error?.message ?? bodyError ?? `RPC request failed (${response.status}).`);
 		}
 		if (!envelope.ok || envelope.result === undefined)
 			throw new Error(envelope.error?.message ?? "RPC request failed.");
@@ -102,13 +160,16 @@ async function retryDelay(response: Response, attempt: number): Promise<void> {
 	await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
 }
 
-export async function uploadAttachment(input: {
-	readonly sessionId: string;
-	readonly name: string;
-	readonly contentType: AttachmentInfo["contentType"];
-	readonly data: string;
-}): Promise<AttachmentInfo> {
-	const response = await fetch(apiPath("/api/attachments"), {
+export async function uploadAttachment(
+	input: {
+		readonly sessionId: string;
+		readonly name: string;
+		readonly contentType: AttachmentInfo["contentType"];
+		readonly data: string;
+	},
+	selectedWorkspaceId = workspaceId,
+): Promise<AttachmentInfo> {
+	const response = await fetch(apiPath("/api/attachments", selectedWorkspaceId), {
 		method: "POST",
 		credentials: "same-origin",
 		headers: clientHeaders({ "content-type": "application/json" }),
@@ -129,33 +190,21 @@ export function eventHeaders(lastSequence: number, resumeToken?: string): Header
 	return headers;
 }
 
-export function eventsPath(): string {
-	return apiPath("/api/events");
+export function eventsPath(selectedWorkspaceId = workspaceId): string {
+	return apiPath("/api/events", selectedWorkspaceId);
 }
 
-export async function loadSessions(): Promise<SessionsResult> {
-	return callRpc<SessionsResult>("list_sessions");
+export async function loadSessions(selectedWorkspaceId = workspaceId): Promise<SessionsResult> {
+	return callRpc<SessionsResult>("list_sessions", {}, crypto.randomUUID(), selectedWorkspaceId);
+}
+
+export async function loadSessionSnapshot(selectedWorkspaceId = workspaceId): Promise<SessionSnapshot> {
+	return callRpc<SessionSnapshot>("get_session_snapshot", {}, crypto.randomUUID(), selectedWorkspaceId);
 }
 
 /** Reads a workspace's sessions without changing the active workspace actor. */
 export async function loadSessionsForWorkspace(selectedWorkspaceId: string): Promise<SessionsResult> {
-	const response = await fetch(apiPath("/api/rpc", selectedWorkspaceId), {
-		method: "POST",
-		credentials: "same-origin",
-		headers: clientHeaders({ "content-type": "application/json" }),
-		body: JSON.stringify({
-			version: 1,
-			kind: "request",
-			id: crypto.randomUUID(),
-			method: "list_sessions",
-			params: {},
-		}),
-	});
-	rememberClient(response);
-	if (!response.ok) throw new Error(`RPC request failed (${response.status}).`);
-	const envelope = (await response.json()) as RpcEnvelope<SessionsResult>;
-	if (!envelope.ok || envelope.result === undefined) throw new Error(envelope.error?.message ?? "RPC request failed.");
-	return envelope.result;
+	return await callRpc<SessionsResult>("list_sessions", {}, crypto.randomUUID(), selectedWorkspaceId);
 }
 
 export async function addWorkspace(path?: string): Promise<WorkspaceSummary | undefined> {
@@ -201,45 +250,86 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
 	if (!response.ok) throw new Error("Unable to delete workspace.");
 }
 
-export async function loadSettings(): Promise<SettingsSnapshot> {
+export async function loadSettings(selectedWorkspaceId = workspaceId): Promise<SettingsSnapshot> {
 	const result = await callRpc<{ readonly method: "get_settings"; readonly settings: SettingsSnapshot }>(
 		"get_settings",
+		{},
+		crypto.randomUUID(),
+		selectedWorkspaceId,
 	);
 	return result.settings;
 }
 
-export async function renameSession(sessionId: string, label: string): Promise<void> {
-	await callRpc("rename_session", { sessionId, label });
+export async function renameSession(
+	sessionId: string,
+	label: string,
+	selectedWorkspaceId = workspaceId,
+): Promise<void> {
+	await callRpc("rename_session", { sessionId, label }, crypto.randomUUID(), selectedWorkspaceId);
 }
-export async function deleteSession(sessionId: string): Promise<void> {
-	await callRpc("delete_session", { sessionId, confirmation: sessionId });
+export async function deleteSession(sessionId: string, selectedWorkspaceId = workspaceId): Promise<void> {
+	await callRpc("delete_session", { sessionId, confirmation: sessionId }, crypto.randomUUID(), selectedWorkspaceId);
 }
-export async function branchSession(sessionId: string, entryId?: string): Promise<SessionSummary> {
-	const result = await callRpc<{ readonly session: SessionSummary }>("branch_session", {
-		sessionId,
-		...(entryId ? { entryId } : {}),
-	});
+export async function branchSession(
+	sessionId: string,
+	entryId?: string,
+	selectedWorkspaceId = workspaceId,
+): Promise<SessionSummary> {
+	const result = await callRpc<{ readonly session: SessionSummary }>(
+		"branch_session",
+		{
+			sessionId,
+			...(entryId ? { entryId } : {}),
+		},
+		crypto.randomUUID(),
+		selectedWorkspaceId,
+	);
 	return result.session;
 }
-export async function inspectSession(sessionId: string): Promise<unknown> {
-	const result = await callRpc<{ readonly snapshot: unknown }>("inspect_session", { sessionId });
+export async function inspectSession(sessionId: string, selectedWorkspaceId = workspaceId): Promise<unknown> {
+	const result = await callRpc<{ readonly snapshot: unknown }>(
+		"inspect_session",
+		{ sessionId },
+		crypto.randomUUID(),
+		selectedWorkspaceId,
+	);
 	return result.snapshot;
 }
 
-export async function loadSkills(): Promise<readonly SkillSummary[]> {
-	const result = await callRpc<{ readonly skills: readonly SkillSummary[] }>("list_skills");
+export async function loadSkills(selectedWorkspaceId = workspaceId): Promise<readonly SkillSummary[]> {
+	const result = await callRpc<{ readonly skills: readonly SkillSummary[] }>(
+		"list_skills",
+		{},
+		crypto.randomUUID(),
+		selectedWorkspaceId,
+	);
 	return result.skills;
 }
-export async function loadMcpServers(): Promise<readonly McpServerSummary[]> {
-	const result = await callRpc<{ readonly servers: readonly McpServerSummary[] }>("list_mcp_servers");
+export async function loadMcpServers(selectedWorkspaceId = workspaceId): Promise<readonly McpServerSummary[]> {
+	const result = await callRpc<{ readonly servers: readonly McpServerSummary[] }>(
+		"list_mcp_servers",
+		{},
+		crypto.randomUUID(),
+		selectedWorkspaceId,
+	);
 	return result.servers;
 }
-export async function loadPlugins(): Promise<readonly PluginSummary[]> {
-	const result = await callRpc<{ readonly plugins: readonly PluginSummary[] }>("list_plugins");
+export async function loadPlugins(selectedWorkspaceId = workspaceId): Promise<readonly PluginSummary[]> {
+	const result = await callRpc<{ readonly plugins: readonly PluginSummary[] }>(
+		"list_plugins",
+		{},
+		crypto.randomUUID(),
+		selectedWorkspaceId,
+	);
 	return result.plugins;
 }
-export async function loadWebContributions(): Promise<WebManifest> {
-	const result = await callRpc<{ readonly manifest: WebManifest }>("list_web_contributions");
+export async function loadWebContributions(selectedWorkspaceId = workspaceId): Promise<WebManifest> {
+	const result = await callRpc<{ readonly manifest: WebManifest }>(
+		"list_web_contributions",
+		{},
+		crypto.randomUUID(),
+		selectedWorkspaceId,
+	);
 	return result.manifest;
 }
 
@@ -269,18 +359,5 @@ export async function loadProjectResourceSummary(): Promise<{
 	readonly hasProjectResources: boolean;
 	readonly projectTrusted: boolean;
 }> {
-	const [trust, plugins, skills, mcp] = await Promise.all([
-		callRpc<{ readonly trusted: boolean }>("get_project_trust"),
-		loadPlugins(),
-		callRpc<{ readonly skills: readonly SkillSummary[]; readonly projectResourcesDetected?: boolean }>("list_skills"),
-		loadMcpServers(),
-	]);
-	return {
-		projectTrusted: trust.trusted,
-		hasProjectResources:
-			plugins.some((plugin) => plugin.source === "project") ||
-			Boolean(skills.projectResourcesDetected) ||
-			skills.skills.some((skill) => skill.scope === "project") ||
-			mcp.some((server) => server.scope === "project"),
-	};
+	return await callRpc<ProjectResourceSummary>("get_project_resource_summary");
 }

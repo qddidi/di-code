@@ -168,6 +168,94 @@ describe("WebUiServer", () => {
 		expect(JSON.parse(openedPayload)).toMatchObject({ ok: true, result: { method: "open_session" } });
 	});
 
+	it("coalesces concurrent first requests for one workspace actor", async () => {
+		const { baseUrl, token } = await createServer();
+		const clientId = "concurrent-actor-client";
+		const [boot, sessions] = await Promise.all([
+			fetch(`${baseUrl}/api/boot`, { headers: headers(token, clientId) }),
+			fetch(`${baseUrl}/rpc`, {
+				method: "POST",
+				headers: headers(token, clientId),
+				body: JSON.stringify({
+					version: 1,
+					kind: "request",
+					id: "concurrent-list",
+					method: "list_sessions",
+					params: {},
+				}),
+			}),
+		]);
+		expect(boot.status).toBe(200);
+		expect(sessions.status).toBe(200);
+		expect(await sessions.json()).toMatchObject({ ok: true, result: { method: "list_sessions" } });
+	});
+
+	it("returns the session UI data in one snapshot RPC", async () => {
+		const { baseUrl, token } = await createServer();
+		const clientId = "snapshot-http-client";
+		const request = (id: string, method: string, params: Record<string, unknown> = {}) =>
+			fetch(`${baseUrl}/rpc`, {
+				method: "POST",
+				headers: headers(token, clientId),
+				body: JSON.stringify({ version: 1, kind: "request", id, method, params }),
+			});
+
+		const initial = await request("snapshot-initial", "get_session_snapshot");
+		expect(initial.status).toBe(200);
+		const initialPayload = (await initial.json()) as {
+			readonly ok: boolean;
+			readonly result: {
+				readonly method: string;
+				readonly state: { readonly sessionId: string; readonly messageCount: number };
+				readonly sessions: readonly unknown[];
+				readonly transcript: readonly unknown[];
+				readonly entryIds: readonly unknown[];
+				readonly tree: readonly unknown[];
+				readonly usage: Record<string, unknown>;
+				readonly contextFiles: readonly unknown[];
+				readonly commands: readonly unknown[];
+			};
+		};
+		expect(initialPayload).toMatchObject({
+			ok: true,
+			result: {
+				method: "get_session_snapshot",
+				state: { sessionId: expect.any(String), messageCount: 0 },
+				sessions: expect.any(Array),
+				transcript: [],
+				entryIds: [],
+				tree: expect.any(Array),
+				usage: expect.any(Object),
+				contextFiles: expect.any(Array),
+				commands: expect.any(Array),
+			},
+		});
+
+		const prompted = await request("snapshot-prompt", "prompt", { message: "hello" });
+		expect(prompted.status).toBe(200);
+		const afterPrompt = await request("snapshot-after-prompt", "get_session_snapshot");
+		const afterPayload = (await afterPrompt.json()) as {
+			readonly ok: boolean;
+			readonly result: {
+				readonly method: string;
+				readonly state: { readonly messageCount: number };
+				readonly sessions: readonly unknown[];
+				readonly transcript: readonly unknown[];
+				readonly entryIds: readonly unknown[];
+			};
+		};
+		expect(afterPayload).toMatchObject({
+			ok: true,
+			result: {
+				method: "get_session_snapshot",
+				state: { messageCount: expect.any(Number) },
+				sessions: expect.arrayContaining([expect.anything()]),
+				transcript: expect.arrayContaining([expect.objectContaining({ role: "user" })]),
+				entryIds: expect.arrayContaining([expect.any(String)]),
+			},
+		});
+	});
+
 	it("projects built-in and custom commands through the HTTP RPC transport", async () => {
 		const { baseUrl, context, token } = await createServer();
 		let customArgs: string | undefined;
@@ -297,8 +385,13 @@ describe("WebUiServer", () => {
 		const bootData = (await boot.json()) as {
 			readonly workspaceId: string;
 			readonly workspaces: readonly { readonly id: string }[];
+			readonly sessions: readonly { readonly id: string }[];
 		};
-		expect(bootData).toMatchObject({ workspaceId: expect.any(String), workspaces: [{ id: expect.any(String) }] });
+		expect(bootData).toMatchObject({
+			workspaceId: expect.any(String),
+			workspaces: [{ id: expect.any(String) }],
+			sessions: expect.any(Array),
+		});
 		expect(bootData.workspaces[0]?.id).toBe(bootData.workspaceId);
 		await expect(fetch(`${baseUrl}/api/rpc`, { method: "POST", body: "{}" })).resolves.toMatchObject({ status: 401 });
 		const developmentSession = await fetch(`${baseUrl}/api/session`, { headers: { origin: developmentOrigin } });
@@ -312,6 +405,26 @@ describe("WebUiServer", () => {
 			body: JSON.stringify({ version: 1, kind: "request", id: "legacy", method: "get_state", params: {} }),
 		});
 		expect(legacy.status).toBe(200);
+		const resourceSummary = await fetch(`${baseUrl}/rpc`, {
+			method: "POST",
+			headers: headers(token),
+			body: JSON.stringify({
+				version: 1,
+				kind: "request",
+				id: "resource-summary",
+				method: "get_project_resource_summary",
+				params: {},
+			}),
+		});
+		expect(resourceSummary.status).toBe(200);
+		expect(await resourceSummary.json()).toMatchObject({
+			ok: true,
+			result: {
+				method: "get_project_resource_summary",
+				projectTrusted: expect.any(Boolean),
+				hasProjectResources: expect.any(Boolean),
+			},
+		});
 	});
 
 	it("routes HTTP RPC through isolated SessionHost actors without exposing local paths", async () => {

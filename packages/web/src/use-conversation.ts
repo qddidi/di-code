@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	branchSession,
-	callRpc,
 	deleteSession,
 	eventHeaders,
 	eventsPath,
 	inspectSession,
-	loadSessions,
+	loadSessionSnapshot,
+	callRpc as rawCallRpc,
 	rememberClient,
 	renameSession,
 	respondInteraction as sendInteractionResponse,
@@ -21,6 +21,7 @@ import type {
 	ConversationImage,
 	ConversationMessage,
 	OperationState,
+	SessionSnapshot,
 	SessionSummary,
 	SessionTreeNode,
 	ToolApproval,
@@ -310,24 +311,37 @@ async function dataUrlFor(file: File): Promise<string> {
 	});
 }
 
-async function readAllPages(sessionId: string): Promise<{ messages: ConversationMessage[]; tools: ToolTrace[] }> {
-	const transcript: unknown[] = [];
-	const entryIds: unknown[] = [];
-	let pageToken: string | undefined;
+async function readAllPages(
+	sessionId: string,
+	workspaceId: string | undefined,
+	initial?: Pick<SessionSnapshot, "transcript" | "entryIds" | "nextPageToken">,
+): Promise<{ messages: ConversationMessage[]; tools: ToolTrace[] }> {
+	const transcript: unknown[] = [...(initial?.transcript ?? [])];
+	const entryIds: unknown[] = [...(initial?.entryIds ?? [])];
+	let pageToken: string | undefined = initial?.nextPageToken;
+	if (!initial) pageToken = undefined;
+	let firstPage = initial === undefined;
 	do {
-		const result = await callRpc<{
+		if (!firstPage && pageToken === undefined) break;
+		const result = await rawCallRpc<{
 			readonly transcript: unknown[];
 			readonly entryIds?: readonly unknown[];
 			readonly nextPageToken?: string;
-		}>("get_transcript", {
-			sessionId,
-			pageSize: 200,
-			maxBytes: 8 * 1024 * 1024,
-			...(pageToken ? { pageToken } : {}),
-		});
+		}>(
+			"get_transcript",
+			{
+				sessionId,
+				pageSize: 200,
+				maxBytes: 8 * 1024 * 1024,
+				...(pageToken ? { pageToken } : {}),
+			},
+			crypto.randomUUID(),
+			workspaceId,
+		);
 		transcript.push(...result.transcript);
 		entryIds.push(...(result.entryIds ?? []));
 		pageToken = result.nextPageToken;
+		firstPage = false;
 	} while (pageToken);
 	return messagesFromTranscript(transcript, entryIds);
 }
@@ -364,6 +378,12 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const workspaceRef = useRef(workspaceId);
 	const activeSessionRef = useRef<string | undefined>(undefined);
 	const sessionGeneration = useRef(0);
+	const openingSessionKey = useRef<string | undefined>(undefined);
+	const callRpc = useCallback(
+		<T>(method: string, params: Record<string, unknown> = {}, requestId?: string): Promise<T> =>
+			rawCallRpc<T>(method, params, requestId ?? crypto.randomUUID(), workspaceId),
+		[workspaceId],
+	);
 	const refreshState = useRef<
 		| {
 				workspaceId: string | undefined;
@@ -387,6 +407,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		}
 		setSessions([]);
 		pendingSessions.current = [];
+		openingSessionKey.current = undefined;
 		pendingDeletedSessions.current = new Set();
 		setActiveSessionId(undefined);
 		setRunningSessionIds(new Set());
@@ -416,26 +437,12 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		const requestedWorkspace = workspaceId;
 		const requestedGeneration = sessionGeneration.current;
 		if (workspaceRef.current !== requestedWorkspace) return;
-		// The first request establishes the actor identity before the parallel snapshot reads begin.
-		const stateResult = await callRpc<{ readonly state: { readonly sessionId: string; readonly sequence?: number } }>(
-			"get_state",
-		);
-		const sessionId = stateResult.state.sessionId;
+		const snapshot = await loadSessionSnapshot(requestedWorkspace);
+		const sessionId = snapshot.state.sessionId;
 		if (!sessionId || sessionId === "uninitialized") throw new Error("No session is available.");
-		const [sessionResult, transcript, usageResult, contextResult, commandResult, treeResult] = await Promise.all([
-			loadSessions(),
-			readAllPages(sessionId),
-			callRpc<{ readonly usage: UsageSnapshot }>("get_usage", { sessionId }),
-			callRpc<{ readonly files: readonly ContextFile[] }>("list_context_files", { sessionId }).catch(() => ({
-				files: [],
-			})),
-			callRpc<{ readonly commands: readonly CommandSummary[] }>("list_commands", { sessionId }).catch(() => ({
-				commands: [],
-			})),
-			callRpc<{ readonly tree: readonly SessionTreeNode[] }>("get_tree", { sessionId }).catch(() => ({ tree: [] })),
-		]);
+		const transcript = await readAllPages(sessionId, requestedWorkspace, snapshot);
 		if (workspaceRef.current !== requestedWorkspace || sessionGeneration.current !== requestedGeneration) return;
-		const visibleServerSessions = sessionResult.sessions.filter(
+		const visibleServerSessions = snapshot.sessions.filter(
 			(session) => !pendingDeletedSessions.current.has(session.id),
 		);
 		const serverSessionIds = new Set(visibleServerSessions.map((session) => session.id));
@@ -443,17 +450,17 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		pendingSessions.current = pending;
 		setSessions([...pending, ...visibleServerSessions]);
 		setActiveSessionId(
-			stateResult.state.sessionId === "uninitialized" || pendingDeletedSessions.current.has(stateResult.state.sessionId)
+			snapshot.state.sessionId === "uninitialized" || pendingDeletedSessions.current.has(snapshot.state.sessionId)
 				? undefined
-				: stateResult.state.sessionId,
+				: snapshot.state.sessionId,
 		);
-		sequence.current = Math.max(sequence.current, stateResult.state.sequence ?? 0);
 		setMessages(transcript.messages);
 		setTools(transcript.tools);
-		setContextFiles(contextResult.files);
-		setCommands(commandResult.commands);
-		setTree(treeResult.tree);
-		setUsage(usageResult.usage);
+		sequence.current = Math.max(sequence.current, snapshot.state.sequence ?? 0);
+		setUsage(snapshot.usage);
+		setContextFiles(snapshot.contextFiles);
+		setCommands(snapshot.commands);
+		setTree(snapshot.tree);
 	}, [workspaceId]);
 
 	// Snapshot reads are relatively expensive. Coalesce concurrent callers and allow
@@ -527,16 +534,19 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					}
 				}
 			}
+			// These events describe actor-wide state. A session_changed event carries
+			// the newly selected session id, so it must be handled before filtering
+			// events against the currently rendered session.
+			if (type === "snapshot_required" || type === "session_changed") {
+				scheduleRefresh();
+				return;
+			}
 			// Render stream payloads only for the selected session; background runs remain server-owned
 			// and are picked up through the next session snapshot.
 			if (record.sessionId !== undefined && record.sessionId !== activeSessionRef.current) return;
 			if (record.sequence !== undefined) {
 				if (record.sequence <= sequence.current) return;
 				sequence.current = record.sequence;
-			}
-			if (type === "snapshot_required" || type === "session_changed") {
-				scheduleRefresh();
-				return;
 			}
 			if (type === "operation_update") {
 				const next = asRecord(record.event.operation);
@@ -771,14 +781,17 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		if (!ready || !workspaceId) return;
 		let stopped = false;
 		const connectionController = new AbortController();
-		void refresh().catch((cause: unknown) =>
-			setError(cause instanceof Error ? cause.message : "Unable to load conversation."),
-		);
+		const startTimer = window.setTimeout(() => {
+			void refresh().catch((cause: unknown) =>
+				setError(cause instanceof Error ? cause.message : "Unable to load conversation."),
+			);
+			void connect();
+		}, 100);
 		const connect = async (): Promise<void> => {
 			let reconnectDelay = 800;
 			while (!stopped && !connectionController.signal.aborted) {
 				try {
-					const response = await fetch(eventsPath(), {
+					const response = await fetch(eventsPath(workspaceId), {
 						credentials: "same-origin",
 						headers: eventHeaders(sequence.current, resumeToken.current),
 						signal: connectionController.signal,
@@ -820,9 +833,9 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				reconnectDelay = Math.min(5_000, reconnectDelay * 2);
 			}
 		};
-		void connect();
 		return () => {
 			stopped = true;
+			window.clearTimeout(startTimer);
 			connectionController.abort();
 			if (refreshTimer.current !== undefined) {
 				window.clearTimeout(refreshTimer.current);
@@ -833,6 +846,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 
 	const send = useCallback(
 		async (text: string) => {
+			const requestedWorkspace = workspaceId;
 			if (!activeSessionId || sessionChanging) {
 				setError("Wait for the session to finish opening before sending a message.");
 				return;
@@ -885,16 +899,18 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					});
 				} else setOperation(undefined);
 			} catch (cause) {
+				if (workspaceRef.current !== requestedWorkspace) return;
 				setError(cause instanceof Error ? cause.message : "Unable to send message.");
 			} finally {
 				for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
 				setAttachments([]);
 			}
 		},
-		[attachments, refresh, activeSessionId, sessionChanging, setError],
+		[attachments, refresh, activeSessionId, sessionChanging, setError, callRpc, workspaceId],
 	);
 	const steer = useCallback(
 		async (text: string) => {
+			const requestedWorkspace = workspaceId;
 			if (!activeSessionId || !operation?.runId || sessionChanging) return;
 			try {
 				await callRpc("steer", {
@@ -904,15 +920,17 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
 				});
 			} catch (cause) {
+				if (workspaceRef.current !== requestedWorkspace) return;
 				setError(cause instanceof Error ? cause.message : "Unable to steer the active response.");
 			} finally {
 				for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
 				setAttachments([]);
 			}
 		},
-		[attachments, activeSessionId, operation?.runId, sessionChanging, setError],
+		[attachments, activeSessionId, operation?.runId, sessionChanging, setError, callRpc, workspaceId],
 	);
 	const cancel = useCallback(async () => {
+		const requestedWorkspace = workspaceId;
 		if ((operation?.status === "running" || operation?.status === "queued") && operation.runId) {
 			try {
 				await callRpc<{ readonly cancelled: boolean }>("cancel", {
@@ -921,11 +939,13 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					requestId: operation.requestId,
 				});
 			} catch (cause) {
+				if (workspaceRef.current !== requestedWorkspace) return;
 				setError(cause instanceof Error ? cause.message : "Unable to cancel the active response.");
 			}
 		}
-	}, [operation, activeSessionId, setError]);
+	}, [operation, activeSessionId, setError, callRpc, workspaceId]);
 	const compact = useCallback(async () => {
+		const requestedWorkspace = workspaceId;
 		if (!activeSessionId || sessionChanging) return;
 		const requestId = crypto.randomUUID();
 		setError(undefined);
@@ -937,15 +957,17 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			await refresh();
 			setOperation(undefined);
 		} catch (cause) {
+			if (workspaceRef.current !== requestedWorkspace) return;
 			const message =
 				lastCompactionError.current ??
 				(cause instanceof Error ? cause.message : "Unable to compact the session context.");
 			setCompaction({ state: "error", reason: "manual", error: message });
 			setOperation({ requestId, kind: "compact", status: "failed", error: { code: "INTERNAL_ERROR", message } });
 		}
-	}, [refresh, activeSessionId, sessionChanging, setError]);
+	}, [refresh, activeSessionId, sessionChanging, setError, callRpc, workspaceId]);
 	const runCommand = useCallback(
 		async (name: string, args: string): Promise<CommandAction | undefined> => {
+			const requestedWorkspace = workspaceId;
 			if (!activeSessionId || sessionChanging) return undefined;
 			try {
 				const result = await callRpc<{ readonly action?: CommandAction }>("run_command", {
@@ -955,11 +977,12 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				});
 				return result.action;
 			} catch (cause) {
+				if (workspaceRef.current !== requestedWorkspace) return undefined;
 				setError(cause instanceof Error ? cause.message : "Unable to run the command.");
 				return undefined;
 			}
 		},
-		[activeSessionId, sessionChanging, setError],
+		[activeSessionId, sessionChanging, setError, callRpc, workspaceId],
 	);
 	const navigateTree = useCallback(
 		async (entryId: string): Promise<TreeNavigation | undefined> => {
@@ -976,7 +999,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				return undefined;
 			}
 		},
-		[refresh, activeSessionId, sessionChanging, setError],
+		[refresh, activeSessionId, sessionChanging, setError, callRpc],
 	);
 	const clearVisibleMessages = useCallback(() => {
 		setMessages([]);
@@ -991,7 +1014,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				setError(cause instanceof Error ? cause.message : "Unable to retry the response.");
 			}
 		}
-	}, [operation, refresh, activeSessionId, sessionChanging, setError]);
+	}, [operation, refresh, activeSessionId, sessionChanging, setError, callRpc]);
 	const approveTool = useCallback(
 		async (approvalId: string, approved: boolean) => {
 			if (!activeSessionId || !operation?.runId || sessionChanging) return;
@@ -1017,7 +1040,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				setError(cause instanceof Error ? cause.message : "Unable to submit tool approval.");
 			}
 		},
-		[activeSessionId, approvals, operation, sessionChanging, setError],
+		[activeSessionId, approvals, operation, sessionChanging, setError, callRpc],
 	);
 	const respondInteraction = useCallback(
 		async (
@@ -1080,10 +1103,13 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			setSessionChanging(false);
 			setError(cause instanceof Error ? cause.message : "Unable to create a new session.");
 		}
-	}, [refresh, setError]);
+	}, [refresh, setError, callRpc]);
 	const openSession = useCallback(
 		async (id: string) => {
 			if (!id || id.startsWith("pending-")) return;
+			const key = `${workspaceId ?? ""}:${id}`;
+			if (openingSessionKey.current === key) return;
+			openingSessionKey.current = key;
 			const generation = ++sessionGeneration.current;
 			setSessionChanging(true);
 			setActiveSessionId(undefined);
@@ -1097,25 +1123,29 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				if (sessionGeneration.current !== generation) return;
 				setActiveSessionId(result.session.id);
 				setSessionChanging(false);
-				await refresh();
+				// SessionHost emits session_changed before the RPC resolves. The event
+				// path performs the snapshot refresh; only fall back when SSE is down.
+				if (!connected) await refresh();
 			} catch (cause) {
 				if (sessionGeneration.current !== generation) return;
 				setSessionChanging(false);
 				setError(cause instanceof Error ? cause.message : "Unable to open the selected session.");
+			} finally {
+				if (openingSessionKey.current === key) openingSessionKey.current = undefined;
 			}
 		},
-		[refresh, setError],
+		[connected, refresh, setError, callRpc, workspaceId],
 	);
 	const rename = useCallback(
 		async (id: string, label: string) => {
 			try {
-				await renameSession(id, label);
+				await renameSession(id, label, workspaceId);
 				await refresh();
 			} catch (cause) {
 				setError(cause instanceof Error ? cause.message : "Unable to rename the session.");
 			}
 		},
-		[refresh, setError],
+		[refresh, setError, workspaceId],
 	);
 	const remove = useCallback(
 		async (id: string) => {
@@ -1137,7 +1167,7 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				setOperation(undefined);
 			}
 			try {
-				await deleteSession(id);
+				await deleteSession(id, workspaceId);
 				const pending = new Set(pendingDeletedSessions.current);
 				pending.delete(id);
 				pendingDeletedSessions.current = pending;
@@ -1150,21 +1180,21 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				setError(cause instanceof Error ? cause.message : "Unable to delete the session.");
 			}
 		},
-		[activeSessionId, refresh, setError],
+		[activeSessionId, refresh, setError, workspaceId],
 	);
 	const branch = useCallback(
 		async (id: string, entryId?: string) => {
 			try {
-				const session = await branchSession(id, entryId);
+				const session = await branchSession(id, entryId, workspaceId);
 				setActiveSessionId(session.id);
 				await refresh();
 			} catch (cause) {
 				setError(cause instanceof Error ? cause.message : "Unable to branch the session.");
 			}
 		},
-		[refresh, setError],
+		[refresh, setError, workspaceId],
 	);
-	const inspect = useCallback(async (id: string) => await inspectSession(id), []);
+	const inspect = useCallback(async (id: string) => await inspectSession(id, workspaceId), [workspaceId]);
 	const addFiles = useCallback(
 		async (files: FileList | readonly File[]) => {
 			if (!activeSessionId) throw new Error("Select a session before adding an attachment.");
@@ -1179,19 +1209,22 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				if (file.size > 5 * 1024 * 1024) throw new Error("Each attachment must be 5 MiB or smaller.");
 				const encoded = await dataUrlFor(file);
 				try {
-					const info = await uploadAttachment({
-						sessionId: activeSessionId,
-						name: file.name,
-						contentType: file.type as AttachmentInfo["contentType"],
-						data: encoded,
-					});
+					const info = await uploadAttachment(
+						{
+							sessionId: activeSessionId,
+							name: file.name,
+							contentType: file.type as AttachmentInfo["contentType"],
+							data: encoded,
+						},
+						workspaceId,
+					);
 					setAttachments((current) => [...current, { ...info, previewUrl: URL.createObjectURL(file) }]);
 				} catch (cause) {
 					setError(cause instanceof Error ? cause.message : "Unable to upload attachment.");
 				}
 			}
 		},
-		[attachments.length, activeSessionId, setError],
+		[attachments.length, activeSessionId, setError, workspaceId],
 	);
 
 	return {

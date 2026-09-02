@@ -74,6 +74,10 @@ interface ClientState {
 	resumeTokenExpiresAt: number;
 	readonly dispatchers: Map<string, RpcDispatcher>;
 	readonly productHosts: Map<string, ProductHost>;
+	readonly actorInitializations: Map<
+		string,
+		Promise<{ readonly actor: SessionActor; readonly dispatcher: RpcDispatcher }>
+	>;
 	readonly connections: Set<Connection>;
 	readonly requestTimes: number[];
 }
@@ -294,6 +298,7 @@ export class WebUiServer {
 				resumeTokenExpiresAt: Date.now() + (this.options.resumeTokenTtlMs ?? 10 * 60 * 1000),
 				dispatchers: new Map(),
 				productHosts: new Map(),
+				actorInitializations: new Map(),
 				connections: new Set(),
 				requestTimes: [],
 			};
@@ -423,7 +428,7 @@ export class WebUiServer {
 	private async boot(res: ServerResponse, client: ClientState, url: URL): Promise<void> {
 		const { actor, dispatcher } = await this.actor(client, url);
 		const workspace = await this.resolveWorkspace(url);
-		const [capabilities, state, runtime] = await Promise.all([
+		const [capabilities, state, runtime, sessions] = await Promise.all([
 			dispatcher.dispatch({
 				version: RPC_PROTOCOL_VERSION,
 				kind: "request",
@@ -445,17 +450,42 @@ export class WebUiServer {
 				method: "get_runtime",
 				params: {},
 			}),
+			dispatcher.dispatch({
+				version: RPC_PROTOCOL_VERSION,
+				kind: "request",
+				id: `boot-sessions:${randomUUID()}`,
+				method: "list_sessions",
+				params: {},
+			}),
 		]);
 		json(res, 200, {
 			protocolVersion: RPC_PROTOCOL_VERSION,
 			capabilities: capabilities.ok ? capabilities.result : undefined,
 			state: state.ok ? state.result.state : actor.state(),
 			runtime: runtime.ok ? runtime.result : undefined,
+			sessions: sessions.ok ? sessions.result.sessions : [],
 			workspaceId: workspace.id,
 			workspaces: (await this.authorizedWorkspaces()).map(({ id, name }) => ({ id, name })),
 		});
 	}
 	private async actor(client: ClientState, url: URL): Promise<{ actor: SessionActor; dispatcher: RpcDispatcher }> {
+		const allowed = (await this.resolveWorkspace(url)).root;
+		const key = `${client.id}:${allowed.toLowerCase()}`;
+		const pending = client.actorInitializations.get(key);
+		if (pending) return await pending;
+		const initialization = this.initializeActor(client, url);
+		client.actorInitializations.set(key, initialization);
+		try {
+			return await initialization;
+		} finally {
+			if (client.actorInitializations.get(key) === initialization) client.actorInitializations.delete(key);
+		}
+	}
+
+	private async initializeActor(
+		client: ClientState,
+		url: URL,
+	): Promise<{ actor: SessionActor; dispatcher: RpcDispatcher }> {
 		const allowed = (await this.resolveWorkspace(url)).root;
 		let dispatcher = client.dispatchers.get(allowed);
 		if (!dispatcher) {
@@ -930,6 +960,7 @@ export class WebUiServer {
 		void this.hostManager.disposePrincipal(client.principal);
 		client.dispatchers.clear();
 		client.productHosts.clear();
+		client.actorInitializations.clear();
 		this.clientsByResumeToken.delete(client.resumeToken);
 	}
 }

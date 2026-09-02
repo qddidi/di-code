@@ -14,6 +14,7 @@ import {
 	type RpcAttachmentInfo,
 	type RpcCommandAction,
 	type RpcCommandInfo,
+	type RpcContextFileInfo,
 	type RpcErrorCode,
 	type RpcEventRecord,
 	type RpcMethod,
@@ -398,6 +399,8 @@ export class RpcDispatcher {
 			switch (request.method) {
 				case "get_state":
 					return this.success(request.id, { method: "get_state", state: this.state() });
+				case "get_session_snapshot":
+					return await this.sessionSnapshot(request);
 				case "get_capabilities":
 					return this.capabilities(request);
 				case "resume_events":
@@ -473,6 +476,26 @@ export class RpcDispatcher {
 						method: "get_project_trust",
 						trusted: this.productHost?.getProjectTrust() ?? this.productState.projectTrusted,
 					});
+				case "get_project_resource_summary": {
+					const host = this.host();
+					const [plugins, mcp] = await Promise.all([
+						this.requireProduct().listPlugins(),
+						this.requireProduct().listMcpServers(),
+					]);
+					const skills = host.ui().availableSkills;
+					const hasProjectResources =
+						plugins.some((plugin) => plugin.source === "project") ||
+						host
+							.startupStatus()
+							.resourceDiagnostics.some((diagnostic) => diagnostic.kind === "skill" && diagnostic.stage === "trust") ||
+						skills.some((skill) => skill.scope === "project") ||
+						mcp.some((server) => server.scope === "project");
+					return this.success(request.id, {
+						method: "get_project_resource_summary",
+						projectTrusted: this.productHost?.getProjectTrust() ?? this.productState.projectTrusted,
+						hasProjectResources,
+					});
+				}
 				case "create_attachment":
 					return await this.createAttachment(request);
 				case "list_providers":
@@ -1170,6 +1193,38 @@ export class RpcDispatcher {
 				),
 		});
 	}
+	private async sessionSnapshot(request: RpcRequest): Promise<RpcResponse> {
+		if (!sessionHost(this.session))
+			return this.failure(request.id, "METHOD_NOT_FOUND", "RPC session snapshots require a SessionHost.");
+		const sessions = await this.listSessions(request);
+		const transcript = this.transcript({
+			...request,
+			params: { pageSize: 200, maxBytes: 8 * 1024 * 1024 },
+		});
+		if (!sessions.ok || !transcript.ok)
+			return this.failure(request.id, "INTERNAL_ERROR", "Unable to build session snapshot.");
+		const state = this.state();
+		let contextFiles: readonly RpcContextFileInfo[] = [];
+		if (this.productHost) {
+			try {
+				contextFiles = await this.requireProduct().listContextFiles();
+			} catch {
+				// Context discovery is optional for the conversation projection.
+			}
+		}
+		return this.success(request.id, {
+			method: "get_session_snapshot",
+			state,
+			sessions: sessions.result.sessions,
+			transcript: transcript.result.transcript,
+			entryIds: transcript.result.entryIds,
+			...(transcript.result.nextPageToken ? { nextPageToken: transcript.result.nextPageToken } : {}),
+			tree: this.host().tree(),
+			usage: this.host().usage(),
+			contextFiles,
+			commands: this.listCommands(),
+		});
+	}
 	private async newSession(request: RpcRequest): Promise<RpcResponse> {
 		const session = await this.host().createSession();
 		return this.success(request.id, {
@@ -1337,6 +1392,8 @@ function isBrowserSafeProjection(value: unknown): boolean {
 
 const RPC_METHODS_FOR_CAPABILITIES = [
 	"get_state",
+	"get_session_snapshot",
+	"get_project_resource_summary",
 	"get_capabilities",
 	"resume_events",
 	"list_sessions",

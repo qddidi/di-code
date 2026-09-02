@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadBootData, loadSessionsForWorkspace } from "./api.ts";
+import { loadBootData } from "./api.ts";
 import type { BootData, SessionSummary } from "./types.ts";
 
 export interface BootState {
@@ -23,16 +23,9 @@ export function useBoot(): BootState {
 			.then(async (value) => {
 				if (!active) return;
 				setData(value);
-				const entries = await Promise.all(
-					value.workspaces.map(async (workspace) => {
-						try {
-							return [workspace.id, (await loadSessionsForWorkspace(workspace.id)).sessions] as const;
-						} catch {
-							return [workspace.id, [] as readonly SessionSummary[]] as const;
-						}
-					}),
-				);
-				if (active) setWorkspaceSessions(Object.fromEntries(entries));
+				// Boot carries the active workspace sessions. Other workspaces are loaded
+				// when selected instead of bursting one RPC per row.
+				if (active) setWorkspaceSessions({ [value.workspaceId]: value.sessions });
 			})
 			.catch((cause: unknown) => {
 				if (active) setError(cause instanceof Error ? cause.message : "Unable to connect.");
