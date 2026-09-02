@@ -12,6 +12,7 @@ interface ComposerProps {
 	readonly onAddFiles: (files: FileList) => Promise<void>;
 	readonly onRemoveAttachment: (id: string) => void;
 	readonly onSend: (text: string) => Promise<void>;
+	readonly onSubmit?: () => void;
 	readonly onSteer: (text: string) => Promise<void>;
 	readonly onCancel: () => Promise<void>;
 	readonly onCompact: () => Promise<void>;
@@ -65,7 +66,7 @@ function commandRequiresInput(command: CommandSummary): boolean {
 	return command.kind === "skill" || command.name === "steer";
 }
 
-export function Composer({ disabled = false, busy, attachments, imageInputSupported, onAddFiles, onRemoveAttachment, onSend, onSteer, onCancel, onCompact, onRunCommand, onRetry, onClear, onOpenSessions, onOpenTree, onOpenUsage, onOpenSettings, onLogout, onSetRuntime, onSetPermissionMode, onSetThinkingLevel, hero = false, modelLabel = "Model", activeRuntime, permissionMode, thinkingLevel, reasoningEfforts, retryable = false, runtimeOptions, usage, commands, restoredDraft, extensionPlaceholder, planMode, onTogglePlan }: ComposerProps): React.JSX.Element {
+export function Composer({ disabled = false, busy, attachments, imageInputSupported, onAddFiles, onRemoveAttachment, onSend, onSubmit, onSteer, onCancel, onCompact, onRunCommand, onRetry, onClear, onOpenSessions, onOpenTree, onOpenUsage, onOpenSettings, onLogout, onSetRuntime, onSetPermissionMode, onSetThinkingLevel, hero = false, modelLabel = "Model", activeRuntime, permissionMode, thinkingLevel, reasoningEfforts, retryable = false, runtimeOptions, usage, commands, restoredDraft, extensionPlaceholder, planMode, onTogglePlan }: ComposerProps): React.JSX.Element {
 	const { t } = useI18n();
 	const [text, setText] = useState("");
 	const [composing, setComposing] = useState(false);
@@ -173,6 +174,7 @@ export function Composer({ disabled = false, busy, attachments, imageInputSuppor
 			}
 		}
 		setText("");
+		onSubmit?.();
 		if (busy) await onSteer(value); else await onSend(value);
 	};
 	return <div className={`composer-wrap${hero ? " composer-hero" : ""}`}>

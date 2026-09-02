@@ -40,6 +40,13 @@ describe("web locale", () => {
 		expect(html).not.toContain("简体中文");
 	});
 
+	it("uses the updated Chinese permission mode labels", () => {
+		const html = renderToStaticMarkup(<I18nProvider initialLocale="zh-CN"><GeneralSettings settings={settings} theme="system" onThemeChange={() => undefined} onLocaleChange={() => undefined} onPermissionChange={() => undefined} onThinkingChange={() => undefined} /></I18nProvider>);
+		expect(html).toContain(">请求批准</option>");
+		expect(html).toContain(">完全访问</option>");
+		expect(html).toContain(">禁止访问</option>");
+	});
+
 	it("uses the active model's declared reasoning efforts", () => {
 		const glmSettings = {
 			...settings,

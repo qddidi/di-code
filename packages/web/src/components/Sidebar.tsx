@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, FolderOpen, FolderPlus, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { ChevronDown, Folder, FolderOpen, FolderPlus, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSummary, WorkspaceSummary } from "../types.ts";
 import { IconButton } from "./IconButton.tsx";
@@ -99,7 +99,7 @@ export function Sidebar({ sessionsByWorkspace, workspaces, activeWorkspaceId, on
 			{!collapsed ? (
 				<>
 					<button className="new-session" type="button" onClick={() => onNewSession()}><Pencil size={17} aria-hidden="true" />{t("New session")}<span className="shortcut">⌘ K</span></button>
-					<div className="workspace-heading"><span>{t("Workspaces")}</span><span className="workspace-heading-actions"><IconButton label={searchOpen ? t("Close search") : t("Search sessions")} icon={searchOpen ? X : Search} onClick={() => { setSearchOpen((value) => !value); if (searchOpen) setQuery(""); }} /><IconButton label={t("Workspace display options")} icon={SlidersHorizontal} onClick={() => { const shouldExpand = workspaces.some((workspace) => !(expanded[workspace.id] ?? true)); setExpanded(Object.fromEntries(workspaces.map((workspace) => [workspace.id, shouldExpand]))); }} /><IconButton label={t("Add workspace")} icon={FolderPlus} onClick={() => { setAddError(undefined); setAddOpen(true); }} /></span></div>
+					<div className="workspace-heading"><span>{t("Workspaces")}</span><span className="workspace-heading-actions"><IconButton label={searchOpen ? t("Close search") : t("Search sessions")} icon={searchOpen ? X : Search} onClick={() => { setSearchOpen((value) => !value); if (searchOpen) setQuery(""); }} /><IconButton label={t("Add workspace")} icon={FolderPlus} onClick={() => { setAddError(undefined); setAddOpen(true); }} /></span></div>
 					{searchOpen ? <label className="session-search workspace-search"><Search size={15} aria-hidden="true" /><input ref={searchInput} aria-label={t("Search sessions")} placeholder={t("Search sessions")} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); setQuery(""); } }} /></label> : null}
 					<div className="workspace-list" role="tree" aria-label={t("Workspaces")}>
 						{workspaces.map((workspace) => {
