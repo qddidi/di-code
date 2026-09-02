@@ -1,6 +1,6 @@
 {
 	"name": "@di-code/builtins",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"description": "Reference built-in plugins for the di-code runtime",
 	"private": false,
 	"type": "module",
@@ -285,10 +285,10 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@di-code/agent": "0.2.4",
-		"@di-code/ai": "0.2.4",
-		"@di-code/plugin-runtime": "0.2.4",
-		"@di-code/skills": "0.2.4",
+		"@di-code/agent": "0.2.5",
+		"@di-code/ai": "0.2.5",
+		"@di-code/plugin-runtime": "0.2.5",
+		"@di-code/skills": "0.2.5",
 		"diff": "8.0.4"
 	},
 	"engines": {
