@@ -64,6 +64,8 @@ export interface ConversationState {
 	};
 	readonly usage?: UsageSnapshot;
 	readonly operation?: OperationState;
+	readonly queuedPrompts: readonly string[];
+	readonly steeringPrompts: readonly string[];
 	readonly attachments: readonly AttachmentInfo[];
 	readonly connected: boolean;
 	readonly error?: string;
@@ -94,6 +96,11 @@ export interface ConversationState {
 			readonly feedback?: string;
 		},
 	) => Promise<void>;
+}
+
+interface PromptQueueItem {
+	readonly text: string;
+	readonly attachments: readonly AttachmentInfo[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -362,6 +369,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const [compaction, setCompaction] = useState<ConversationState["compaction"]>();
 	const [usage, setUsage] = useState<UsageSnapshot>();
 	const [operation, setOperation] = useState<OperationState>();
+	const [queuedPrompts, setQueuedPrompts] = useState<readonly string[]>([]);
+	const [steeringPrompts, setSteeringPrompts] = useState<readonly string[]>([]);
 	const [attachments, setAttachments] = useState<readonly AttachmentInfo[]>([]);
 	const [connected, setConnected] = useState(false);
 	const [error, setErrorState] = useState<string>();
@@ -379,6 +388,9 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 	const activeSessionRef = useRef<string | undefined>(undefined);
 	const sessionGeneration = useRef(0);
 	const openingSessionKey = useRef<string | undefined>(undefined);
+	const promptQueue = useRef<PromptQueueItem[]>([]);
+	const promptRunning = useRef(false);
+	const steeringPromptsRef = useRef<string[]>([]);
 	const callRpc = useCallback(
 		<T>(method: string, params: Record<string, unknown> = {}, requestId?: string): Promise<T> =>
 			rawCallRpc<T>(method, params, requestId ?? crypto.randomUUID(), workspaceId),
@@ -423,6 +435,10 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		setCompaction(undefined);
 		setUsage(undefined);
 		setOperation(undefined);
+		promptQueue.current = [];
+		setQueuedPrompts([]);
+		setSteeringPrompts([]);
+		steeringPromptsRef.current = [];
 		setError(undefined);
 		setAttachments((current) => {
 			for (const attachment of current) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -539,6 +555,13 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 			// events against the currently rendered session.
 			if (type === "snapshot_required" || type === "session_changed") {
 				scheduleRefresh();
+				return;
+			}
+			if (type === "queue_update") {
+				if (Array.isArray(record.event.steering) && record.event.steering.every((item) => typeof item === "string")) {
+					steeringPromptsRef.current = record.event.steering as string[];
+					setSteeringPrompts(steeringPromptsRef.current);
+				}
 				return;
 			}
 			// Render stream payloads only for the selected session; background runs remain server-owned
@@ -844,8 +867,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		};
 	}, [handleEvent, ready, refresh, setError, workspaceId]);
 
-	const send = useCallback(
-		async (text: string) => {
+	const runPrompt = useCallback(
+		async (item: PromptQueueItem): Promise<void> => {
 			const requestedWorkspace = workspaceId;
 			if (!activeSessionId || sessionChanging) {
 				setError("Wait for the session to finish opening before sending a message.");
@@ -859,10 +882,10 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				...current,
 				{
 					role: "user",
-					text,
-					...(attachments.length
+					text: item.text,
+					...(item.attachments.length
 						? {
-								images: attachments.flatMap((attachment) =>
+								images: item.attachments.flatMap((attachment) =>
 									attachment.previewUrl
 										? [
 												{
@@ -884,8 +907,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					"prompt",
 					{
 						sessionId: activeSessionId,
-						message: text,
-						...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
+						message: item.text,
+						...(item.attachments.length ? { attachmentIds: item.attachments.map((attachment) => attachment.id) } : {}),
 					},
 					requestId,
 				);
@@ -902,16 +925,66 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 				if (workspaceRef.current !== requestedWorkspace) return;
 				setError(cause instanceof Error ? cause.message : "Unable to send message.");
 			} finally {
-				for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-				setAttachments([]);
+				for (const attachment of item.attachments)
+					if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+				if (workspaceRef.current === requestedWorkspace)
+					setRunningSessionIds((current) => {
+						const next = new Set(current);
+						next.delete(activeSessionId);
+						return next;
+					});
 			}
 		},
-		[attachments, refresh, activeSessionId, sessionChanging, setError, callRpc, workspaceId],
+		[refresh, activeSessionId, sessionChanging, setError, callRpc, workspaceId],
 	);
+	const drainPromptQueue = useCallback(async (): Promise<void> => {
+		if (promptRunning.current) return;
+		const next = promptQueue.current.shift();
+		setQueuedPrompts(promptQueue.current.map((item) => item.text));
+		if (!next) return;
+		promptRunning.current = true;
+		try {
+			await runPrompt(next);
+		} finally {
+			promptRunning.current = false;
+			if (promptQueue.current.length) void drainPromptQueue();
+		}
+	}, [runPrompt]);
+	const send = useCallback(
+		async (text: string): Promise<void> => {
+			const item: PromptQueueItem = { text, attachments: [...attachments] };
+			setAttachments([]);
+			if (promptRunning.current || operation?.status === "queued" || operation?.status === "running") {
+				promptQueue.current.push(item);
+				setQueuedPrompts(promptQueue.current.map((queued) => queued.text));
+				return;
+			}
+			promptRunning.current = true;
+			try {
+				await runPrompt(item);
+			} finally {
+				promptRunning.current = false;
+				if (promptQueue.current.length) void drainPromptQueue();
+			}
+		},
+		[attachments, drainPromptQueue, operation?.status, runPrompt],
+	);
+	useEffect(() => {
+		if (
+			operation?.status === "queued" ||
+			operation?.status === "running" ||
+			promptRunning.current ||
+			!promptQueue.current.length
+		)
+			return;
+		void drainPromptQueue();
+	}, [drainPromptQueue, operation?.status]);
 	const steer = useCallback(
 		async (text: string) => {
 			const requestedWorkspace = workspaceId;
 			if (!activeSessionId || !operation?.runId || sessionChanging) return;
+			steeringPromptsRef.current = [...steeringPromptsRef.current, text];
+			setSteeringPrompts(steeringPromptsRef.current);
 			try {
 				await callRpc("steer", {
 					sessionId: activeSessionId,
@@ -920,6 +993,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 					...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
 				});
 			} catch (cause) {
+				steeringPromptsRef.current = steeringPromptsRef.current.filter((item) => item !== text);
+				setSteeringPrompts(steeringPromptsRef.current);
 				if (workspaceRef.current !== requestedWorkspace) return;
 				setError(cause instanceof Error ? cause.message : "Unable to steer the active response.");
 			} finally {
@@ -1242,6 +1317,8 @@ export function useConversation(ready: boolean, workspaceId: string | undefined)
 		compaction,
 		usage,
 		operation,
+		queuedPrompts,
+		steeringPrompts,
 		attachments,
 		connected,
 		error,

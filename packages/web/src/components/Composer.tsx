@@ -1,4 +1,4 @@
-import { Activity, Archive, ArrowLeft, ArrowUp, Check, ChevronDown, Command, CornerDownRight, FileClock, Gauge, LoaderCircle, Paperclip, RotateCcw, Settings2, Square, SlidersHorizontal, X } from "lucide-react";
+import { Activity, Archive, ArrowLeft, ArrowUp, Check, ChevronDown, Command, FileClock, Gauge, LoaderCircle, Paperclip, RotateCcw, Settings2, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AttachmentInfo, CommandAction, CommandSummary, UsageSnapshot } from "../types.ts";
 import { AttachmentTray } from "./AttachmentTray.tsx";
@@ -161,7 +161,7 @@ export function Composer({ disabled = false, busy, attachments, imageInputSuppor
 			document.removeEventListener("keydown", closeOnEscape);
 		};
 	}, [menu]);
-	const submit = async (): Promise<void> => {
+	const submit = async (steer = false): Promise<void> => {
 		const value = text.trim();
 		if (!value) return;
 		if (value.startsWith("/")) {
@@ -175,13 +175,14 @@ export function Composer({ disabled = false, busy, attachments, imageInputSuppor
 		}
 		setText("");
 		onSubmit?.();
-		if (busy) await onSteer(value); else await onSend(value);
+		if (steer) await onSteer(value); else await onSend(value);
 	};
 	return <div className={`composer-wrap${hero ? " composer-hero" : ""}`}>
 		<div ref={composer} className="composer" onDragOver={(event) => { if (imageInputSupported) event.preventDefault(); }} onDrop={(event) => { if (!imageInputSupported) return; event.preventDefault(); void onAddFiles(event.dataTransfer.files); }}>
 			{extensionPlaceholder ? <div className="composer-extension-placeholder">{extensionPlaceholder}</div> : null}
 			<AttachmentTray attachments={attachments} onRemove={onRemoveAttachment} />
-			<textarea ref={textarea} aria-label={t("Message di-code")} aria-controls={menu === "commands" ? commandMenuId : undefined} aria-activedescendant={menu === "commands" && matchingCommands.length ? `${commandMenuId}-${selectedCommandIndex}` : undefined} placeholder={busy ? t("Steer di-code while it works") : hero ? t("Describe what you want to build") : t("Message di-code")} rows={1} disabled={disabled} value={text} onChange={(event) => { const next = event.target.value; setText(next); setSelectedCommandIndex(0); setMenu((current) => next.startsWith("/") ? "commands" : current === "commands" ? undefined : current); }} onPaste={(event) => { if (imageInputSupported && event.clipboardData.files.length) void onAddFiles(event.clipboardData.files); }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={(event) => {
+			<textarea ref={textarea} aria-label={t("Message di-code")} aria-controls={menu === "commands" ? commandMenuId : undefined} aria-activedescendant={menu === "commands" && matchingCommands.length ? `${commandMenuId}-${selectedCommandIndex}` : undefined} placeholder={hero ? t("Describe what you want to build") : busy ? t("Message di-code (Alt+S to steer)") : t("Message di-code")} rows={1} disabled={disabled} value={text} onChange={(event) => { const next = event.target.value; setText(next); setSelectedCommandIndex(0); setMenu((current) => next.startsWith("/") ? "commands" : current === "commands" ? undefined : current); }} onPaste={(event) => { if (imageInputSupported && event.clipboardData.files.length) void onAddFiles(event.clipboardData.files); }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={(event) => {
+				if (event.altKey && event.key.toLowerCase() === "s" && !composing) { event.preventDefault(); void submit(true); return; }
 				if (menu === "commands" && matchingCommands.length && !composing) {
 					if (event.key === "ArrowDown") {
 						event.preventDefault();
@@ -216,8 +217,8 @@ export function Composer({ disabled = false, busy, attachments, imageInputSuppor
 					{menu === "reasoning" ? <div className="composer-menu composer-menu-right" role="menu" aria-label="Reasoning level"><button type="button" className="menu-back" role="menuitem" onClick={() => setMenu("runtime")}><ArrowLeft size={14} />Model and reasoning</button>{reasoningEfforts.map((level) => <button type="button" role="menuitemradio" aria-checked={thinkingLevel === level} key={level} onClick={() => { setMenu(undefined); void onSetThinkingLevel(level); }}><span>{level[0].toUpperCase() + level.slice(1)}</span>{thinkingLevel === level ? <Check size={14} aria-label="Selected" /> : null}</button>)}</div> : null}
 				</div>
 				<div className="composer-menu-anchor"><button className="context-meter" type="button" aria-label="Context usage" aria-expanded={menu === "context"} onClick={() => setMenu((value) => value === "context" ? undefined : "context")}>{usage?.contextWindow && usage.estimatedContextTokens ? `${Math.min(100, Math.round(usage.estimatedContextTokens / usage.contextWindow * 100))}%` : "0%"}</button>{menu === "context" ? <div className="composer-menu composer-menu-right context-menu" role="status"><strong>Context usage</strong><span>{usage?.estimatedContextTokens ?? 0} estimated tokens</span><span>{usage?.contextWindow ?? 0} token window</span><span>{usage?.cacheReadTokens ?? 0} cache tokens</span></div> : null}</div>
-				{busy ? <span className="composer-loading" role="status" aria-label="Working"><LoaderCircle className="spin" size={15} aria-hidden="true" /></span> : null}
-				{busy ? <button className="send-button cancel-button" type="button" aria-label="Stop generating" title="Stop generating" onClick={() => void onCancel()}><Square size={14} /></button> : <button className="send-button" type="button" aria-label="Send message" title="Send message" disabled={disabled || !text.trim()} onClick={() => void submit()}>{busy ? <CornerDownRight size={18} /> : <ArrowUp size={18} />}</button>}
+				{busy ? <button className="send-button cancel-button" type="button" aria-label="Stop generating" title="Stop generating" onClick={() => void onCancel()}><LoaderCircle className="spin" size={15} aria-hidden="true" /></button> : null}
+				<button className="send-button" type="button" aria-label="Send message" title="Send message" disabled={disabled || !text.trim()} onClick={() => void submit()}><ArrowUp size={18} /></button>
 			</div>
 			{!hero ? <div className="composer-session-meta" aria-live="polite"><span><Activity size={13} />{usage?.requestCount ?? 0} requests</span><span>Context {usage?.estimatedContextTokens?.toLocaleString() ?? 0}/{usage?.contextWindow?.toLocaleString() ?? 0}</span><span className="composer-spacer" />{!busy ? <button type="button" onClick={() => void onCompact()}><Archive size={13} />Compact context</button> : null}{retryable ? <button type="button" onClick={() => void onRetry()}><RotateCcw size={13} />Retry</button> : null}</div> : null}
 		</div>

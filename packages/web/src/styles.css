@@ -247,6 +247,14 @@
 [data-theme="dark"] .activity-icon { color: #a5afbb; }
 [data-theme="dark"] .activity-separator { color: #737e8a; }
 [data-theme="dark"] .activity-thinking pre { background: #20262d; border-left-color: #3e4854; }
+.prompt-queue { width: min(760px, calc(100% - 40px)); display: grid; gap: 7px; margin: 12px auto 0; }
+.prompt-queue-group { padding: 9px 11px; color: var(--ink); background: #f4f6f8; border: 1px solid var(--line); border-radius: 6px; font-size: 11px; }
+.prompt-queue-heading { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.prompt-queue-heading span { min-width: 18px; padding: 2px 5px; color: var(--ink); background: #e2e7ed; border-radius: 9px; text-align: center; }
+.prompt-queue ol { display: grid; gap: 3px; margin: 6px 0 0 22px; padding: 0; color: var(--muted); }
+.prompt-queue li { padding-left: 3px; overflow-wrap: anywhere; }
+.prompt-queue-empty { margin: 6px 0 0 22px; color: var(--muted); }
+.prompt-steering { color: #315b73; background: #eef8fc; border-color: #cce4ee; }
 @media (max-width: 800px) {
 	.main-content.is-hero { padding-bottom: 12vh; }
 	.composer-hero { width: calc(100% - 24px); }
