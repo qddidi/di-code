@@ -33,6 +33,7 @@ describe("Sidebar workspace navigation", () => {
 		expect(html).toContain(">你好</span>");
 		expect(html).toContain(">Build check</span>");
 		expect(html).toContain('aria-label="Add workspace"');
+		expect(html).not.toContain('aria-label="Workspace display options"');
 		expect(html).not.toContain('placeholder="Search sessions" value=""');
 	});
 
@@ -60,6 +61,7 @@ describe("Sidebar workspace navigation", () => {
 			</I18nProvider>,
 		);
 		expect(html).toContain('class="session-item is-active"');
+		expect(html).toContain('class="session-item-wrap is-active"');
 		expect(html).toContain('aria-current="page"');
 		expect(html).toContain('aria-busy="true"');
 		expect(html).not.toContain('lucide-message-square');
